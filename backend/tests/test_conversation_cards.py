@@ -154,7 +154,13 @@ def test_by_file_requires_token(client, tmp_path, conn_reset):
 def echo(monkeypatch):
     def install(reply: str = "## 要点\n\n这段代码做加法。\n", fail: bool = False) -> EchoModel:
         model = EchoModel(reply=reply, fail=fail)
-        monkeypatch.setattr(notegen.model_config, "build_chat_model", lambda temperature=None: model)
+        # max_tokens is accepted because note generation retries an empty reply
+        # with a larger budget; the stub ignores it on purpose.
+        monkeypatch.setattr(
+            notegen.model_config,
+            "build_chat_model",
+            lambda temperature=None, max_tokens=None: model,
+        )
         return model
 
     return install
@@ -167,17 +173,23 @@ def test_generate_note_from_assistant_message(client, tmp_path, conn_reset, echo
     )
     answer = repo.add_message(conversation["id"], "assistant", "这个函数返回 1，是个占位实现。")
 
-    model = echo()
+    model = echo(
+        reply="## 标题\n占位函数的返回值约定\n\n## 知识点\n这个函数做加法。\n\n"
+        "## 要点\n- 只返回常量\n\n## 何时使用\n- 接口未定稿时\n"
+    )
     note = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note")
 
     assert note.status_code == 200
     body = note.json()
     assert body["conversation_id"] == conversation["id"]
     assert body["project_id"] == project["id"]
-    assert body["title"] == "sample.py:2-3"
+    # The title names the knowledge point, never the selection it came from.
+    assert body["title"] == "占位函数的返回值约定"
+    assert body["title"] != conversation["title"]
+    assert "sample.py" not in body["title"] and ":" not in body["title"]
     assert body["summary_failed"] is False
     # The fixed template: title first, then the four sections in order.
-    assert body["content_md"].startswith("# sample.py:2-3")
+    assert body["content_md"].startswith("# 占位函数的返回值约定")
     positions = [body["content_md"].index(f"## {name}") for name in ("知识点", "关联代码", "要点", "何时使用")]
     assert positions == sorted(positions)
     # 关联代码 is filled from the citations / conversation range, not the model.
@@ -223,13 +235,44 @@ def test_note_chunk_does_not_repeat_the_title_heading(client, tmp_path, conn_res
     )
     answer = repo.add_message(conversation["id"], "assistant", "这个函数返回 1。")
 
-    echo()
+    echo(reply="## 标题\n占位函数返回常量\n\n## 知识点\n这个函数返回 1。\n")
     body = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
 
     with repo.get_conn() as conn:
         row = conn.execute("SELECT content FROM chunks WHERE path = ?", (f"note://{body['id']}",)).fetchone()
     assert row is not None
-    assert row["content"].count("# sample.py:2-3") == 1, row["content"][:200]
+    assert row["content"].count("# 占位函数返回常量") == 1, row["content"][:200]
+
+
+def test_cited_markdown_keeps_its_own_fences_inside_the_block(client, tmp_path, conn_reset, echo):
+    """A cited Markdown range usually contains fences of its own.
+
+    Wrapping it in three backticks would end the block at its first inner fence
+    and spill the rest of the snippet into the note as loose paragraphs, which
+    then render as stray headings. The outer fence has to be longer.
+    """
+    project = _make_project(tmp_path, "proj")
+    (Path(project["path"]) / "NOTES.md").write_text(
+        "# Notes\n\n```python\nprint('inner')\n```\n\nAfter the block.\n",
+        encoding="utf-8",
+    )
+    conversation = repo.create_conversation(
+        project["id"], "NOTES.md:1-7", mode="snippet", file_path="NOTES.md", start_line=1, end_line=7
+    )
+    answer = repo.add_message(conversation["id"], "assistant", "这段说明演示了代码块。")
+
+    echo()
+    body = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+    text = body["content_md"]
+    section = text[text.index("## 关联代码") : text.index("## 要点")]
+
+    # The outer fence must outnumber the inner one, otherwise the inner fence
+    # would be read as the closing marker.
+    outer = [line for line in section.splitlines() if line.startswith("````")]
+    assert outer, section
+    assert "```python" in section
+    # The snippet's tail stays part of the note rather than becoming a paragraph.
+    assert "After the block." in section
 
 
 def test_note_citations_do_not_become_dead_code_blocks(client, tmp_path, conn_reset, echo):
@@ -384,3 +427,171 @@ def test_generate_note_on_empty_message_is_400(client, tmp_path, conn_reset, ech
     empty = repo.add_message(conversation["id"], "assistant", "   ")
     echo()
     assert client.post(f"/api/conversations/{conversation['id']}/messages/{empty['id']}/note").status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# knowledge-point titles, whole-conversation notes, retitle
+# --------------------------------------------------------------------------- #
+def test_note_title_replaces_a_location_with_the_knowledge_point(client, tmp_path, conn_reset, echo):
+    """The title must describe what was learned, not where the code lives."""
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(
+        project["id"], "untitled", mode="snippet", file_path="pkg/sample.py", start_line=2, end_line=3
+    )
+    answer = repo.add_message(conversation["id"], "assistant", "这个函数返回 1。")
+
+    # A model that ignores the "no location in the title" rule.
+    echo(reply="## 标题\n关于 sample.py 第 2-3 行\n\n## 知识点\n占位函数把返回值写死成 1。\n")
+    body = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+
+    assert body["title"] == "占位函数把返回值写死成 1"
+    assert "sample.py" not in body["title"]
+    assert "行" not in body["title"]
+    # The cited range still lands in 关联代码 - it just does not become the title.
+    assert "### pkg/sample.py:2-3" in body["content_md"]
+
+
+def test_clean_title_strips_markup_and_locations():
+    assert notegen._clean_title("**关于 README.md 第 357-359 行**") == ""
+    assert notegen._clean_title("`graph.py:186-204`") == ""
+    assert notegen._clean_title("## 中断恢复靠 checkpoint") == "中断恢复靠 checkpoint"
+    assert notegen._clean_title("关于缓存失效的策略") == ""
+    assert notegen._clean_title("   ") == ""
+    long_title = "一" * 60
+    assert len(notegen._clean_title(long_title)) <= notegen.TITLE_MAX_CHARS
+
+
+def test_long_titles_break_at_a_boundary_instead_of_mid_token():
+    # A title that ends inside `/api/note` reads like a rendering bug.
+    clipped = notegen._clean_title("笔记按当前打开的项目隔离，通过 GET /api/notes?project_id 过滤")
+    assert clipped.endswith("隔离") or clipped.endswith("过滤")
+    assert not clipped.endswith("/api/note")
+    assert "/api/no" not in clipped
+    # A single long ASCII token is never sliced in half either.
+    token = notegen._clean_title("GET /api/conversations/by-file?path=frontend/src/App.tsx")
+    assert "?" not in token or token.split("?")[0].endswith("by-file")
+    assert len(token) <= notegen.TITLE_MAX_CHARS
+
+
+def test_conversation_note_folds_every_turn_into_one_note(client, tmp_path, conn_reset, echo):
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(
+        project["id"], "untitled", mode="snippet", file_path="pkg/sample.py", start_line=2, end_line=3
+    )
+    repo.add_message(conversation["id"], "user", "第一问：入口在哪？")
+    repo.add_message(
+        conversation["id"],
+        "assistant",
+        "第一答：入口在 pkg/sample.py。",
+        citations=[{"path": "pkg/sample.py", "start_line": 1, "end_line": 2, "symbol": "top"}],
+    )
+    repo.add_message(conversation["id"], "user", "第二问：返回什么？")
+    repo.add_message(
+        conversation["id"],
+        "assistant",
+        "第二答：返回 1。",
+        citations=[{"path": "pkg/sample.py", "start_line": 2, "end_line": 3, "symbol": "top"}],
+    )
+
+    model = echo(reply="## 标题\n占位函数的入口与返回值\n\n## 知识点\n整个会话讲了入口和返回值。\n")
+    body = client.post(f"/api/conversations/{conversation['id']}/note").json()
+
+    assert body["summary_failed"] is False
+    assert body["title"] == "占位函数的入口与返回值"
+    # One note per conversation, and every cited range is collected.
+    assert body["refs"] == 2
+    assert "### pkg/sample.py:1-2" in body["content_md"]
+    assert "### pkg/sample.py:2-3" in body["content_md"]
+    assert len(repo.list_notes(project["id"])) == 1
+
+    prompt = "\n".join(str(m.content) for m in model.calls[0])
+    assert "第一问：入口在哪？" in prompt
+    assert "第二答：返回 1。" in prompt
+    assert "整段会话" in prompt
+
+
+def test_conversation_note_reuses_the_note_of_a_per_message_generation(client, tmp_path, conn_reset, echo):
+    """Both entry points must converge on one note per conversation."""
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(project["id"], "untitled", mode="project")
+    answer = repo.add_message(conversation["id"], "assistant", "讲了一段装饰器。")
+
+    echo(reply="## 标题\n装饰器的包装时机\n\n## 知识点\n装饰器在定义时包装。\n")
+    single = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+    whole = client.post(f"/api/conversations/{conversation['id']}/note").json()
+
+    assert whole["id"] == single["id"]
+    assert len(repo.list_notes(project["id"])) == 1
+
+
+def test_conversation_note_on_an_empty_conversation_is_400(client, tmp_path, conn_reset, echo):
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(project["id"], "c", mode="project")
+    echo()
+    assert client.post(f"/api/conversations/{conversation['id']}/note").status_code == 400
+
+
+def test_get_note_returns_the_note_with_its_index_state(client, tmp_path, conn_reset, echo):
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(project["id"], "c", mode="project")
+    answer = repo.add_message(conversation["id"], "assistant", "讲解")
+    echo(reply="## 标题\n闭包的捕获方式\n\n## 知识点\n闭包捕获变量。\n")
+    created = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+
+    body = client.get(f"/api/notes/{created['id']}")
+    assert body.status_code == 200
+    assert body.json()["title"] == "闭包的捕获方式"
+    assert body.json()["indexed"] is True
+    assert client.get("/api/notes/999999").status_code == 404
+
+
+def test_retitle_rewrites_a_legacy_location_title(client, tmp_path, conn_reset, echo):
+    project = _make_project(tmp_path, "proj")
+    legacy = repo.create_note(project["id"], "关于 README.md 第 357-359 行", "# 关于 README.md 第 357-359 行\n\n正文")
+
+    echo(reply="README 里的启动命令分组\n")
+    body = client.post(f"/api/notes/{legacy['id']}/retitle").json()
+
+    assert body["retitle_failed"] is False
+    assert body["title"] == "README 里的启动命令分组"
+    assert repo.get_note(legacy["id"])["title"] == "README 里的启动命令分组"
+    # The rewritten title is what the knowledge base now matches on.
+    hits = client.get(f"/api/projects/{project['id']}/search", params={"q": "启动命令"}).json()
+    assert any(hit["path"] == f"note://{legacy['id']}" for hit in hits)
+
+
+def test_retitle_keeps_the_note_when_the_model_fails(client, tmp_path, conn_reset, echo):
+    project = _make_project(tmp_path, "proj")
+    legacy = repo.create_note(project["id"], "关于 README.md 第 357-359 行", "# 关于 README.md 第 357-359 行\n\n正文")
+
+    echo(fail=True)
+    body = client.post(f"/api/notes/{legacy['id']}/retitle").json()
+
+    assert body["retitle_failed"] is True
+    assert body["title"] == "关于 README.md 第 357-359 行"
+    assert repo.get_note(legacy["id"])["title"] == "关于 README.md 第 357-359 行"
+
+
+def test_retitle_missing_note_is_404(client, tmp_path, conn_reset, echo):
+    _make_project(tmp_path, "proj")
+    echo()
+    assert client.post("/api/notes/999999/retitle").status_code == 404
+
+
+def test_by_file_cards_carry_the_note_title(client, tmp_path, conn_reset, echo):
+    """The floating label over a code range reads the note title, not the range."""
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(
+        project["id"], "关于 sample.py 第 2-3 行", mode="snippet", file_path="pkg/sample.py", start_line=2, end_line=3
+    )
+    answer = repo.add_message(conversation["id"], "assistant", "这个函数返回 1。")
+    echo(reply="## 标题\n占位函数为什么吞掉参数\n\n## 知识点\n它忽略入参。\n")
+    note = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+
+    cards = client.get(
+        f"/api/projects/{project['id']}/conversations/by-file",
+        params={"path": "pkg/sample.py"},
+    ).json()
+    assert cards[0]["has_note"] is True
+    assert cards[0]["note_id"] == note["id"]
+    assert cards[0]["note_title"] == "占位函数为什么吞掉参数"

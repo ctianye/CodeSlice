@@ -44,7 +44,10 @@ type Block =
 
 type Align = 'left' | 'center' | 'right' | null
 
-const FENCE = /^\s*(?:```|~~~)\s*([\w+#.-]*)\s*$/
+/** Opening fence: three or more backticks/tildes, optionally followed by a language. */
+const FENCE = /^\s*(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/
+/** A closing fence is a bare run of the same character, at least as long as the opener. */
+const CLOSING_FENCE = /^\s*(`{3,}|~{3,})\s*$/
 const HEADING = /^(#{1,6})\s+(.*)$/
 const UL = /^\s*[-*+]\s+(.*)$/
 const OL = /^\s*(\d+)[.)]\s+(.*)$/
@@ -116,10 +119,19 @@ function parseBlocks(source: string): Block[] {
     const fence = FENCE.exec(line)
     if (fence) {
       flushParagraph(paragraph)
-      const lang = (fence[1] ?? '').trim()
+      const marker = fence[1] ?? '```'
+      const lang = (fence[2] ?? '').trim()
       const body: string[] = []
       i += 1
-      while (i < lines.length && !FENCE.test(lines[i] ?? '')) {
+      // A note can quote a file that itself contains fences (a Markdown snippet,
+      // for instance). Only a bare run at least as long as the opener closes the
+      // block, so an inner ``` does not end the outer one early.
+      while (i < lines.length) {
+        const closing = CLOSING_FENCE.exec(lines[i] ?? '')
+        if (closing && closing[1] !== undefined) {
+          const run = closing[1]
+          if (run[0] === marker[0] && run.length >= marker.length) break
+        }
         body.push(lines[i] ?? '')
         i += 1
       }

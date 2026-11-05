@@ -397,11 +397,37 @@ export const listNotes = async (projectId: number, signal?: AbortSignal): Promis
 export const createNote = (body: NoteCreateBody): Promise<Note> =>
   request<Note>('/api/notes', { method: 'POST', body })
 
+/** One note by id; used when the reader is opened straight onto a note. */
+export const getNote = (noteId: number, signal?: AbortSignal): Promise<Note> =>
+  request<Note>(`/api/notes/${noteId}`, { signal })
+
+/**
+ * Summarises a whole conversation (every user/assistant turn) into one note.
+ *
+ * Same response shape as the single-message variant, so the caller can reuse
+ * its "summary failed" handling.
+ */
+export const createNoteFromConversation = (conversationId: string): Promise<GeneratedNote> =>
+  request<GeneratedNote>(`/api/conversations/${encodeURIComponent(conversationId)}/note`, {
+    method: 'POST',
+  })
+
 export const updateNote = (noteId: number, body: Partial<NoteCreateBody>): Promise<Note> =>
   request<Note>(`/api/notes/${noteId}`, { method: 'PUT', body })
 
 export const deleteNote = (noteId: number): Promise<{ ok: boolean }> =>
   request<{ ok: boolean }>(`/api/notes/${noteId}`, { method: 'DELETE' })
+
+/**
+ * Asks the model for a knowledge-point title and stores it.
+ *
+ * Older notes were titled after their code range ("关于 README.md 第 357-359
+ * 行"); this rewrites one into a title that describes what was learned. When the
+ * model call fails the backend keeps the old title and flags `retitle_failed`
+ * instead of returning an error, so a failure never loses the note.
+ */
+export const retitleNote = (noteId: number): Promise<Note & { retitle_failed?: boolean }> =>
+  request<Note & { retitle_failed?: boolean }>(`/api/notes/${noteId}/retitle`, { method: 'POST' })
 
 /** Writes the note to a `.md` file under the app data dir; resolves with its path. */
 export const exportNote = (noteId: number): Promise<NoteExport> =>

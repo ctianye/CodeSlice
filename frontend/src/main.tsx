@@ -9,6 +9,7 @@ import './styles/welcome.css'
 import './styles/sidebar.css'
 import './styles/editor.css'
 import './styles/chat.css'
+import './styles/note.css'
 import './styles/feedback.css'
 import './styles/settings.css'
 

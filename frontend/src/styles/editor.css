@@ -272,6 +272,22 @@
   white-space: nowrap;
 }
 
+/* Marks a card whose title is its knowledge point rather than the original
+   question, so the two kinds of label are never confused. */
+.code-card-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
 .code-card .icon.note {
   flex: 0 0 auto;
   width: 17px;
@@ -297,6 +313,86 @@
 .conversation-card-highlight {
   background: var(--card-range-bg);
   box-shadow: inset 2px 0 0 var(--accent-line);
+}
+
+/* --------------------- persistent conversation frames --------------------- */
+
+/* One decoration per line so Monaco clips the frame at the viewport edge; the
+   side borders line up because no line carries a left/right inset. */
+.range-frame {
+  background: var(--frame-bg);
+  border-left: 2px solid var(--frame-line);
+  border-right: 1px solid var(--frame-inner);
+}
+
+.range-frame-top {
+  border-top: 2px solid var(--frame-line);
+  border-top-left-radius: 3px;
+  border-top-right-radius: 3px;
+}
+
+.range-frame-bottom {
+  border-bottom: 2px solid var(--frame-line);
+  border-bottom-left-radius: 3px;
+  border-bottom-right-radius: 3px;
+}
+
+/* Title strip above each framed range. A Monaco view zone reserves the band, so
+   it takes part in the layout and scrolls with the text instead of covering a
+   code line. Height must match `ZONE_HEIGHT` in editor/frameZones.ts. */
+.range-zone {
+  display: flex;
+  align-items: center;
+  height: 19px;
+  padding-left: 6px;
+  box-sizing: border-box;
+}
+
+.range-flag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 7px;
+  height: 16px;
+  border: 1px solid var(--frame-line);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  opacity: 0.92;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+.range-flag:hover {
+  color: var(--text);
+  border-color: var(--accent-line);
+  opacity: 1;
+}
+
+.range-flag.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  opacity: 1;
+}
+
+:root {
+  --frame-bg: rgba(148, 200, 255, 0.07);
+  --frame-line: rgba(148, 200, 255, 0.32);
+  --frame-inner: rgba(148, 200, 255, 0.1);
+}
+
+:root[data-theme='light'] {
+  --frame-bg: rgba(37, 99, 235, 0.045);
+  --frame-line: rgba(37, 99, 235, 0.3);
+  --frame-inner: rgba(37, 99, 235, 0.08);
 }
 
 @keyframes citation-flash {

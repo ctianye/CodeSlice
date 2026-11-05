@@ -239,4 +239,15 @@ def create_note_from_message(conversation_id: str, message_id: str, _: TokenDep)
     return notegen.generate(conversation_id, message_id)
 
 
+@router.post("/conversations/{conversation_id}/note")
+def create_note_from_conversation(conversation_id: str, _: TokenDep) -> dict[str, Any]:
+    """Summarise every turn of a conversation into one note.
+
+    A long reading session drifts across files; per-answer notes then lose the
+    thread. This folds the whole session into a single knowledge-point note and
+    still collects every cited range into its 关联代码 section.
+    """
+    return notegen.generate_from_conversation(conversation_id)
+
+
 __all__ = ["ProjectDep", "router"]

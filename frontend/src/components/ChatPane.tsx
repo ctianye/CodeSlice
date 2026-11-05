@@ -26,12 +26,13 @@ const SUGGESTIONS = [
 ]
 
 export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNode {
-  const { project, activeConversationId, setActiveConversationId, bumpRefresh, focusNote } = useApp()
+  const { project, activeConversationId, setActiveConversationId, bumpRefresh, openNoteView } = useApp()
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [draft, setDraft] = useState<{ text: string; nonce: number } | null>(null)
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [noteError, setNoteError] = useState<string | null>(null)
+  const [wholeNoteBusy, setWholeNoteBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const chat = useChatStream(activeConversationId, () => bumpRefresh())
@@ -109,12 +110,35 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
     try {
       const note = await api.createNoteFromMessage(activeConversationId, message.id)
       bumpRefresh()
-      focusNote(note.id)
+      openNoteView(note)
       if (note.summary_failed) setNoteError(`笔记已保存，但模型整理失败：${note.summary_error ?? '未知原因'}`)
     } catch (err) {
       setNoteError(err instanceof Error ? err.message : String(err))
     } finally {
       setNoteBusyId(null)
+    }
+  }
+
+  /**
+   * Summarise the whole conversation, not just its newest answer.
+   *
+   * A long reading session drifts across several files, so a per-answer note
+   * misses the thread. The backend folds every turn into one knowledge point and
+   * still keeps the code references, which land in the note's 关联代码 section.
+   */
+  const generateWholeNote = async () => {
+    if (!activeConversationId) return
+    setWholeNoteBusy(true)
+    setNoteError(null)
+    try {
+      const note = await api.createNoteFromConversation(activeConversationId)
+      bumpRefresh()
+      openNoteView(note)
+      if (note.summary_failed) setNoteError(`笔记已保存，但模型整理失败：${note.summary_error ?? '未知原因'}`)
+    } catch (err) {
+      setNoteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setWholeNoteBusy(false)
     }
   }
 
@@ -156,6 +180,19 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
         ) : null}
         <span className="spacer" />
         <div className="header-actions">
+          {/* Per-answer notes cover one explanation; this one covers the session. */}
+          {activeConversationId && chat.messages.length > 0 ? (
+            <button
+              className="ghost small"
+              title="把整段对话整理成一条知识点笔记"
+              onClick={() => void generateWholeNote()}
+              disabled={wholeNoteBusy || chat.busy}
+              type="button"
+            >
+              <Icon name="notes" size={12} />
+              {wholeNoteBusy ? '整理中…' : '整理成笔记'}
+            </button>
+          ) : null}
           <button
             className="ghost icon"
             title="新建全项目对话"

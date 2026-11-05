@@ -213,8 +213,13 @@ def public_settings() -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # clients
 # --------------------------------------------------------------------------- #
-def build_chat_model(temperature: float | None = None):
-    """Return a LangChain chat model for the configured provider."""
+def build_chat_model(temperature: float | None = None, max_tokens: int | None = None):
+    """Return a LangChain chat model for the configured provider.
+
+    ``max_tokens`` overrides the saved budget for one call. Reasoning models bill
+    their hidden reasoning against the same limit, so a call that needs a long
+    visible answer can ask for more room than the user's default.
+    """
     ms = load_settings()
     cfg = ms.chat
     if not cfg.model:
@@ -223,6 +228,7 @@ def build_chat_model(temperature: float | None = None):
     if not api_key:
         raise ConfigMissing("api key not configured")
     temp = cfg.temperature if temperature is None else temperature
+    budget = cfg.max_tokens if max_tokens is None else max_tokens
 
     os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 
@@ -233,7 +239,7 @@ def build_chat_model(temperature: float | None = None):
             "model": cfg.model,
             "api_key": api_key,
             "temperature": temp,
-            "max_tokens": cfg.max_tokens,
+            "max_tokens": budget,
         }
         if cfg.base_url:
             kwargs["base_url"] = cfg.base_url
@@ -245,7 +251,7 @@ def build_chat_model(temperature: float | None = None):
         "model": cfg.model,
         "api_key": api_key,
         "temperature": temp,
-        "max_tokens": cfg.max_tokens,
+        "max_tokens": budget,
         "timeout": 120,
     }
     if cfg.base_url:

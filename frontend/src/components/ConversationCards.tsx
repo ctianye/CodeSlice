@@ -104,7 +104,15 @@ export function ConversationCards({
                   }
                   onBlur={() => onHoverRange(null)}
                 >
-                  <span className="code-card-title">{conversation.title}</span>
+                  <span className="code-card-title">
+                    {conversation.note_title ?? conversation.title}
+                  </span>
+                  {conversation.note_title ? (
+                    <span className="code-card-kind" title="这条卡片显示的是它生成的知识点笔记标题">
+                      <Icon name="notes" size={10} />
+                      知识点
+                    </span>
+                  ) : null}
 
                   {conversation.has_note && conversation.note_id ? (
                     <button

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import ProjectDep, TokenDep
 from app.core.errors import NotFound
-from app.services import anchors, notes_export, notes_index
+from app.services import anchors, notegen, notes_export, notes_index
 from app.storage import repo
 
 router = APIRouter(tags=["notes"])
@@ -53,6 +53,25 @@ def _index_note(note: dict[str, Any]) -> dict[str, Any]:
 @router.get("/notes")
 def list_notes(_: TokenDep, project_id: int) -> list[dict[str, Any]]:
     return _with_index_state(repo.list_notes(project_id), project_id)
+
+
+@router.get("/notes/{note_id}")
+def get_note(note_id: int, _: TokenDep) -> dict[str, Any]:
+    """One note with its index state — the reader pane reloads through this."""
+    note = repo.get_note(note_id)
+    if note is None:
+        raise NotFound("note not found")
+    return _with_index_state([note], int(note["project_id"]))[0]
+
+
+@router.post("/notes/{note_id}/retitle")
+def retitle_note(note_id: int, _: TokenDep) -> dict[str, Any]:
+    """Rewrite a legacy "关于 X 第 N-M 行" title as a knowledge point.
+
+    A model failure returns the unchanged note with ``retitle_failed`` instead of
+    an error: the user still has their note, they just have to title it by hand.
+    """
+    return notegen.retitle(note_id)
 
 
 @router.post("/notes")

@@ -30,13 +30,23 @@ from app.services import notes_index, paths
 from app.storage import repo
 
 MAX_ANSWER_CHARS = 8000
+MAX_CONVERSATION_CHARS = 12000
 MAX_CODE_REFS = 4
 MAX_REF_LINES = 40
 MAX_REF_CHARS = 1600
+# Reasoning models spend part of the output budget on hidden reasoning, so a
+# note call is given more room than the user's default and retried once with a
+# larger budget if the first attempt reasons itself out of any visible text.
+NOTE_MAX_TOKENS = 4096
+NOTE_RETRY_MAX_TOKENS = 8192
 
 NOTE_PROMPT = """你在帮一位读者把一次代码讲解整理成可长期保存的阅读笔记。
 
-请严格输出三个 Markdown 二级标题小节，标题文字必须完全一致，顺序也一致：
+请严格输出四个 Markdown 二级标题小节，标题文字必须完全一致，顺序也一致：
+
+## 标题
+用 6-18 个汉字概括这次讲解的知识点本身，例如「LangGraph 中断后的恢复流程」。
+不要出现文件名、路径、行号、反引号，不要以「关于」开头。
 
 ## 知识点
 这段代码/这个概念到底在做什么。用 2-4 句话讲清楚机制，不要复述对话过程。
@@ -56,8 +66,31 @@ NOTE_PROMPT = """你在帮一位读者把一次代码讲解整理成可长期保
 本次对话的位置：{location}
 """
 
+# Only used to re-title an existing note, so it asks for one line and nothing else.
+RETITLE_PROMPT = """你在给一条已经保存的代码阅读笔记重新起标题。
+
+只输出一个标题，6-18 个汉字，概括这条笔记讲的知识点。
+不要引号、不要编号、不要解释、不要文件名、不要行号、不要以「关于」开头。
+
+笔记内容：
+"""
+
 _SECTION_ORDER = ("知识点", "要点", "何时使用")
 _HEADING_RE = re.compile(r"^#{1,6}\s*(.+?)\s*$")
+# A title must describe the knowledge, not where it came from: strip anything
+# shaped like `foo.py:12-30`, `README.md 第 357-359 行` or a bare `第 N 行`.
+_LOCATION_RE = re.compile(
+    r"\S*\.[A-Za-z0-9]{1,8}:\d+(?:-\d+)?"
+    r"|\S*\.[A-Za-z0-9]{1,8}\s*第\s*\d+(?:\s*[-–~]\s*\d+)?\s*行"
+    r"|第\s*\d+(?:\s*[-–~]\s*\d+)?\s*行"
+)
+_MARKUP_RE = re.compile(r"[#*`>\"'“”‘’]")
+# Transcript turn markers (`问：` / `答：`), which are never part of a title.
+_TURN_PREFIX_RE = re.compile(r"(?:^|\s)(?:问|答)\s*[：:]\s*")
+# Longest backtick run in a snippet, used to size the fence that wraps it.
+_FENCE_RUN_RE = re.compile(r"`+")
+TITLE_MAX_CHARS = 30
+TITLE_MIN_CUT = 12
 
 
 def _location(conversation: dict[str, Any]) -> str:
@@ -108,18 +141,62 @@ def split_sections(text: str) -> dict[str, str]:
     return sections
 
 
-def _code_refs(conversation: dict[str, Any], message: dict[str, Any]) -> list[dict[str, Any]]:
-    """Read the cited ranges from disk so the note keeps the real snippet."""
-    citations = message.get("citations") or []
-    if not citations and conversation.get("file_path"):
-        citations = [
-            {
-                "path": conversation["file_path"],
-                "start_line": conversation.get("start_line") or 1,
-                "end_line": conversation.get("end_line") or 1,
-                "symbol": None,
-            }
-        ]
+def _clip_title(line: str, limit: int = TITLE_MAX_CHARS) -> str:
+    """Cut an over-long title at a word or clause boundary instead of mid-token."""
+    if len(line) <= limit:
+        return line
+    window = line[:limit]
+    # Prefer the rightmost natural boundary that still leaves a usable title;
+    # landing on "笔记按当前打开的项目隔离，" beats keeping two more words.
+    for sep in ("，", ",", "、", "；", ";", "：", " ", "·"):
+        cut = window.rfind(sep)
+        if cut >= TITLE_MIN_CUT:
+            return window[:cut].rstrip(" -—:：·|/、,，.。")
+    # No boundary: do not slice an ASCII identifier in half (`/api/note` → `/api/no`).
+    end = limit
+    while end > TITLE_MIN_CUT and window[end - 1].isascii() and window[end - 1].isalnum():
+        end -= 1
+    return window[:end].rstrip(" -—:：·|/、,，.。")
+
+
+def _clean_title(text: str) -> str:
+    """Turn model output into a knowledge-point title, or ``""`` if unusable.
+
+    Notes used to be titled after their code range ("关于 README.md 第 357-359
+    行"), which says nothing about what was learned. Anything that still carries a
+    location is rejected here so the caller can fall back to the prose instead of
+    storing a title that is really a file pointer.
+    """
+    line = (text or "").strip().splitlines()[0].strip() if (text or "").strip() else ""
+    if not line:
+        return ""
+    line = _HEADING_RE.sub(r"\1", line)
+    line = _MARKUP_RE.sub("", line)
+    line = _LOCATION_RE.sub(" ", line)
+    # Collapse the gaps the location strip leaves behind.
+    line = " ".join(line.split()).strip(" -—:：·|/、,，.。")
+    if not line or line.startswith("关于"):
+        return ""
+    return _clip_title(line)
+
+
+def _first_sentence(text: str, limit: int = TITLE_MAX_CHARS) -> str:
+    """Fallback title: the opening claim of the knowledge section, trimmed."""
+    body = " ".join(_strip_leading_h1(text or "").split())
+    # A whole-conversation transcript starts with turn markers; they would make
+    # the fallback title read "问：你好 答：你好" instead of describing anything.
+    body = _TURN_PREFIX_RE.sub("", body).strip()
+    if not body:
+        return ""
+    for stop in ("。", "！", "？", ".", "!", "?"):
+        cut = body.find(stop)
+        if 0 < cut <= limit:
+            return body[:cut].strip()
+    return _clip_title(body)
+
+
+def _refs_from_citations(conversation: dict[str, Any], citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Read cited ranges from disk so the note keeps the real snippets."""
     project = repo.get_project(int(conversation["project_id"]))
     if project is None:
         return []
@@ -151,6 +228,38 @@ def _code_refs(conversation: dict[str, Any], message: dict[str, Any]) -> list[di
             }
         )
     return out
+
+
+def _code_refs(conversation: dict[str, Any], message: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the cited ranges from disk so the note keeps the real snippet."""
+    citations = message.get("citations") or []
+    if not citations and conversation.get("file_path"):
+        citations = [
+            {
+                "path": conversation["file_path"],
+                "start_line": conversation.get("start_line") or 1,
+                "end_line": conversation.get("end_line") or 1,
+                "symbol": None,
+            }
+        ]
+    return _refs_from_citations(conversation, citations)
+
+
+def _conversation_refs(conversation: dict[str, Any], messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every range cited anywhere in the conversation, in first-seen order."""
+    citations: list[dict[str, Any]] = []
+    for message in messages:
+        citations.extend(message.get("citations") or [])
+    if not citations and conversation.get("file_path"):
+        citations = [
+            {
+                "path": conversation["file_path"],
+                "start_line": conversation.get("start_line") or 1,
+                "end_line": conversation.get("end_line") or 1,
+                "symbol": None,
+            }
+        ]
+    return _refs_from_citations(conversation, citations)
 
 
 def _read_range(root: Path, rel: str, start: int, end: int) -> str | None:
@@ -194,6 +303,20 @@ def _language_for(path: str) -> str:
     }.get(suffix, "")
 
 
+def _fence_for(code: str, language: str) -> tuple[str, str]:
+    """Pick a fence longer than any backtick run inside the snippet.
+
+    A cited Markdown file often contains fences of its own; wrapping it in the
+    usual three backticks would end the block early and spill the rest of the
+    note into the page as loose paragraphs.
+    """
+    longest = 3
+    for match in _FENCE_RUN_RE.finditer(code):
+        longest = max(longest, len(match.group(0)))
+    ticks = "`" * (longest + 1)
+    return f"{ticks}{language}", ticks
+
+
 def render_code_section(refs: list[dict[str, Any]]) -> str:
     if not refs:
         return "（这次讲解没有引用具体代码位置。）"
@@ -203,8 +326,8 @@ def render_code_section(refs: list[dict[str, Any]]) -> str:
         if ref.get("symbol"):
             header += f"（{ref['symbol']}）"
         if ref.get("code"):
-            fence = _language_for(str(ref["path"]))
-            parts.append(f"{header}\n\n```{fence}\n{ref['code']}\n```")
+            opening, closing = _fence_for(str(ref["code"]), _language_for(str(ref["path"])))
+            parts.append(f"{header}\n\n{opening}\n{ref['code']}\n{closing}")
         else:
             parts.append(f"{header}\n\n（引用位置的内容已读取不到，可能已被修改或删除。）")
     return "\n\n".join(parts)
@@ -240,28 +363,90 @@ def _fallback_sections(answer: str, refs: list[dict[str, Any]]) -> dict[str, str
     }
 
 
-def _model_sections(answer: str, conversation: dict[str, Any]) -> tuple[dict[str, str] | None, str | None]:
-    """One chat call for the prose sections; returns (sections, error)."""
-    try:
-        model = model_config.build_chat_model(temperature=0.2)
-    except Exception as exc:  # ConfigMissing or provider construction error
-        return None, str(getattr(exc, "detail", exc))[:300]
-    prompt = NOTE_PROMPT.format(location=_location(conversation))
-    try:
-        reply = model.invoke([("system", prompt), ("user", _truncate(answer))])
-    except Exception as exc:  # network / provider failure must not lose the note
-        return None, f"{type(exc).__name__}: {exc}"[:300]
-    content = getattr(reply, "content", "")
-    if isinstance(content, list):  # some providers return content parts
-        content = "\n".join(str(part) for part in content)
-    text = str(content).strip()
-    if not text:
-        return None, "模型没有返回笔记内容"
-    sections = split_sections(_strip_leading_h1(text))
-    if not any(sections.get(name) for name in _SECTION_ORDER):
-        # Model ignored the template: keep its prose as the knowledge section.
-        sections = {"知识点": text}
-    return sections, None
+def _model_sections(
+    answer: str,
+    conversation: dict[str, Any],
+    transcript: bool = False,
+) -> tuple[dict[str, str] | None, str | None]:
+    """One chat call for the prose sections; returns (sections, error).
+
+    A reasoning model can burn the whole output budget before emitting any
+    visible text, which looks like an empty reply with ``finish_reason:
+    "length"``. That is worth one retry with a bigger budget: an empty note tells
+    the reader nothing, while the second attempt usually succeeds.
+    """
+    location = _location(conversation)
+    if transcript:
+        location = f"{location}（整段会话，包含多轮问答）"
+    prompt = NOTE_PROMPT.format(location=location)
+    user = _truncate(answer, MAX_CONVERSATION_CHARS)
+
+    error: str | None = None
+    for budget in (NOTE_MAX_TOKENS, NOTE_RETRY_MAX_TOKENS):
+        try:
+            model = model_config.build_chat_model(temperature=0.2, max_tokens=budget)
+        except Exception as exc:  # ConfigMissing or provider construction error
+            return None, str(getattr(exc, "detail", exc))[:300]
+        try:
+            reply = model.invoke([("system", prompt), ("user", user)])
+        except Exception as exc:  # network / provider failure must not lose the note
+            return None, f"{type(exc).__name__}: {exc}"[:300]
+
+        content = getattr(reply, "content", "")
+        if isinstance(content, list):  # some providers return content parts
+            content = "\n".join(str(part) for part in content)
+        text = str(content).strip()
+        if text:
+            sections = split_sections(_strip_leading_h1(text))
+            if not any(sections.get(name) for name in _SECTION_ORDER):
+                # Model ignored the template: keep its prose as the knowledge section.
+                sections = {"知识点": text}
+            return sections, None
+
+        meta = getattr(reply, "response_metadata", None) or {}
+        usage = meta.get("token_usage") or {}
+        error = (
+            "模型没有返回内容"
+            f"（finish_reason={meta.get('finish_reason')!r}, completion_tokens={usage.get('completion_tokens')}）"
+        )
+    return None, error
+
+
+def _resolve_title(
+    sections: dict[str, str],
+    source: str,
+    project: dict[str, Any] | None,
+) -> str:
+    """Pick a knowledge-point title, falling back to the prose and then the project.
+
+    The conversation title is deliberately not consulted: for a snippet it reads
+    "关于 README.md 第 357-359 行", which describes the selection rather than what
+    the note teaches.
+    """
+    from_model = _clean_title(sections.get("标题", ""))
+    if from_model:
+        return from_model
+    from_prose = _clean_title(_first_sentence(sections.get("知识点", "") or source))
+    if from_prose:
+        return from_prose
+    return _default_title(project)
+
+
+def _store_note(
+    conversation: dict[str, Any],
+    conversation_id: str,
+    title: str,
+    content: str,
+) -> dict[str, Any]:
+    """Create or refresh the single note owned by a conversation."""
+    existing = repo.find_note_for_conversation(conversation_id)
+    if existing is not None:
+        note = repo.update_note(int(existing["id"]), title, content)
+    else:
+        note = repo.create_note(int(conversation["project_id"]), title, content, conversation_id)
+    if note is None:  # pragma: no cover - defensive, update_note only fails if deleted meanwhile
+        raise NotFound("note not found")
+    return note
 
 
 def generate(conversation_id: str, message_id: str) -> dict[str, Any]:
@@ -281,7 +466,6 @@ def generate(conversation_id: str, message_id: str) -> dict[str, Any]:
         raise InvalidInput("this message has no content to summarise")
 
     project = repo.get_project(int(conversation["project_id"]))
-    title = (conversation.get("title") or "").strip() or _default_title(project)
     refs = _code_refs(conversation, message)
 
     sections, error = _model_sections(body, conversation)
@@ -289,15 +473,9 @@ def generate(conversation_id: str, message_id: str) -> dict[str, Any]:
     if sections is None:
         sections = _fallback_sections(body, refs)
 
+    title = _resolve_title(sections, body, project)
     content = compose(title, sections, refs)
-
-    existing = repo.find_note_for_conversation(conversation_id)
-    if existing is not None:
-        note = repo.update_note(int(existing["id"]), title, content)
-    else:
-        note = repo.create_note(int(conversation["project_id"]), title, content, conversation_id)
-    if note is None:  # pragma: no cover - defensive, update_note only fails if deleted meanwhile
-        raise NotFound("note not found")
+    note = _store_note(conversation, conversation_id, title, content)
 
     indexed = _index_note(note)
     return {
@@ -309,9 +487,94 @@ def generate(conversation_id: str, message_id: str) -> dict[str, Any]:
     }
 
 
+def _transcript(messages: list[dict[str, Any]]) -> str:
+    """Flatten a conversation into ``问：/答：`` turns the model can summarise."""
+    turns: list[str] = []
+    for message in messages:
+        role = message.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        body = (message.get("content") or "").strip()
+        if not body:
+            continue
+        turns.append(f"{'问' if role == 'user' else '答'}：{body}")
+    return _truncate("\n\n".join(turns), MAX_CONVERSATION_CHARS)
+
+
+def generate_from_conversation(conversation_id: str) -> dict[str, Any]:
+    """Summarise every turn of a conversation into one knowledge-point note.
+
+    A long reading session drifts across files, so a per-answer note misses the
+    thread. This folds the whole session into one note while still collecting
+    every cited range into ``## 关联代码``.
+    """
+    conversation = repo.get_conversation(conversation_id)
+    if conversation is None:
+        raise NotFound("conversation not found")
+
+    messages = [m for m in repo.list_messages(conversation_id) if m.get("role") in {"user", "assistant"}]
+    transcript = _transcript(messages)
+    if not transcript.strip():
+        raise InvalidInput("this conversation has no content to summarise")
+
+    project = repo.get_project(int(conversation["project_id"]))
+    refs = _conversation_refs(conversation, messages)
+
+    sections, error = _model_sections(transcript, conversation, transcript=True)
+    summary_failed = sections is None
+    if sections is None:
+        sections = _fallback_sections(transcript, refs)
+
+    title = _resolve_title(sections, transcript, project)
+    content = compose(title, sections, refs)
+    note = _store_note(conversation, conversation_id, title, content)
+
+    indexed = _index_note(note)
+    return {
+        **note,
+        "summary_failed": summary_failed,
+        "summary_error": error,
+        "indexed": indexed,
+        "refs": len(refs),
+    }
+
+
+def retitle(note_id: int) -> dict[str, Any]:
+    """Ask the model for a knowledge-point title and keep the note if it fails.
+
+    Older notes carry titles like "关于 README.md 第 357-359 行"; this rewrites one
+    in place. A failed model call must not lose the note, so it reports
+    ``retitle_failed`` and leaves the stored title untouched.
+    """
+    note = repo.get_note(note_id)
+    if note is None:
+        raise NotFound("note not found")
+
+    body = str(note.get("content_md") or "")[:4000]
+    title: str | None = None
+    try:
+        model = model_config.build_chat_model(temperature=0.2)
+        reply = model.invoke([("system", RETITLE_PROMPT), ("user", body)])
+        content = getattr(reply, "content", "")
+        if isinstance(content, list):
+            content = "\n".join(str(part) for part in content)
+        title = _clean_title(str(content))
+    except Exception:  # any provider problem keeps the existing title
+        title = None
+
+    if not title:
+        return {**note, "retitle_failed": True, "indexed": note.get("indexed", False)}
+
+    updated = repo.update_note(note_id, title, None)
+    if updated is None:  # pragma: no cover - deleted between the two calls
+        raise NotFound("note not found")
+    indexed = _index_note(updated)
+    return {**updated, "retitle_failed": False, "indexed": indexed}
+
+
 def _default_title(project: dict[str, Any] | None) -> str:
     name = (project or {}).get("name") or "项目"
-    return f"{name} 阅读笔记"
+    return f"{name} · 阅读笔记"
 
 
 def _index_note(note: dict[str, Any]) -> bool:

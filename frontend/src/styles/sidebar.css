@@ -538,6 +538,16 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* The note currently open in the reader, so the list matches the main pane. */
+.note-item.selected {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.note-item.selected .note-title {
+  color: var(--text);
+}
+
 .note-item .note-head {
   display: flex;
   align-items: center;

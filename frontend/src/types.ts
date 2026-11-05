@@ -202,6 +202,12 @@ export interface Conversation {
   has_note?: boolean
   /** Id of that note, so the card can jump straight to it. */
   note_id?: number | null
+  /**
+   * Title of that note, shown on the floating label of a code range so a
+   * snippet that has been distilled reads as its knowledge point rather than
+   * its "关于 X 第 N-M 行" conversation title.
+   */
+  note_title?: string | null
 }
 
 export interface Citation {

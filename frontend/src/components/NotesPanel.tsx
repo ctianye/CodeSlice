@@ -14,9 +14,16 @@ function preview(content: string): string {
   return body || content.trim()
 }
 
-/** Notes for the current project, with inline create/edit and Markdown export. */
+/**
+ * Notes for the current project.
+ *
+ * Opening a note hands it to the main pane (see `NoteReader`) instead of growing
+ * an editor inside this narrow column: the note is rendered Markdown there, with
+ * its code references clickable. The sidebar stays a list plus quick actions.
+ */
 export function NotesPanel(): ReactNode {
-  const { project, activeConversationId, refreshKey, bumpRefresh, focusNoteId, focusNote } = useApp()
+  const { project, activeConversationId, refreshKey, bumpRefresh, focusNoteId, focusNote, noteView, openNoteView } =
+    useApp()
   const projectId = project?.id ?? null
   const { data, error, loading, reload } = useAsync(
     (signal) => (projectId ? api.listNotes(projectId, signal) : Promise.resolve([])),
@@ -24,41 +31,50 @@ export function NotesPanel(): ReactNode {
     { enabled: projectId !== null },
   )
 
-  const [editing, setEditing] = useState<Note | 'new' | null>(null)
+  const [creating, setCreating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [exportingId, setExportingId] = useState<number | null>(null)
+  const [busyId, setBusyId] = useState<number | null>(null)
+  const [newTitle, setNewTitle] = useState('')
+  const [newContent, setNewContent] = useState('')
 
-  // A code card can ask "open this note"; honour it once the list has loaded.
+  // A code card or a note citation can ask for one specific note: open it in the
+  // reader once the list has loaded, then clear the request.
   useEffect(() => {
     if (focusNoteId === null || !data) return
     const target = data.find((note) => note.id === focusNoteId)
-    if (target) setEditing(target)
+    if (target) openNoteView(target)
     focusNote(null)
-  }, [focusNoteId, data, focusNote])
+  }, [focusNoteId, data, focusNote, openNoteView])
 
   if (projectId === null) {
     return <EmptyState icon="notes" title="还没有打开项目" hint="先添加一个本地代码目录，再记录笔记。" />
   }
 
-  const save = async (title: string, content: string) => {
+  const startNew = () => {
+    setCreating(true)
+    setActionError(null)
+    setNotice(null)
+    setNewTitle('')
+    setNewContent('')
+  }
+
+  const saveNew = async () => {
+    if (newTitle.trim() === '' || newContent.trim() === '') return
     setSaving(true)
     setActionError(null)
     try {
-      if (editing === 'new' || editing === null) {
-        await api.createNote({
-          project_id: projectId,
-          title,
-          content_md: content,
-          conversation_id: activeConversationId,
-        })
-      } else {
-        await api.updateNote(editing.id, { title, content_md: content })
-      }
-      setEditing(null)
+      const note = await api.createNote({
+        project_id: projectId,
+        title: newTitle.trim(),
+        content_md: newContent,
+        conversation_id: activeConversationId,
+      })
+      setCreating(false)
       bumpRefresh()
       reload()
+      openNoteView(note)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -71,7 +87,7 @@ export function NotesPanel(): ReactNode {
     setActionError(null)
     try {
       await api.deleteNote(note.id)
-      if (editing !== null && editing !== 'new' && editing.id === note.id) setEditing(null)
+      if (noteView?.id === note.id) openNoteView(null)
       bumpRefresh()
       reload()
     } catch (err) {
@@ -80,7 +96,7 @@ export function NotesPanel(): ReactNode {
   }
 
   const exportNote = async (note: Note) => {
-    setExportingId(note.id)
+    setBusyId(note.id)
     setActionError(null)
     setNotice(null)
     try {
@@ -89,7 +105,24 @@ export function NotesPanel(): ReactNode {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
-      setExportingId(null)
+      setBusyId(null)
+    }
+  }
+
+  const retitle = async (note: Note) => {
+    setBusyId(note.id)
+    setActionError(null)
+    setNotice(null)
+    try {
+      const updated = await api.retitleNote(note.id)
+      if (noteView?.id === note.id) openNoteView(updated)
+      setNotice(updated.retitle_failed ? '模型没能给出更好的标题，已保留原标题' : `标题已更新为「${updated.title}」`)
+      bumpRefresh()
+      reload()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -98,13 +131,7 @@ export function NotesPanel(): ReactNode {
   return (
     <div className="sidebar-section">
       <div className="sidebar-toolbar">
-        <button
-          type="button"
-          className="small"
-          onClick={() => setEditing('new')}
-          disabled={saving}
-          title="新建一条阅读笔记"
-        >
+        <button type="button" className="small" onClick={startNew} disabled={saving} title="新建一条阅读笔记">
           <Icon name="plus" size={12} />
           新建笔记
         </button>
@@ -112,13 +139,7 @@ export function NotesPanel(): ReactNode {
         <span className="tag" title="笔记数量">
           {notes.length}
         </span>
-        <button
-          type="button"
-          className="icon"
-          onClick={reload}
-          title="刷新笔记"
-          aria-label="刷新笔记"
-        >
+        <button type="button" className="icon" onClick={reload} title="刷新笔记" aria-label="刷新笔记">
           <Icon name="refresh" size={13} />
         </button>
       </div>
@@ -132,26 +153,45 @@ export function NotesPanel(): ReactNode {
           </div>
         ) : null}
 
-        {editing !== null ? (
-          <NoteEditor
-            key={editing === 'new' ? 'new' : editing.id}
-            initial={editing === 'new' ? null : editing}
-            saving={saving}
-            onCancel={() => setEditing(null)}
-            onSave={save}
-          />
+        {creating ? (
+          <div className="note-editor">
+            <input
+              placeholder="知识点标题，例如「审批中断是如何恢复的」"
+              value={newTitle}
+              aria-label="笔记标题"
+              onChange={(event) => setNewTitle(event.target.value)}
+              autoFocus
+            />
+            <textarea
+              placeholder="支持 Markdown 的笔记内容"
+              aria-label="笔记内容"
+              rows={6}
+              value={newContent}
+              onChange={(event) => setNewContent(event.target.value)}
+            />
+            <div className="actions">
+              <button type="button" className="small ghost" onClick={() => setCreating(false)} disabled={saving}>
+                取消
+              </button>
+              <span className="spacer" />
+              <button
+                type="button"
+                className="small primary"
+                disabled={saving || newTitle.trim() === '' || newContent.trim() === ''}
+                onClick={() => void saveNew()}
+              >
+                {saving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {loading && !data ? <Loading /> : null}
         {error ? <ErrorNote message={error} onRetry={reload} /> : null}
 
-        {!loading && !error && notes.length === 0 && editing === null ? (
-          <EmptyState
-            icon="notes"
-            title="还没有笔记"
-            hint="阅读过程中把结论记下来，之后可以随时回到这里。"
-          >
-            <button type="button" className="small primary" onClick={() => setEditing('new')}>
+        {!loading && !error && notes.length === 0 && !creating ? (
+          <EmptyState icon="notes" title="还没有笔记" hint="阅读过程中把结论记下来，之后可以随时回到这里。">
+            <button type="button" className="small primary" onClick={startNew}>
               新建笔记
             </button>
           </EmptyState>
@@ -159,15 +199,15 @@ export function NotesPanel(): ReactNode {
 
         {notes.map((note) => (
           <div
-            className="note-item"
+            className={`note-item${noteView?.id === note.id ? ' selected' : ''}`}
             key={note.id}
-            onClick={() => setEditing(note)}
+            onClick={() => openNoteView(note)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') setEditing(note)
+              if (event.key === 'Enter') openNoteView(note)
             }}
             role="button"
             tabIndex={0}
-            title="点击编辑这条笔记"
+            title="在代码区打开这条笔记"
           >
             <div className="note-head">
               <span className="note-title">{note.title}</span>
@@ -177,25 +217,26 @@ export function NotesPanel(): ReactNode {
                   className="icon"
                   onClick={(event) => {
                     event.stopPropagation()
-                    void exportNote(note)
+                    void retitle(note)
                   }}
-                  disabled={exportingId === note.id}
-                  title="导出为 Markdown 文件"
-                  aria-label={`导出笔记 ${note.title}`}
+                  disabled={busyId === note.id}
+                  title="让模型根据内容重新起一个知识点标题"
+                  aria-label={`重拟标题 ${note.title}`}
                 >
-                  <Icon name="download" size={12} />
+                  <Icon name="sparkles" size={12} />
                 </button>
                 <button
                   type="button"
                   className="icon"
                   onClick={(event) => {
                     event.stopPropagation()
-                    setEditing(note)
+                    void exportNote(note)
                   }}
-                  title="编辑笔记"
-                  aria-label={`编辑笔记 ${note.title}`}
+                  disabled={busyId === note.id}
+                  title="导出为 Markdown 文件"
+                  aria-label={`导出笔记 ${note.title}`}
                 >
-                  <Icon name="pencil" size={12} />
+                  <Icon name="download" size={12} />
                 </button>
                 <button
                   type="button"
@@ -222,53 +263,6 @@ export function NotesPanel(): ReactNode {
             </div>
           </div>
         ))}
-      </div>
-    </div>
-  )
-}
-
-interface NoteEditorProps {
-  initial: Note | null
-  saving: boolean
-  onCancel: () => void
-  onSave: (title: string, content: string) => void
-}
-
-function NoteEditor({ initial, saving, onCancel, onSave }: NoteEditorProps): ReactNode {
-  const [title, setTitle] = useState(initial?.title ?? '')
-  const [content, setContent] = useState(initial?.content_md ?? '')
-
-  const canSave = title.trim() !== '' && content.trim() !== '' && !saving
-
-  return (
-    <div className="note-editor">
-      <input
-        placeholder="笔记标题"
-        value={title}
-        aria-label="笔记标题"
-        onChange={(event) => setTitle(event.target.value)}
-        autoFocus
-      />
-      <textarea
-        placeholder="支持 Markdown 的笔记内容"
-        aria-label="笔记内容"
-        rows={5}
-        value={content}
-        onChange={(event) => setContent(event.target.value)}
-      />
-      <div className="actions">
-        <button type="button" className="small ghost" onClick={onCancel} disabled={saving}>
-          取消
-        </button>
-        <span className="spacer" />
-        <button
-          type="button"
-          className="small primary"
-          disabled={!canSave}
-          onClick={() => onSave(title.trim(), content)}
-        >
-          {saving ? '保存中…' : '保存'}
-        </button>
       </div>
     </div>
   )

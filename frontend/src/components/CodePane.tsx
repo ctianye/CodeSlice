@@ -1,6 +1,6 @@
 import type { editor as MonacoEditor } from 'monaco-editor'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
 import type { Conversation, FileContent, GitStatus } from '../types'
 import { useAsync } from '../hooks/useAsync'
@@ -11,6 +11,10 @@ import { CodeViewer } from './CodeViewer'
 import { ConversationCards } from './ConversationCards'
 import { ErrorNote, Loading } from './Feedback'
 import { Icon } from './Icon'
+import type { FrameZoneItem } from './editor/frameZones'
+import { createFrameZones } from './editor/frameZones'
+import { frameDecorations, hoverDecorations } from './editor/decorations'
+import { attachGutterSelection } from './editor/gutterSelection'
 
 export interface SnippetSelection {
   path: string
@@ -35,7 +39,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     setSidebarTab,
     refreshKey,
     bumpRefresh,
-    focusNote,
+    openNoteView,
   } = useApp()
   const projectId = project?.id ?? null
   const path = openFile?.path ?? null
@@ -65,43 +69,91 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   )
 
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
-  const decorationsRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
-  const cardRangeRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const citationRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const hoverRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const frameRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const zonesRef = useRef<{ update: (items: FrameZoneItem[]) => void; dispose: () => void } | null>(null)
+  const detachRef = useRef<(() => void) | null>(null)
+  // Flipped once Monaco is mounted; the decoration effects depend on it because
+  // `editorRef` alone is not a dependency React can track.
+  const [ready, setReady] = useState(false)
   const [selection, setSelection] = useState<{ start: number; end: number; code: string } | null>(null)
   const [hoverRange, setHoverRange] = useState<{ start: number; end: number } | null>(null)
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [cardError, setCardError] = useState<string | null>(null)
 
-  const onMount = useCallback((instance: MonacoEditor.IStandaloneCodeEditor) => {
-    editorRef.current = instance
-    decorationsRef.current = instance.createDecorationsCollection([])
-    cardRangeRef.current = instance.createDecorationsCollection([])
-    instance.onDidChangeCursorSelection(() => updateSelection(instance))
-    // The pane can be laid out before the mount box has its final height (the
-    // card strip above it renders a frame later); one explicit layout pass
-    // avoids a zero-sized editor in that case.
-    requestAnimationFrame(() => instance.layout())
-  }, [])
-
-  const updateSelection = (instance: MonacoEditor.IStandaloneCodeEditor) => {
+  const updateSelection = useCallback((instance: MonacoEditor.IStandaloneCodeEditor) => {
     const model = instance.getModel()
     const range = instance.getSelection()
-    if (!model || !range) {
-      setSelection(null)
-      return
-    }
-    if (range.isEmpty()) {
+    if (!model || !range || range.isEmpty()) {
       setSelection(null)
       return
     }
     // A selection ending at column 1 of a line does not include that line.
-    const startLine = range.startLineNumber
-    const endLine = range.endColumn === 1 && range.endLineNumber > range.startLineNumber
-      ? range.endLineNumber - 1
-      : range.endLineNumber
+    const endLine =
+      range.endColumn === 1 && range.endLineNumber > range.startLineNumber
+        ? range.endLineNumber - 1
+        : range.endLineNumber
     const code = model.getValueInRange(range).replace(/\n+$/, '')
-    setSelection({ start: startLine, end: endLine, code })
-  }
+    setSelection({ start: range.startLineNumber, end: endLine, code })
+  }, [])
+
+  const onMount = useCallback(
+    (instance: MonacoEditor.IStandaloneCodeEditor) => {
+      editorRef.current = instance
+      citationRef.current = instance.createDecorationsCollection([])
+      hoverRef.current = instance.createDecorationsCollection([])
+      frameRef.current = instance.createDecorationsCollection([])
+      zonesRef.current = createFrameZones(instance)
+      setReady(true)
+
+      const selectionListener = instance.onDidChangeCursorSelection(() => updateSelection(instance))
+      // Clicking a line number selects that line; dragging over the numbers sweeps
+      // a range. Monaco's `selectOnLineNumbers` can only ever pick one line.
+      const detachGutter = attachGutterSelection({
+        editor: instance,
+        onSelectLine: (line) => {
+          instance.setSelection({
+            startLineNumber: line,
+            startColumn: 1,
+            endLineNumber: line,
+            endColumn: instance.getModel()?.getLineMaxColumn(line) ?? 1,
+          })
+          instance.focus()
+        },
+        // The live drag already moved the model selection; the listener above
+        // turns it into the selection bar, so nothing extra is needed here.
+        onSelectRange: () => undefined,
+      })
+      detachRef.current = () => {
+        selectionListener.dispose()
+        detachGutter()
+      }
+
+      // The pane can be laid out before the mount box has its final height (the
+      // card strip above it renders a frame later); one explicit layout pass
+      // avoids a zero-sized editor in that case.
+      requestAnimationFrame(() => {
+        if (!instance.getModel()) return
+        instance.layout()
+      })
+    },
+    [updateSelection],
+  )
+
+  // Release Monaco listeners before the instance is disposed, otherwise a
+  // listener can fire into a torn-down editor when the pane swaps to NoteReader.
+  useEffect(
+    () => () => {
+      detachRef.current?.()
+      detachRef.current = null
+      zonesRef.current?.dispose()
+      zonesRef.current = null
+      editorRef.current = null
+      setReady(false)
+    },
+    [],
+  )
 
   // Reveal a cited range whenever the app asks for it (citation chip click).
   useEffect(() => {
@@ -112,49 +164,84 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     const maxLine = model.getLineCount()
     const from = Math.max(1, Math.min(revealTarget.start_line, maxLine))
     const to = Math.max(from, Math.min(revealTarget.end_line, maxLine))
-    decorationsRef.current?.set([
+    citationRef.current?.set([
       {
-        range: {
-          startLineNumber: from,
-          startColumn: 1,
-          endLineNumber: to,
-          endColumn: model.getLineMaxColumn(to),
-        },
+        range: { startLineNumber: from, startColumn: 1, endLineNumber: to, endColumn: model.getLineMaxColumn(to) },
         options: { isWholeLine: true, className: 'citation-highlight', inlineClassName: 'citation-line-flash' },
       },
     ])
     instance.revealLineInCenter(from)
   }, [revealTarget, openFile, file.data])
 
+  // Outline every conversation range so anchored code is visible without a
+  // selection. Runs on card data, file changes and editor (re)creation.
+  useEffect(() => {
+    const instance = editorRef.current
+    const collection = frameRef.current
+    const model = instance?.getModel()
+    if (!instance || !collection || !model) return
+    const spans = (cards.data ?? []).flatMap((card) =>
+      card.start_line === null
+        ? []
+        : [{ start: card.start_line, end: card.end_line ?? card.start_line }],
+    )
+    collection.set(frameDecorations(model, spans))
+  }, [cards.data, file.data, ready])
+
+  // Tint the lines a hovered code card covers, without touching the citation
+  // highlight collection.
+  useEffect(() => {
+    const instance = editorRef.current
+    const collection = hoverRef.current
+    const model = instance?.getModel()
+    if (!instance || !collection || !model) return
+    collection.set(hoverDecorations(model, hoverRange))
+  }, [hoverRange, file.data, ready])
+
   // Drop stale decorations when switching files.
   useEffect(() => {
-    decorationsRef.current?.clear()
-    cardRangeRef.current?.clear()
+    citationRef.current?.clear()
+    hoverRef.current?.clear()
+    frameRef.current?.clear()
+    // Zones survive a model swap, so drop the old file's strips before the new
+    // cards arrive; otherwise they would sit on lines the new file may not have.
+    zonesRef.current?.update([])
     setSelection(null)
     setHoverRange(null)
   }, [path])
 
-  // Tint the lines a hovered code card covers, without touching the editor's
-  // own content or the citation highlight collection.
-  useEffect(() => {
-    const instance = editorRef.current
-    const collection = cardRangeRef.current
-    if (!instance || !collection) return
-    const model = instance.getModel()
-    if (!model || !hoverRange) {
-      collection.clear()
-      return
+  const zoneItems = useMemo<FrameZoneItem[]>(() => {
+    const list = cards.data ?? []
+    // One title per range: several conversations over the same lines would
+    // otherwise stack strips on top of each other.
+    const seen = new Set<string>()
+    const items: FrameZoneItem[] = []
+    for (const card of list) {
+      if (card.start_line === null) continue
+      const end = card.end_line ?? card.start_line
+      const key = `${card.start_line}-${end}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      items.push({
+        key,
+        start: card.start_line,
+        label: card.note_title ?? card.title,
+        active: card.id === activeConversationId,
+        onClick: () => {
+          setActiveConversationId(card.id)
+          setSidebarTab('chats')
+        },
+      })
     }
-    const maxLine = model.getLineCount()
-    const from = Math.max(1, Math.min(hoverRange.start, maxLine))
-    const to = Math.max(from, Math.min(hoverRange.end, maxLine))
-    collection.set([
-      {
-        range: { startLineNumber: from, startColumn: 1, endLineNumber: to, endColumn: model.getLineMaxColumn(to) },
-        options: { isWholeLine: true, className: 'conversation-card-highlight' },
-      },
-    ])
-  }, [hoverRange, file.data])
+    return items
+  }, [cards.data, activeConversationId, setActiveConversationId, setSidebarTab])
+
+  // Reserve a title strip above every framed range. The zone belongs to the
+  // view, not to the model, so it has to be refreshed whenever the cards change
+  // — and once more when Monaco finishes mounting.
+  useEffect(() => {
+    zonesRef.current?.update(zoneItems)
+  }, [zoneItems, file.data, ready])
 
   if (!project) {
     return (
@@ -178,7 +265,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <Icon name="file-code" size={20} />
           </span>
           <span className="big">选择左侧文件开始阅读</span>
-          <p>可以在编辑器中拖选代码行，然后点击「就这段提问」。</p>
+          <p>可以在编辑器中拖选代码行，或者点击行号选中整行。</p>
           <button onClick={onOpenFile} type="button">
             <Icon name="panel-left" size={12} />
             打开文件列表
@@ -202,7 +289,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
    *
    * The card only knows the conversation, not the message id, so the detail is
    * fetched first. Failures are surfaced inline instead of silently doing
-   * nothing, and the card flips to the "笔记" state on success.
+   * nothing, and the result opens in the note reader.
    */
   const generateNote = async (conversation: Conversation) => {
     setNoteBusyId(conversation.id)
@@ -214,7 +301,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       const note = await api.createNoteFromMessage(conversation.id, answer.id)
       bumpRefresh()
       cards.reload()
-      focusNote(note.id)
+      openNoteView(note)
     } catch (err) {
       setCardError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -222,8 +309,15 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     }
   }
 
-  const openNote = (conversation: Conversation) => {
-    if (conversation.note_id) focusNote(conversation.note_id)
+  const openNote = async (conversation: Conversation) => {
+    if (!conversation.note_id) return
+    setCardError(null)
+    try {
+      const note = await api.getNote(conversation.note_id)
+      openNoteView(note)
+    } catch (err) {
+      setCardError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   return (
@@ -290,7 +384,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
                 endLineNumber: selection.start,
                 endColumn: 1,
               })
-              decorationsRef.current?.clear()
+              citationRef.current?.clear()
               setSelection(null)
             }}
             type="button"
@@ -308,7 +402,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         noteBusyId={noteBusyId}
         onOpen={openConversation}
         onGenerateNote={(conversation) => void generateNote(conversation)}
-        onOpenNote={openNote}
+        onOpenNote={(conversation) => void openNote(conversation)}
         onHoverRange={setHoverRange}
       />
 

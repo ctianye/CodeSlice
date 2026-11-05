@@ -122,8 +122,9 @@ body `{"project_id": int, "title": str | null, "file_path": str | null,
 ### GET /api/projects/{project_id}/conversations/by-file?path=
 → `[Conversation]`（绑定到该文件的会话，按起始行升序）
 `path` 是项目内相对路径，越界（如 `../x`）返回 400，文件不存在返回 404。编辑器里的代码卡片
-用这个端点列出某个文件上已有的对话；每条额外带 `has_note: bool` 与 `note_id: int | null`
-（该会话生成的笔记 id，卡片据此直接跳到笔记）。
+用这个端点列出某个文件上已有的对话；每条额外带 `has_note: bool`、`note_id: int | null`
+（该会话生成的笔记 id，卡片据此直接跳到笔记）与 `note_title: str | null`（笔记标题；代码卡片
+和编辑器里漂浮的知识点标签优先显示它，因为会话标题描述的是选区而不是知识点）。
 
 ### POST /api/conversations/{conversation_id}/messages/{message_id}/note
 把一条**助手**消息整理成保存在该项目下的阅读笔记（同会话已有笔记时覆盖更新）。
@@ -135,6 +136,16 @@ body `{"project_id": int, "title": str | null, "file_path": str | null,
 `## 关联代码` 由该消息的 citations 从磁盘读取原文渲染。
 **模型失败不再报 400**：仍然保存降级正文（原始回答 + 来源位置），置 `summary_failed=true`
 并在 `summary_error` 写明原因。`refs` 是关联代码段数，`indexed` 表示是否已写入检索索引。
+**标题描述知识点，不复用会话标题**：模型在 `## 标题` 一节给出 6–18 字的知识点概括，
+`_clean_title` 会剔除 `foo.py:12-30`、`第 N-M 行` 这类位置、markdown 标记与「关于」开头；
+清洗后为空则退回知识点首句，再退回 `<项目名> · 阅读笔记`。
+
+### POST /api/conversations/{conversation_id}/note
+把**整段会话**（所有 user/assistant 轮次）整理成一条笔记，返回体同上。
+长会话常跨多个文件，逐条回答生成笔记会丢掉主线，所以整段会话用一次模型调用折叠；
+`## 关联代码` 收集会话里出现过的全部引用（去重、按首次出现排序，上限 4 段）。
+该会话已有笔记时原地更新，因此单条生成与整段生成共用同一个 note 与同一个检索片段。
+会话没有任何内容时返回 400。
 
 ### GET /api/conversations/{conversation_id}
 → `{"conversation": Conversation, "messages": [Message], "pending_interrupt": Interrupt | null}`
@@ -176,6 +187,16 @@ body `{"interrupt_id": str, "decision": "approve"|"deny"|"approve_session"|"appr
 ### PUT/DELETE /api/notes/{note_id}
 PUT body `{"title"?, "content_md"?}` → `Note`（同步刷新其检索片段）。
 DELETE → `{"ok": true}`（同时删除对应检索片段与 FTS 行）。
+
+### GET /api/notes/{note_id}
+→ `Note`（带当前 `indexed` 状态）；笔记不存在 404。
+笔记阅读器靠它按 id 取整篇正文，不需要先拉列表。
+
+### POST /api/notes/{note_id}/retitle
+让模型读完正文重新起一个知识点标题，用于修正早期生成的、标题里带着文件名和行号的旧笔记。
+→ `Note & {"retitle_failed": bool}`；成功时写库并刷新检索片段，`retitle_failed=false`。
+**模型失败不报 500**：原样返回旧笔记并置 `retitle_failed=true`，避免用户点一下就把标题弄丢。
+笔记不存在 404。
 
 ### POST /api/notes/{note_id}/export
 把笔记写成项目 `.md` 文件，目录为 `<data_dir>/notes/<项目名>/`，重名自动加时间戳。

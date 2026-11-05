@@ -38,19 +38,26 @@ export const CodeViewer = memo(function CodeViewer({
         domReadOnly: true,
         lineNumbers: 'on',
         lineNumbersMinChars: 4,
+        // Clicking a gutter number selects that whole line; shift-click and
+        // dragging from the gutter then extend the selection line by line.
+        selectOnLineNumbers: true,
+        // Occurrence highlighting re-scans the whole buffer on every selection
+        // change, which is what made dragging feel sticky on large files.
+        occurrencesHighlight: 'off',
+        selectionHighlight: false,
+        matchBrackets: 'never',
+        renderLineHighlight: 'line',
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, 'Courier New', monospace",
         fontLigatures: true,
         fontSize: 12.5,
         lineHeight: 21,
-        renderLineHighlight: 'all',
         renderWhitespace: 'selection',
         smoothScrolling: true,
         cursorBlinking: 'smooth',
         wordWrap: 'off',
         contextmenu: false,
-        selectOnLineNumbers: false,
         glyphMargin: false,
         folding: true,
         unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false },

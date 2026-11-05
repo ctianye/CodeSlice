@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Citation, Project } from '../types'
+import type { Citation, Note, Project } from '../types'
 import { usePersistedState } from '../hooks/useAsync'
 
 export type AppTheme = 'dark' | 'light'
@@ -40,6 +40,15 @@ interface AppState {
   /** Note the notes panel should open; the panel clears it after focusing. */
   focusNoteId: number | null
   focusNote: (noteId: number | null) => void
+  /**
+   * Note currently shown in the main pane, rendered as readable Markdown.
+   *
+   * Notes used to open in a cramped inline editor inside the sidebar; reading a
+   * distilled knowledge point is the point of the feature, so it takes over the
+   * editor pane instead. `null` returns the pane to the code.
+   */
+  noteView: Note | null
+  openNoteView: (note: Note | null) => void
   theme: AppTheme
   setTheme: (theme: AppTheme) => void
 }
@@ -59,6 +68,7 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
   const [theme, setTheme] = usePersistedState<AppTheme>('codeslice.theme', 'light')
   const [sidebarTab, setSidebarTabState] = usePersistedState<SidebarTab>('codeslice.sidebarTab', 'files')
   const [focusNoteId, setFocusNoteId] = useState<number | null>(null)
+  const [noteView, setNoteView] = useState<Note | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -71,6 +81,7 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
           setActiveConversationIdState(null)
           setOpenFile(null)
           setRevealTarget(null)
+          setNoteView(null)
         }
         return next
       })
@@ -82,6 +93,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
     const from = start && start > 0 ? start : 1
     const to = end && end >= from ? end : from
     setOpenFile({ path, highlight: start || end ? { start: from, end: to } : null })
+    // Jumping to code means leaving the note that was open in the same pane.
+    setNoteView(null)
     setRevealTarget((prev) => ({ path, start_line: from, end_line: to, symbol: null, nonce: (prev?.nonce ?? 0) + 1 }))
   }, [])
 
@@ -98,6 +111,11 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
     setFocusNoteId(noteId)
     if (noteId !== null) setSidebarTabState('notes')
   }, [setSidebarTabState])
+
+  const openNoteView = useCallback((note: Note | null) => {
+    setNoteView(note)
+    if (note) setFocusNoteId(note.id)
+  }, [])
 
   const value = useMemo<AppState>(
     () => ({
@@ -116,6 +134,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setSidebarTab,
       focusNoteId,
       focusNote,
+      noteView,
+      openNoteView,
       theme,
       setTheme,
     }),
@@ -134,6 +154,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setSidebarTab,
       focusNoteId,
       focusNote,
+      noteView,
+      openNoteView,
       theme,
       setTheme,
     ],

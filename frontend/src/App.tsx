@@ -5,6 +5,7 @@ import { usePersistedState } from './hooks/useAsync'
 import { ChatPane } from './components/ChatPane'
 import { CodePane } from './components/CodePane'
 import type { SnippetSelection } from './components/CodePane'
+import { NoteReader } from './components/NoteReader'
 import { SettingsModal } from './components/SettingsModal'
 import { Sidebar } from './components/Sidebar'
 import { Splitter } from './components/Splitter'
@@ -17,7 +18,7 @@ import { useApp } from './state/AppState'
  * draggable splitters. Shows the welcome screen while no project is open.
  */
 export function App(): ReactNode {
-  const { project, setProjects, setProject, setActiveConversationId } = useApp()
+  const { project, setProjects, setProject, setActiveConversationId, noteView } = useApp()
   const [showWelcome, setShowWelcome] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [snippet, setSnippet] = useState<SnippetSelection | null>(null)
@@ -99,7 +100,13 @@ export function App(): ReactNode {
         <Splitter value={sidebarWidth} onChange={setSidebarWidth} min={200} max={520} label="调整侧边栏宽度" />
 
         <div className="pane" style={{ flex: '1 1 auto' }}>
-          <CodePane onAskSelection={setSnippet} onOpenFile={openFileList} />
+          {/* A note takes over the editor pane: reading it is the task, and the
+              sidebar is too narrow for rendered Markdown. Closing returns to code. */}
+          {noteView ? (
+            <NoteReader />
+          ) : (
+            <CodePane onAskSelection={setSnippet} onOpenFile={openFileList} />
+          )}
         </div>
 
         <Splitter

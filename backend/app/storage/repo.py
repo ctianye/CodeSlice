@@ -200,7 +200,9 @@ def list_conversations_by_file(project_id: int, file_path: str) -> list[dict[str
             """SELECT c.*, p.name AS project_name,
                       EXISTS(SELECT 1 FROM notes n WHERE n.conversation_id = c.id) AS has_note,
                       (SELECT n.id FROM notes n WHERE n.conversation_id = c.id
-                        ORDER BY n.id LIMIT 1) AS note_id
+                        ORDER BY n.id LIMIT 1) AS note_id,
+                      (SELECT n.title FROM notes n WHERE n.conversation_id = c.id
+                        ORDER BY n.id LIMIT 1) AS note_title
                  FROM conversations c
                  LEFT JOIN projects p ON p.id = c.project_id
                 WHERE c.project_id = ? AND c.file_path = ?

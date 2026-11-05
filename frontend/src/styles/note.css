@@ -1,0 +1,249 @@
+/* ------------------------------------------------------------------------- *
+ * Note reader — a saved knowledge point rendered as Markdown in the main pane.
+ * It replaces the code editor while open, so it needs its own toolbar/scroll
+ * structure that matches .editor-toolbar / .editor-mount in editor.css.
+ * ------------------------------------------------------------------------- */
+
+.note-reader {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-panel);
+  /* Lets the toolbar react to the pane's own width, not the window's. */
+  container-type: inline-size;
+}
+
+.note-reader-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.note-reader-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.note-reader-title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* Shrinks to whatever the actions leave over instead of forcing a wrap; the
+     h2 ellipsises and the full title stays available as its `title`. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.note-reader-title .label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.note-reader-title h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-reader-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* The relative timestamp is the first thing to go when space runs out; the
+   badge stays because it carries real state. */
+@container (max-width: 620px) {
+  .note-reader-meta .muted {
+    display: none;
+  }
+}
+
+.note-reader-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* Below ~560px the toolbar labels crowd the title, so the action buttons keep
+   only their icons (each carries a `title` and an aria-label). */
+@container (max-width: 560px) {
+  .note-reader-actions .ghost.small span {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .note-reader-actions .ghost.small span {
+    display: none;
+  }
+}
+
+.note-reader-actions .ghost.small {
+  gap: 4px;
+  height: 23px;
+  padding: 0 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.note-reader-actions .ghost.small:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.note-reader > .error-note,
+.note-reader > .notice {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+}
+
+.note-reader-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 22px 28px 40px;
+}
+
+/* Keep a comfortable measure: prose lines get unreadable past ~78 characters. */
+.note-doc {
+  max-width: 78ch;
+  margin: 0 auto;
+}
+
+.note-doc .md {
+  font-size: 13px;
+  line-height: 1.72;
+  color: var(--text);
+}
+
+.note-doc .md > :first-child {
+  margin-top: 0;
+}
+
+/* The renderer folds `#` and `##` into one class, so .md-h1 here is a section
+   heading (知识点 / 关联代码 / 要点 / 何时使用) — the note's own title was
+   already stripped before rendering and lives in the reader bar. */
+.note-doc .md-h1 {
+  margin: 26px 0 10px;
+  padding-bottom: 6px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.note-doc .md-h1:first-child {
+  margin-top: 0;
+}
+
+/* `###` inside 关联代码 is a code location such as `README.md:379-450`; it is
+   a label for the block below, not a headline. */
+.note-doc .md-h2 {
+  margin: 16px 0 6px;
+  padding: 0;
+  border: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+.note-doc .md-h3 {
+  margin: 14px 0 6px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.note-doc .md-code {
+  margin: 8px 0 14px;
+}
+
+/* --------------------------------- editing -------------------------------- */
+
+.note-reader-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px 20px 18px;
+}
+
+.note-reader-input {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.note-reader-textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.68;
+  resize: none;
+  tab-size: 2;
+}
+
+.note-reader-input:focus,
+.note-reader-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.note-reader-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+}
+
+.note-reader-edit-actions .primary,
+.note-reader-edit-actions .ghost {
+  gap: 4px;
+}
