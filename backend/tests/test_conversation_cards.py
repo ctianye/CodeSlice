@@ -215,6 +215,23 @@ def test_generate_note_from_assistant_message(client, tmp_path, conn_reset, echo
     assert cards[0]["note_id"] == body["id"]
 
 
+def test_note_chunk_does_not_repeat_the_title_heading(client, tmp_path, conn_reset, echo):
+    """Generated notes start with ``# <title>``; the chunk must not prepend it again."""
+    project = _make_project(tmp_path, "proj")
+    conversation = repo.create_conversation(
+        project["id"], "sample.py:2-3", mode="snippet", file_path="pkg/sample.py", start_line=2, end_line=3
+    )
+    answer = repo.add_message(conversation["id"], "assistant", "这个函数返回 1。")
+
+    echo()
+    body = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+
+    with repo.get_conn() as conn:
+        row = conn.execute("SELECT content FROM chunks WHERE path = ?", (f"note://{body['id']}",)).fetchone()
+    assert row is not None
+    assert row["content"].count("# sample.py:2-3") == 1, row["content"][:200]
+
+
 def test_note_citations_do_not_become_dead_code_blocks(client, tmp_path, conn_reset, echo):
     """A reply that cites an earlier note must not copy note:// paths into 关联代码.
 

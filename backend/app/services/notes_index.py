@@ -39,9 +39,15 @@ def note_id_from_path(path: str) -> int | None:
 
 
 def note_text(note: dict[str, Any]) -> str:
-    """The text that is stored and searched: title first, then the markdown."""
+    """The text that is stored and searched: title first, then the markdown.
+
+    A generated note already opens with ``# <title>``; prepending it again would
+    make every search hit show the same heading twice in the snippet.
+    """
     title = str(note.get("title") or "未命名笔记").strip()
     body = str(note.get("content_md") or "").strip()
+    if body.startswith(f"# {title}"):
+        return body
     return f"# {title}\n\n{body}".rstrip()
 
 
