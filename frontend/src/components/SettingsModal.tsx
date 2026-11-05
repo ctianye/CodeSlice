@@ -4,10 +4,11 @@ import * as api from '../api'
 import type { ModelConfig, ModelProtocol, ModelSettings, ModelTestResult } from '../types'
 import { usePersistedState } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
+import type { AppTheme } from '../state/AppState'
 import { CommandRulesPanel } from './CommandRulesPanel'
 import { ErrorNote, Loading } from './Feedback'
 
-type Tab = 'model' | 'rules' | 'about'
+type Tab = 'model' | 'rules' | 'appearance' | 'about'
 
 interface SettingsModalProps {
   onClose: () => void
@@ -42,6 +43,9 @@ export function SettingsModal({ onClose }: SettingsModalProps): ReactNode {
           <button className={tab === 'rules' ? 'active' : ''} onClick={() => setTab('rules')}>
             命令规则
           </button>
+          <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}>
+            外观
+          </button>
           <button className={tab === 'about' ? 'active' : ''} onClick={() => setTab('about')}>
             关于
           </button>
@@ -50,8 +54,25 @@ export function SettingsModal({ onClose }: SettingsModalProps): ReactNode {
         <div className="modal-body">
           {tab === 'model' ? <ModelSettingsForm /> : null}
           {tab === 'rules' ? <CommandRulesPanel /> : null}
+          {tab === 'appearance' ? <AppearancePanel /> : null}
           {tab === 'about' ? <AboutPanel /> : null}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function AppearancePanel(): ReactNode {
+  const { theme, setTheme } = useApp()
+  return (
+    <div>
+      <div className="section-label">主题</div>
+      <div className="theme-options" role="group" aria-label="界面主题">
+        {([['light', '浅色'], ['dark', '深色']] as [AppTheme, string][]).map(([value, label]) => (
+          <button key={value} className={`theme-option${theme === value ? ' active' : ''}`} aria-pressed={theme === value} onClick={() => setTheme(value)}>
+            <span className={`theme-swatch ${value}`} />{label}
+          </button>
+        ))}
       </div>
     </div>
   )

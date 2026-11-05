@@ -194,3 +194,9 @@
   align-items: center;
   margin-top: 8px;
 }
+.theme-options { display: flex; gap: 10px; }
+.theme-option { display: flex; align-items: center; gap: 8px; min-width: 112px; padding: 8px 10px; }
+.theme-option.active { border-color: var(--accent); color: var(--text); }
+.theme-swatch { width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: 4px; }
+.theme-swatch.light { background: linear-gradient(90deg, #fff 50%, #e9edf2 50%); }
+.theme-swatch.dark { background: linear-gradient(90deg, #0d1117 50%, #1a222d 50%); }

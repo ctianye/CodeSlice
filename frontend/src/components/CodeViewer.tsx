@@ -2,6 +2,7 @@ import Editor, { loader } from '@monaco-editor/react'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import type { ReactNode } from 'react'
 import { memo } from 'react'
+import { useApp } from '../state/AppState'
 
 // Serve Monaco from the bundle (scripts/copy-monaco.mjs copies node_modules →
 // public/monaco/vs) so the editor works with no network access.
@@ -22,12 +23,13 @@ export const CodeViewer = memo(function CodeViewer({
   language,
   onMountEditor,
 }: CodeViewerProps): ReactNode {
+  const { theme } = useApp()
   return (
     <Editor
       className="editor-surface"
       value={value}
       language={language}
-      theme="codeslice-dark"
+      theme={theme === 'dark' ? 'codeslice-dark' : 'codeslice-light'}
       options={{
         readOnly: true,
         domReadOnly: true,
@@ -41,7 +43,7 @@ export const CodeViewer = memo(function CodeViewer({
         smoothScrolling: true,
         wordWrap: 'off',
         contextmenu: false,
-        selectOnLineNumbers: true,
+        selectOnLineNumbers: false,
         padding: { top: 10, bottom: 10 },
         automaticLayout: true,
         scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
@@ -58,6 +60,19 @@ export const CodeViewer = memo(function CodeViewer({
             'editorLineNumber.activeForeground': '#8b98a8',
             'editor.selectionBackground': '#264a7a',
             'editorIndentGuide.background1': '#1b2430',
+          },
+        })
+        monaco.editor.defineTheme('codeslice-light', {
+          base: 'vs',
+          inherit: true,
+          rules: [],
+          colors: {
+            'editor.background': '#ffffff',
+            'editor.lineHighlightBackground': '#f2f5f8',
+            'editorLineNumber.foreground': '#a1aab5',
+            'editorLineNumber.activeForeground': '#596575',
+            'editor.selectionBackground': '#b9d8ff',
+            'editorIndentGuide.background1': '#e5e9ee',
           },
         })
       }}

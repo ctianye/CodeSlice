@@ -1,7 +1,9 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Citation, Project } from '../types'
 import { usePersistedState } from '../hooks/useAsync'
+
+export type AppTheme = 'dark' | 'light'
 
 /** A request to reveal + highlight a line range in the editor. */
 export interface RevealTarget extends Citation {
@@ -29,6 +31,8 @@ interface AppState {
   /** Bumped whenever conversations/notes should be re-fetched. */
   refreshKey: number
   bumpRefresh: () => void
+  theme: AppTheme
+  setTheme: (theme: AppTheme) => void
 }
 
 const AppContext = createContext<AppState | null>(null)
@@ -43,6 +47,11 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
     null,
   )
   const [refreshKey, setRefreshKey] = useState(0)
+  const [theme, setTheme] = usePersistedState<AppTheme>('codeslice.theme', 'light')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   const setProject = useCallback(
     (next: Project | null) => {
@@ -85,6 +94,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setActiveConversationId,
       refreshKey,
       bumpRefresh,
+      theme,
+      setTheme,
     }),
     [
       project,
@@ -97,6 +108,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setActiveConversationId,
       refreshKey,
       bumpRefresh,
+      theme,
+      setTheme,
     ],
   )
 

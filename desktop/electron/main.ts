@@ -232,8 +232,9 @@ async function createWindow(): Promise<void> {
     y: bounds.y,
     minWidth: 1000,
     minHeight: 640,
+    frame: false,
     show: false,
-    backgroundColor: '#0d1117',
+    backgroundColor: '#f4f6f8',
     title: 'CodeSlice',
     autoHideMenuBar: true,
     webPreferences: {
@@ -254,6 +255,8 @@ async function createWindow(): Promise<void> {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('codeslice:window-state', true))
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('codeslice:window-state', false))
 
   // External links open in the system browser, never inside the app shell.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -280,6 +283,20 @@ async function createWindow(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function registerIpc(info: BackendInfo): void {
+  ipcMain.handle('codeslice:window-minimize', () => mainWindow?.minimize())
+  ipcMain.handle('codeslice:window-toggle-maximize', () => {
+    if (!mainWindow) return false
+    if (mainWindow.isMaximized()) mainWindow.unmaximize()
+    else mainWindow.maximize()
+    return mainWindow.isMaximized()
+  })
+  ipcMain.handle('codeslice:window-close', () => mainWindow?.close())
+  ipcMain.handle('codeslice:window-is-maximized', () => mainWindow?.isMaximized() ?? false)
+
+  ipcMain.on('codeslice:window-state-subscribe', (event) => {
+    event.returnValue = mainWindow?.isMaximized() ?? false
+  })
+
   ipcMain.handle('codeslice:pick-folder', async () => {
     const parent = mainWindow ?? undefined
     const result = parent

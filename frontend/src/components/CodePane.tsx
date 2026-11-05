@@ -68,12 +68,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     const endLine = range.endColumn === 1 && range.endLineNumber > range.startLineNumber
       ? range.endLineNumber - 1
       : range.endLineNumber
-    const code = model.getValueInRange({
-      startLineNumber: startLine,
-      startColumn: 1,
-      endLineNumber: endLine,
-      endColumn: model.getLineMaxColumn(endLine),
-    })
+    const code = model.getValueInRange(range).replace(/\n+$/, '')
     setSelection({ start: startLine, end: endLine, code })
   }
 
@@ -98,7 +93,6 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       },
     ])
     instance.revealLineInCenter(from)
-    instance.setSelection({ startLineNumber: from, startColumn: 1, endLineNumber: to, endColumn: 1 })
   }, [revealTarget, openFile, file.data])
 
   // Drop stale decorations when switching files.

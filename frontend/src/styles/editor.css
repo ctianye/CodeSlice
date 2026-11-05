@@ -80,17 +80,24 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: #16233a;
-  border-top: 1px solid #24405f;
-  border-bottom: 1px solid #24405f;
+  background: var(--selection-bg, #16233a);
+  border-top: 1px solid var(--selection-border, #24405f);
+  border-bottom: 1px solid var(--selection-border, #24405f);
   font-size: 11px;
-  color: #bcd3f5;
+  color: var(--selection-text, #bcd3f5);
   flex: 0 0 auto;
 }
 
 .selection-bar .lines {
   font-family: var(--mono);
-  color: #8fb6ec;
+  color: var(--selection-line, #8fb6ec);
+}
+
+:root[data-theme='light'] {
+  --selection-bg: #eaf3ff;
+  --selection-border: #c8dbf2;
+  --selection-text: #365b86;
+  --selection-line: #3478d4;
 }
 
 .selection-bar .spacer {

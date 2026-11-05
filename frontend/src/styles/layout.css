@@ -15,7 +15,34 @@
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   user-select: none;
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
 }
+
+.topbar button,
+.topbar-actions,
+.window-controls { -webkit-app-region: no-drag; }
+
+.window-controls {
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  margin: 0 -12px 0 4px;
+}
+
+.window-control {
+  width: 44px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+}
+
+.window-control:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.window-control.close:hover:not(:disabled) { background: #c42b1c; color: white; }
 
 .topbar .brand {
   display: flex;
@@ -24,7 +51,7 @@
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.4px;
-  color: #e9f0fa;
+  color: var(--text);
 }
 
 .topbar .brand .dot {

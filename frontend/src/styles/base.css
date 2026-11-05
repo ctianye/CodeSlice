@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0d1117;
   --bg-panel: #10151d;
   --bg-elevated: #151b24;
@@ -17,6 +18,25 @@
   --radius: 6px;
   --mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
   --sans: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f7f8fa;
+  --bg-hover: #e9edf2;
+  --bg-active: #dce8f5;
+  --border: #dfe4ea;
+  --border-strong: #cbd3dc;
+  --text: #202a35;
+  --text-dim: #566372;
+  --text-faint: #788492;
+  --accent: #3478d4;
+  --accent-dim: #dceaff;
+  --ok: #23834a;
+  --warn: #9a6a05;
+  --danger: #b33d3d;
 }
 
 * {
@@ -67,6 +87,8 @@ button.primary {
   border-color: var(--accent);
   color: #eaf2ff;
 }
+
+:root[data-theme='light'] button.primary { color: #14385f; }
 
 button.primary:hover:not(:disabled) {
   background: #356cad;
