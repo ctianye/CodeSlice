@@ -96,7 +96,11 @@ async function main() {
 
   console.log('[dev] 正在启动 Vite 开发服务器…')
   track(
-    spawn(npmCmd, ['run', 'dev'], { cwd: frontendRoot, stdio: 'inherit', shell: process.platform === 'win32' }),
+    spawn(npmCmd, ['run', 'dev', '--', '--host', '127.0.0.1'], {
+      cwd: frontendRoot,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    }),
     'vite',
   )
   await waitForPort(DEV_PORT, '127.0.0.1')

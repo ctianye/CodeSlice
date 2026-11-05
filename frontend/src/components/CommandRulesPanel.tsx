@@ -4,7 +4,8 @@ import * as api from '../api'
 import type { CommandRule, RuleScope } from '../types'
 import { useAsync } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
-import { ErrorNote, Loading } from './Feedback'
+import { EmptyState, ErrorNote, Loading } from './Feedback'
+import { Icon } from './Icon'
 
 const SCOPE_LABEL: Record<RuleScope, string> = {
   once: '一次',
@@ -12,12 +13,15 @@ const SCOPE_LABEL: Record<RuleScope, string> = {
   always: '始终',
 }
 
+const SCOPES = Object.keys(SCOPE_LABEL) as RuleScope[]
+
 /** CRUD for per-project command approval rules. */
 export function CommandRulesPanel(): ReactNode {
   const { project } = useApp()
   const projectId = project?.id ?? null
   const rules = useAsync(
-    (signal) => (projectId ? api.listCommandRules(projectId, signal) : Promise.resolve<CommandRule[]>([])),
+    (signal) =>
+      projectId ? api.listCommandRules(projectId, signal) : Promise.resolve<CommandRule[]>([]),
     [projectId],
     { enabled: projectId !== null },
   )
@@ -28,7 +32,11 @@ export function CommandRulesPanel(): ReactNode {
   const [saving, setSaving] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  if (projectId === null) return <div className="list-empty">请先选择项目。</div>
+  if (projectId === null) {
+    return (
+      <EmptyState icon="terminal" title="还没有打开项目" hint="命令规则按项目保存，请先添加一个项目。" />
+    )
+  }
 
   const add = async () => {
     if (pattern.trim() === '') return
@@ -70,73 +78,105 @@ export function CommandRulesPanel(): ReactNode {
     }
   }
 
+  const items = rules.data ?? []
+
   return (
     <div>
-      <div className="section-label">命令审批规则</div>
-      <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--text-faint)' }}>
+      <div className="section-label">
+        <Icon name="terminal" size={12} />
+        命令审批规则
+      </div>
+      <p className="muted" style={{ margin: '0 0 12px', fontSize: 11 }}>
         匹配的命令在 Agent 执行前会触发审批。模式支持通配符，例如 <code>pytest *</code>。
       </p>
 
       {actionError ? <ErrorNote message={actionError} /> : null}
       {rules.loading && !rules.data ? <Loading /> : null}
       {rules.error ? <ErrorNote message={rules.error} onRetry={rules.reload} /> : null}
-      {rules.data && rules.data.length === 0 ? (
-        <div className="list-empty">还没有命令规则。</div>
+
+      {!rules.loading && !rules.error && items.length === 0 ? (
+        <EmptyState icon="terminal" title="还没有命令规则" hint="没有规则的命令每次执行前都会请求确认。" />
       ) : null}
 
-      {(rules.data ?? []).map((rule) => (
-        <div className="rule-row" key={rule.id}>
-          <span className="pattern" title={rule.pattern}>
-            {rule.pattern}
-          </span>
-          <select
-            value={rule.scope}
-            onChange={(event) => void change(rule, { scope: event.target.value as RuleScope })}
-          >
-            {(Object.keys(SCOPE_LABEL) as RuleScope[]).map((key) => (
-              <option key={key} value={key}>
-                {SCOPE_LABEL[key]}
-              </option>
-            ))}
-          </select>
-          <label style={{ fontSize: 10.5, color: 'var(--text-faint)', display: 'flex', gap: 4 }}>
-            <input
-              type="checkbox"
-              style={{ width: 'auto' }}
-              checked={rule.needs_confirm}
-              onChange={(event) => void change(rule, { needs_confirm: event.target.checked })}
-            />
-            需确认
-          </label>
-          <button className="small ghost danger" onClick={() => void remove(rule)}>
-            删
-          </button>
+      {items.length > 0 ? (
+        <div className="rule-list">
+          {items.map((rule) => (
+            <div className="rule-row" key={rule.id}>
+              <span className="pattern" title={rule.pattern}>
+                {rule.pattern}
+              </span>
+
+              <select
+                value={rule.scope}
+                aria-label={`规则 ${rule.pattern} 的生效范围`}
+                onChange={(event) => void change(rule, { scope: event.target.value as RuleScope })}
+              >
+                {SCOPES.map((key) => (
+                  <option key={key} value={key}>
+                    {SCOPE_LABEL[key]}
+                  </option>
+                ))}
+              </select>
+
+              <label className="muted" style={{ fontSize: 10.5, display: 'flex', gap: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={rule.needs_confirm}
+                  onChange={(event) => void change(rule, { needs_confirm: event.target.checked })}
+                />
+                需确认
+              </label>
+
+              <button
+                type="button"
+                className="icon danger"
+                onClick={() => void remove(rule)}
+                title="删除规则"
+                aria-label={`删除规则 ${rule.pattern}`}
+              >
+                <Icon name="trash" size={12} />
+              </button>
+            </div>
+          ))}
         </div>
-      ))}
+      ) : null}
 
       <div className="rule-form">
         <input
           placeholder="命令模式，例如 pytest *"
+          aria-label="命令模式"
           value={pattern}
           onChange={(event) => setPattern(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void add()
+          }}
         />
-        <select value={scope} onChange={(event) => setScope(event.target.value as RuleScope)}>
-          {(Object.keys(SCOPE_LABEL) as RuleScope[]).map((key) => (
+        <select
+          value={scope}
+          aria-label="新规则的生效范围"
+          onChange={(event) => setScope(event.target.value as RuleScope)}
+        >
+          {SCOPES.map((key) => (
             <option key={key} value={key}>
               {SCOPE_LABEL[key]}
             </option>
           ))}
         </select>
-        <label style={{ fontSize: 10.5, color: 'var(--text-faint)', display: 'flex', gap: 4 }}>
+        <label className="muted" style={{ fontSize: 10.5, display: 'flex', gap: 4 }}>
           <input
             type="checkbox"
-            style={{ width: 'auto' }}
             checked={needsConfirm}
             onChange={(event) => setNeedsConfirm(event.target.checked)}
           />
           需确认
         </label>
-        <button className="small primary" onClick={() => void add()} disabled={saving || pattern.trim() === ''}>
+        <button
+          type="button"
+          className="small primary"
+          onClick={() => void add()}
+          disabled={saving || pattern.trim() === ''}
+        >
+          <Icon name="plus" size={12} />
           {saving ? '保存中…' : '添加'}
         </button>
       </div>

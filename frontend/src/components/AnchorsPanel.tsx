@@ -6,7 +6,8 @@ import { useAsync } from '../hooks/useAsync'
 import { baseName } from '../lib/citations'
 import { formatRelative } from '../lib/format'
 import { useApp } from '../state/AppState'
-import { ErrorNote, Loading } from './Feedback'
+import { EmptyState, ErrorNote, Loading } from './Feedback'
+import { Icon } from './Icon'
 
 const STATUS_LABEL: Record<AnchorStatus, string> = {
   unchanged: '未变化',
@@ -35,7 +36,9 @@ export function AnchorsPanel(): ReactNode {
   const [message, setMessage] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  if (projectId === null) return <div className="list-empty">请先选择项目。</div>
+  if (projectId === null) {
+    return <EmptyState icon="anchor" title="还没有打开项目" hint="先添加一个本地代码目录，锚点会记录在这里。" />
+  }
 
   const refresh = async () => {
     setRefreshing(true)
@@ -56,52 +59,82 @@ export function AnchorsPanel(): ReactNode {
   const items = anchors.data ?? []
 
   return (
-    <div>
+    <div className="sidebar-section">
       <div className="sidebar-toolbar">
-        <button className="small" onClick={refresh} disabled={refreshing}>
-          {refreshing ? '检查中…' : '重新校验锚点'}
+        <button
+          type="button"
+          className="small"
+          onClick={() => void refresh()}
+          disabled={refreshing}
+          title="对照当前代码重新校验所有锚点"
+        >
+          <Icon name="refresh" size={12} />
+          {refreshing ? '检查中…' : '重新校验'}
         </button>
-        <span className="grow" />
-        <button className="small ghost" onClick={anchors.reload}>
-          刷新
-        </button>
+        <span className="spacer" />
+        <span className="tag" title="锚点数量">
+          {items.length}
+        </span>
       </div>
 
-      {message ? (
-        <div style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text-faint)' }}>{message}</div>
-      ) : null}
-      {actionError ? <ErrorNote message={actionError} /> : null}
-      {anchors.loading && !anchors.data ? <Loading /> : null}
-      {anchors.error ? <ErrorNote message={anchors.error} onRetry={anchors.reload} /> : null}
-      {anchors.data && items.length === 0 ? (
-        <div className="list-empty">暂无代码锚点。对话中引用过的代码会自动记录在这里。</div>
-      ) : null}
+      <div className="sidebar-scroll">
+        {message ? (
+          <div className="row" style={{ padding: '0 10px 6px' }}>
+            <span className="muted" style={{ fontSize: 10.5 }}>
+              <Icon name="info" size={11} /> {message}
+            </span>
+          </div>
+        ) : null}
 
-      {items.map((anchor) => (
-        <div
-          className="list-row"
-          key={anchor.id}
-          onClick={() => reveal(anchor.file_path, anchor.start_line, anchor.end_line)}
-        >
-          <div className="body">
-            <div className="title">
-              {baseName(anchor.file_path)} · L{anchor.start_line}-{anchor.end_line}
+        {actionError ? <ErrorNote message={actionError} /> : null}
+        {anchors.loading && !anchors.data ? <Loading /> : null}
+        {anchors.error ? <ErrorNote message={anchors.error} onRetry={anchors.reload} /> : null}
+
+        {!anchors.loading && !anchors.error && items.length === 0 ? (
+          <EmptyState
+            icon="anchor"
+            title="暂无代码锚点"
+            hint="对话中引用过的代码会自动记录在这里，方便确认它是否已被改动。"
+          />
+        ) : null}
+
+        {items.map((anchor) => (
+          <button
+            type="button"
+            className="anchor-row"
+            key={anchor.id}
+            onClick={() => reveal(anchor.file_path, anchor.start_line, anchor.end_line)}
+            title={`${anchor.file_path} 第 ${anchor.start_line}-${anchor.end_line} 行`}
+          >
+            <span
+              style={{ display: 'flex', flex: '0 0 13px', color: 'var(--text-faint)', marginTop: 2 }}
+            >
+              <Icon name="anchor" size={13} />
+            </span>
+
+            <div className="anchor-body">
+              <div className="anchor-path">
+                <Icon name="file-code" size={11} />
+                {baseName(anchor.file_path)}
+                <span className="muted">· {anchor.file_path}</span>
+              </div>
+              <div className="anchor-lines">
+                L{anchor.start_line}-{anchor.end_line}
+                {anchor.symbol ? ` · ${anchor.symbol}` : ''}
+              </div>
             </div>
-            <div className="sub">
-              {anchor.file_path}
-              {anchor.symbol ? ` · ${anchor.symbol}` : ''}
-            </div>
-            <div style={{ marginTop: 4 }}>
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flex: '0 0 auto' }}>
               <span className={STATUS_CLASS[anchor.status]}>{STATUS_LABEL[anchor.status]}</span>
               {anchor.checked_at ? (
-                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+                <span className="muted" style={{ fontSize: 10 }}>
                   {formatRelative(anchor.checked_at)}
                 </span>
               ) : null}
             </div>
-          </div>
-        </div>
-      ))}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

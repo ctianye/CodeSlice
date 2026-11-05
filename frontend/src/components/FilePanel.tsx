@@ -1,18 +1,19 @@
 import type { ReactNode } from 'react'
 import { useState } from 'react'
 import * as api from '../api'
-import type { RetrievedChunk, TreeNode } from '../types'
+import type { Job, JobStatus, RetrievedChunk, TreeNode } from '../types'
 import { useAsync } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
 import { useIndexJob } from '../hooks/useIndexJob'
-import { ErrorNote, Loading } from './Feedback'
+import { EmptyState, ErrorNote, Loading } from './Feedback'
 import { FileTree } from './FileTree'
+import { Icon } from './Icon'
 
-/** File tree + git badge + index progress + semantic search for one project. */
+/** File tree + git badge + index progress + project search for one project. */
 export function FilePanel(): ReactNode {
-  const { project, reveal, refreshKey } = useApp()
+  const { project, reveal, refreshKey, focusNote, bumpRefresh } = useApp()
   const projectId = project?.id ?? null
-  const index = useIndexJob(projectId)
+  const index = useIndexJob(projectId, { onSettled: () => bumpRefresh() })
 
   const tree = useAsync(
     (signal) =>
@@ -46,93 +47,147 @@ export function FilePanel(): ReactNode {
     }
   }
 
-  if (projectId === null) return <div className="list-empty">请先选择项目。</div>
+  const clearSearch = () => {
+    setResults(null)
+    setSearchError(null)
+    setQuery('')
+  }
+
+  /** A note hit opens the notes panel; a code hit jumps the editor. */
+  const openChunk = (chunk: RetrievedChunk) => {
+    if (chunk.kind === 'note') {
+      const id = Number(chunk.path.replace(/^note:\/\//, ''))
+      if (Number.isInteger(id) && id > 0) {
+        focusNote(id)
+        return
+      }
+    }
+    reveal(chunk.path, chunk.start_line, chunk.end_line)
+  }
+
+  if (projectId === null) {
+    return (
+      <EmptyState icon="folder" title="还没有打开项目" hint="先用顶部的「切换项目」添加一个本地代码目录。" />
+    )
+  }
 
   const dirtyPaths = new Set(git.data ? [...git.data.modified, ...git.data.untracked] : [])
   const job = index.job
+  const jobBusy = job !== null && (job.status === 'running' || job.status === 'pending')
 
   return (
     <div className="sidebar-section">
       <div className="sidebar-toolbar">
         <button
+          type="button"
           className="small"
           onClick={index.start}
-          disabled={index.starting || (job !== null && (job.status === 'running' || job.status === 'pending'))}
-          title="建立/更新代码索引"
+          disabled={index.starting || jobBusy}
+          title="为当前项目建立/更新代码索引"
         >
+          <Icon name="database" size={12} />
           {index.starting ? '提交中…' : '建立索引'}
         </button>
         {git.data ? (
-          <span className={`badge ${git.data.dirty ? 'warn' : 'ok'}`} title={git.data.head ?? ''}>
+          <span
+            className={`badge ${git.data.dirty ? 'warn' : 'ok'}`}
+            title={git.data.head ?? 'Git 状态'}
+          >
+            <Icon name="git-branch" size={10} />
             {git.data.is_repo ? (git.data.branch ?? '未知分支') : '非 Git 仓库'}
             {git.data.dirty ? ' · 有改动' : ''}
           </span>
         ) : null}
-        <span className="grow" />
-        <button className="small ghost" onClick={tree.reload} title="刷新文件树">
-          刷新
+        <span className="spacer" />
+        <button
+          type="button"
+          className="icon"
+          onClick={tree.reload}
+          title="刷新文件树"
+          aria-label="刷新文件树"
+        >
+          <Icon name="refresh" size={13} />
         </button>
       </div>
 
       {index.error ? <ErrorNote message={index.error} /> : null}
-      {job ? (
-        <div style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text-faint)' }}>
-          <div>
-            索引任务 #{job.id} · {jobLabel(job.status)}
-            {job.message ? ` · ${job.message}` : ''}
+      {job ? <IndexCard job={job} onDismiss={index.dismiss} /> : null}
+      {index.firstRun && !job ? (
+        <div className="first-index">
+          <div className="first-index-head">
+            <Icon name="database" size={12} />
+            首次使用请先建立索引
           </div>
-          <div className="progress-track" style={{ marginTop: 5 }}>
-            <div className="progress-fill" style={{ width: `${Math.max(0, Math.min(100, job.progress))}%` }} />
-          </div>
-          {job.stats ? (
-            <div style={{ marginTop: 4 }}>
-              文件 {job.stats.files} · 片段 {job.stats.chunks} · 向量 {job.stats.vectors}
-            </div>
-          ) : null}
-          {job.error ? <div style={{ color: 'var(--danger)', marginTop: 4 }}>{job.error}</div> : null}
-          <button className="small ghost" style={{ marginTop: 6 }} onClick={index.dismiss}>
-            收起
+          <p>建立索引后，检索、引用和对话才能定位到具体代码。</p>
+          <button
+            type="button"
+            className="small primary"
+            onClick={index.start}
+            disabled={index.starting || index.checking}
+          >
+            {index.starting ? '提交中…' : '立即建立索引'}
           </button>
         </div>
       ) : null}
 
       <div className="sidebar-toolbar">
-        <input
-          placeholder="在项目中搜索（语义/关键词）"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') void runSearch()
-          }}
-        />
-        <button className="small" onClick={() => void runSearch()} disabled={searching || query.trim() === ''}>
-          {searching ? '…' : '搜索'}
+        <div className="search-field">
+          <span className="search-icon">
+            <Icon name="search" size={13} />
+          </span>
+          <input
+            placeholder="搜索代码，回车检索"
+            value={query}
+            aria-label="搜索项目内的代码"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void runSearch()
+              if (event.key === 'Escape' && results !== null) clearSearch()
+            }}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="icon clear-btn"
+              onClick={clearSearch}
+              title="清除搜索"
+              aria-label="清除搜索"
+            >
+              <Icon name="x" size={12} />
+            </button>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="small"
+          onClick={() => void runSearch()}
+          disabled={searching || query.trim() === ''}
+          title="在项目中检索相关代码"
+        >
+          {searching ? '检索中…' : '搜索'}
         </button>
       </div>
 
       <div className="sidebar-scroll">
         {searchError ? <ErrorNote message={searchError} /> : null}
+        {searching ? <Loading text="检索中…" /> : null}
+
         {results !== null ? (
           <SearchResults
             results={results}
-            query={query}
-            onClear={() => {
-              setResults(null)
-              setQuery('')
-            }}
-            onOpen={(chunk) => reveal(chunk.path, chunk.start_line, chunk.end_line)}
+            onOpen={openChunk}
+            onBack={clearSearch}
           />
-        ) : null}
-
-        {searching ? <Loading text="检索中…" /> : null}
-        {results === null ? (
+        ) : (
           <>
             {tree.loading && !tree.data ? <Loading /> : null}
             {tree.error ? <ErrorNote message={tree.error} onRetry={tree.reload} /> : null}
             {tree.data ? <FileTree nodes={tree.data} dirtyPaths={dirtyPaths} /> : null}
-            {tree.data && tree.data.length === 0 ? <div className="list-empty">该目录下没有可见文件。</div> : null}
+            {tree.data && tree.data.length === 0 ? (
+              <div className="list-empty">该目录下没有可见文件。</div>
+            ) : null}
           </>
-        ) : null}
+        )}
       </div>
     </div>
   )
@@ -146,53 +201,133 @@ async function fetchGit(projectId: number, signal: AbortSignal) {
   return result
 }
 
-function jobLabel(status: string): string {
-  switch (status) {
-    case 'pending':
-      return '排队中'
-    case 'running':
-      return '进行中'
-    case 'done':
-      return '已完成'
-    case 'error':
-      return '失败'
-    default:
-      return status
-  }
+const JOB_LABEL: Record<JobStatus, string> = {
+  pending: '排队中',
+  running: '进行中',
+  done: '已完成',
+  error: '失败',
+}
+
+const JOB_BADGE: Record<JobStatus, string> = {
+  pending: 'badge mute',
+  running: 'badge info',
+  done: 'badge ok',
+  error: 'badge err',
+}
+
+interface IndexCardProps {
+  job: Job
+  onDismiss: () => void
+}
+
+/** Compact progress card for the running/last index job. */
+function IndexCard({ job, onDismiss }: IndexCardProps): ReactNode {
+  const percent = Math.max(0, Math.min(100, job.progress))
+  return (
+    <div className="index-card">
+      <div className="index-head">
+        <span className={JOB_BADGE[job.status]}>{JOB_LABEL[job.status]}</span>
+        <span className="truncate" style={{ flex: 1 }} title={job.message}>
+          {job.message || `索引任务 #${job.id}`}
+        </span>
+        <button
+          type="button"
+          className="icon"
+          onClick={onDismiss}
+          title="收起索引进度"
+          aria-label="收起索引进度"
+        >
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${percent}%` }} />
+      </div>
+
+      {job.stats ? (
+        <div className="index-stats">
+          <span>文件 {job.stats.files}</span>
+          <span>片段 {job.stats.chunks}</span>
+          <span>向量 {job.stats.vectors}</span>
+        </div>
+      ) : null}
+
+      {job.error ? <ErrorNote message={job.error} /> : null}
+    </div>
+  )
 }
 
 interface SearchResultsProps {
   results: RetrievedChunk[]
-  query: string
   onOpen: (chunk: RetrievedChunk) => void
-  onClear: () => void
+  onBack: () => void
 }
 
-function SearchResults({ results, query, onOpen, onClear }: SearchResultsProps): ReactNode {
+function SearchResults({ results, onOpen, onBack }: SearchResultsProps): ReactNode {
+  if (results.length === 0) {
+    return (
+      <>
+        <div className="sidebar-toolbar">
+          <span className="muted" style={{ fontSize: 10.5 }}>
+            没有命中
+          </span>
+          <span className="spacer" />
+          <button type="button" className="small ghost" onClick={onBack} title="回到文件树">
+            <Icon name="chevron-left" size={12} />
+            文件树
+          </button>
+        </div>
+        <div className="list-empty">没有检索到相关代码，请先建立索引。</div>
+      </>
+    )
+  }
+
   return (
-    <div>
-      <div className="sidebar-toolbar">
-        <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-          「{query}」命中 {results.length} 段
+    <div className="search-results">
+      <div className="row" style={{ padding: '0 2px 2px' }}>
+        <span className="muted" style={{ fontSize: 10.5 }}>
+          命中 {results.length} 段
         </span>
-        <span className="grow" />
-        <button className="small ghost" onClick={onClear}>
-          返回文件树
+        <span className="spacer" />
+        <button type="button" className="small ghost" onClick={onBack} title="回到文件树">
+          <Icon name="chevron-left" size={12} />
+          文件树
         </button>
       </div>
-      {results.length === 0 ? <div className="list-empty">没有检索到相关代码，请先建立索引。</div> : null}
-      {results.map((chunk, index) => (
-        <div className="search-result" key={`${chunk.path}-${chunk.start_line}-${index}`} onClick={() => onOpen(chunk)}>
-          <div className="sr-path" title={chunk.path}>
-            {chunk.path}
+
+      {results.map((chunk, i) => (
+        <button
+          type="button"
+          className="search-result"
+          key={`${chunk.path}-${chunk.start_line}-${i}`}
+          onClick={() => onOpen(chunk)}
+          title={
+            chunk.kind === 'note'
+              ? `笔记：${chunk.symbol ?? ''}（点击打开）`
+              : `${chunk.path} 第 ${chunk.start_line}-${chunk.end_line} 行`
+          }
+        >
+          <div className="sr-path">
+            <Icon name={chunk.kind === 'note' ? 'notes' : 'file-code'} size={11} />
+            {chunk.kind === 'note' ? '笔记' : chunk.path}
           </div>
           <div className="sr-meta">
-            L{chunk.start_line}-{chunk.end_line}
-            {chunk.symbol ? ` · ${chunk.symbol}` : ''} · {chunk.retriever} · {chunk.score.toFixed(2)}
+            {chunk.kind === 'note' ? (
+              <span className="tag accent">知识库</span>
+            ) : (
+              <span>
+                L{chunk.start_line}-{chunk.end_line}
+              </span>
+            )}
+            {chunk.symbol ? <span>{chunk.symbol}</span> : null}
+            <span>{chunk.retriever}</span>
+            <span>{chunk.score.toFixed(2)}</span>
           </div>
           <pre>{chunk.content}</pre>
-        </div>
+        </button>
       ))}
     </div>
   )
 }
+

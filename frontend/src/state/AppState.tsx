@@ -5,6 +5,9 @@ import { usePersistedState } from '../hooks/useAsync'
 
 export type AppTheme = 'dark' | 'light'
 
+/** Sidebar views, shared so a code card can jump to the notes panel. */
+export type SidebarTab = 'files' | 'chats' | 'notes' | 'anchors'
+
 /** A request to reveal + highlight a line range in the editor. */
 export interface RevealTarget extends Citation {
   /** Bumped on every request so repeated jumps to the same range still re-run. */
@@ -31,6 +34,12 @@ interface AppState {
   /** Bumped whenever conversations/notes should be re-fetched. */
   refreshKey: number
   bumpRefresh: () => void
+  /** Which sidebar tab is showing; owned here so code cards can switch to notes. */
+  sidebarTab: SidebarTab
+  setSidebarTab: (tab: SidebarTab) => void
+  /** Note the notes panel should open; the panel clears it after focusing. */
+  focusNoteId: number | null
+  focusNote: (noteId: number | null) => void
   theme: AppTheme
   setTheme: (theme: AppTheme) => void
 }
@@ -48,6 +57,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
   )
   const [refreshKey, setRefreshKey] = useState(0)
   const [theme, setTheme] = usePersistedState<AppTheme>('codeslice.theme', 'light')
+  const [sidebarTab, setSidebarTabState] = usePersistedState<SidebarTab>('codeslice.sidebarTab', 'files')
+  const [focusNoteId, setFocusNoteId] = useState<number | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -81,6 +92,13 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
     [setActiveConversationIdState],
   )
 
+  const setSidebarTab = useCallback((next: SidebarTab) => setSidebarTabState(next), [setSidebarTabState])
+
+  const focusNote = useCallback((noteId: number | null) => {
+    setFocusNoteId(noteId)
+    if (noteId !== null) setSidebarTabState('notes')
+  }, [setSidebarTabState])
+
   const value = useMemo<AppState>(
     () => ({
       project,
@@ -94,6 +112,10 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setActiveConversationId,
       refreshKey,
       bumpRefresh,
+      sidebarTab,
+      setSidebarTab,
+      focusNoteId,
+      focusNote,
       theme,
       setTheme,
     }),
@@ -108,6 +130,10 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setActiveConversationId,
       refreshKey,
       bumpRefresh,
+      sidebarTab,
+      setSidebarTab,
+      focusNoteId,
+      focusNote,
       theme,
       setTheme,
     ],

@@ -81,10 +81,7 @@ async def run(devtools_port: int, project_path: str, file_path: str) -> int:
         await cdp.call("Runtime.enable")
         await cdp.call("Page.enable")
 
-        api = (
-            "const T = window.codeslice.token;"
-            "const H = {'X-Session-Token': T, 'Content-Type': 'application/json'};"
-        )
+        api = "const T = window.codeslice.token;const H = {'X-Session-Token': T, 'Content-Type': 'application/json'};"
 
         # 1) Register the project the way the welcome screen does.
         created = await cdp.js(

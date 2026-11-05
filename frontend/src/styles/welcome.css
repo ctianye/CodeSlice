@@ -1,52 +1,98 @@
+/* =============================================================================
+   Welcome / project picker.
+   ========================================================================== */
+
 .welcome {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: auto;
-  padding: 48px 32px 40px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background:
+    radial-gradient(900px 380px at 18% -8%, var(--accent-soft), transparent 62%),
+    radial-gradient(700px 320px at 96% 4%, var(--ok-soft), transparent 58%);
 }
 
 .welcome-inner {
-  width: 100%;
-  max-width: 760px;
+  width: min(760px, calc(100% - 56px));
   margin: 0 auto;
+  padding: 52px 0 64px;
+}
+
+.welcome-hero {
+  margin-bottom: 30px;
+}
+
+.welcome-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  margin-bottom: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
 }
 
 .welcome h1 {
-  font-size: 26px;
-  font-weight: 600;
-  margin: 0 0 6px;
-  letter-spacing: 0.3px;
+  margin: 0 0 10px;
+  font-size: 27px;
+  font-weight: 680;
+  letter-spacing: -0.025em;
+  line-height: 1.24;
+  color: var(--text);
 }
 
-.welcome .lede {
-  color: var(--text-dim);
-  margin: 0 0 28px;
+.welcome h1 .grad {
+  background: linear-gradient(100deg, var(--accent), #8b7cff 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lede {
+  margin: 0;
+  max-width: 60ch;
   font-size: 13px;
+  line-height: 1.72;
+  color: var(--text-dim);
 }
 
-.welcome .section-title {
-  font-size: 11px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin: 26px 0 10px;
-}
+/* ------------------------------ add project ------------------------------- */
 
 .add-project-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-panel);
+  position: relative;
+  margin: 0 0 34px;
   padding: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-1);
+}
+
+.add-project-card .card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.add-project-card .card-title .muted {
+  font-weight: 400;
 }
 
 .add-project-card .row {
-  display: flex;
   gap: 8px;
 }
 
-.add-project-card .row input {
-  flex: 1;
+.add-project-card input {
+  height: 34px;
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -54,49 +100,76 @@
 .add-project-card .actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin-top: 12px;
 }
 
 .add-project-card .hint {
-  color: var(--text-faint);
   font-size: 11px;
-  flex: 1;
+  color: var(--text-faint);
+  line-height: 1.6;
 }
+
+.token-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
+.token-row .field {
+  flex: 1;
+  margin: 0;
+}
+
+/* ------------------------------ recent list ------------------------------- */
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
   gap: 10px;
 }
 
 .project-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-panel);
-  cursor: pointer;
+  gap: 6px;
+  justify-content: flex-start;
+  align-items: stretch;
+  height: auto;
+  padding: 13px 14px;
   text-align: left;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
-.project-card:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-hover);
+.project-card:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--accent-line);
+  transform: translateY(-1px);
 }
 
 .project-card .name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
+  line-height: 1.3;
 }
 
 .project-card .path {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -108,38 +181,29 @@
 .project-card .meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-faint);
-}
-
-.welcome .token-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  margin-top: 10px;
-}
-
-.welcome .token-row .field {
-  flex: 1;
-}
-
-/* Welcome screen inside the app shell (project switching). */
-.app-shell > .welcome {
-  flex: 1;
-  min-height: 0;
-  height: auto;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 .welcome-return {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  justify-content: flex-end;
-  padding: 6px 14px;
+  height: 30px;
+  flex: 0 0 30px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: var(--accent-soft);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.welcome-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 40px;
   font-size: 11px;
   color: var(--text-faint);
 }

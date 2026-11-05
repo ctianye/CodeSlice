@@ -10,6 +10,7 @@ from app.api.deps import ProjectDep, TokenDep
 from app.core.db import get_conn
 from app.core.errors import NotFound
 from app.indexing.indexer import start_index_job
+from app.models import embeddings
 from app.retrieval import hybrid
 from app.storage import repo
 
@@ -35,11 +36,21 @@ def index_status(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
             "SELECT COUNT(*) AS n, MAX(indexed_at) AS last FROM indexed_files WHERE project_id = ?",
             (project["id"],),
         ).fetchone()
+        # Which embedding models produced the stored vectors. More than one row
+        # means the index is mid-migration and only a rebuild makes it uniform.
+        models = conn.execute(
+            "SELECT DISTINCT embed_model FROM chunks"
+            " WHERE project_id = ? AND embed_model IS NOT NULL AND embed_model <> ''",
+            (project["id"],),
+        ).fetchall()
     return {
         "project": project,
         "last_job": job,
         "files": int(indexed["n"]) if indexed else 0,
         "indexed_at": indexed["last"] if indexed else None,
+        "embed_models": sorted(str(m["embed_model"]) for m in models),
+        "active_embed_model": embeddings.embedding_model_name(),
+        "embedding_configured": embeddings.is_configured(),
     }
 
 

@@ -20,7 +20,7 @@ from app.agent import graph as agent_graph
 from app.api.deps import ProjectDep, TokenDep
 from app.core.errors import InvalidInput, NotFound
 from app.models import config as model_config
-from app.services import anchors
+from app.services import anchors, notegen, paths
 from app.storage import repo
 
 log = logging.getLogger(__name__)
@@ -140,8 +140,34 @@ def create_conversation(body: ConversationCreate, _: TokenDep) -> dict[str, Any]
 
 
 @router.get("/conversations")
-def list_conversations(_: TokenDep, project_id: int | None = None) -> list[dict[str, Any]]:
-    return [repo.conversation_public(c) for c in repo.list_conversations(project_id)]
+def list_conversations(
+    _: TokenDep,
+    project_id: int | None = None,
+    include_others: bool = False,
+) -> list[dict[str, Any]]:
+    """Conversations newest-first; ``include_others`` appends other projects below."""
+    rows = repo.list_conversations(project_id, include_others=include_others)
+    return [repo.conversation_public(c) for c in rows]
+
+
+@router.get("/projects/{project_id}/conversations/by-file")
+def list_conversations_by_file(
+    project: ProjectDep,
+    _: TokenDep,
+    path: str,
+) -> list[dict[str, Any]]:
+    """Every conversation bound to one file, ordered by starting line.
+
+    Feeds the code cards in the editor. ``path`` is resolved under the project
+    root first, so ``../secrets`` is rejected with 400 instead of silently
+    matching nothing.
+    """
+    root = paths.resolve_root(project["path"])
+    resolved = paths.resolve_in_project(root, path)
+    if not resolved.is_file():
+        raise NotFound("file not found in project")
+    rel = paths.relative_to(root, resolved)
+    return [repo.conversation_public(c) for c in repo.list_conversations_by_file(project["id"], rel)]
 
 
 @router.get("/conversations/{conversation_id}")
@@ -201,6 +227,16 @@ def get_interrupt(conversation_id: str, _: TokenDep) -> dict[str, Any]:
     if repo.get_conversation(conversation_id) is None:
         raise NotFound("conversation not found")
     return {"pending_interrupt": agent_graph.pending_interrupt(conversation_id)}
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/note")
+def create_note_from_message(conversation_id: str, message_id: str, _: TokenDep) -> dict[str, Any]:
+    """Summarise one assistant answer into a saved note.
+
+    Kept synchronous (no SSE): it is one short model call and the card only
+    needs the finished note to flip into its "笔记" state.
+    """
+    return notegen.generate(conversation_id, message_id)
 
 
 __all__ = ["ProjectDep", "router"]

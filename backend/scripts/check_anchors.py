@@ -79,7 +79,9 @@ def main() -> int:
             check("anchor has snippet", all(a.get("snippet") for a in anchors))
 
         detail = client.get(f"/conversations/{conversation_id}").json()
-        check("conversation detail has messages", bool(detail.get("messages")), f"{len(detail.get('messages', []))} msgs")
+        check(
+            "conversation detail has messages", bool(detail.get("messages")), f"{len(detail.get('messages', []))} msgs"
+        )
         check("assistant message stored", any(m["role"] == "assistant" for m in detail.get("messages", [])))
 
         refreshed = client.post(f"/projects/{args.project}/anchors/refresh").json()

@@ -1,86 +1,176 @@
+/* =============================================================================
+   Feedback primitives: empty states, loading, errors, toasts.
+   ========================================================================== */
+
+/* Dashed placeholder used for inline "nothing here yet" panels. */
+.list-empty {
+  margin: 8px 10px;
+  padding: 22px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-strong);
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 26px 20px;
+  align-items: center;
+  gap: 8px;
+  margin: auto;
+  padding: 26px 18px;
+  text-align: center;
+}
+
+.empty-state .empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
   color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.7;
 }
 
 .empty-state .empty-title {
-  margin: 0;
   font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-dim);
 }
 
 .empty-state .empty-hint {
-  margin: 0;
+  max-width: 36ch;
   font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-faint);
 }
 
 .loading-line {
-  padding: 12px 14px;
-  color: var(--text-faint);
-  font-size: 11.5px;
-}
-
-.error-note {
-  margin: 8px 10px;
-  padding: 7px 10px;
-  border: 1px solid #5a2c29;
-  border-radius: var(--radius);
-  background: #211614;
-  color: #ffb3ae;
-  font-size: 11.5px;
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 12px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.loading-line .spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.75s linear infinite;
+}
+
+.error-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+  background: var(--danger-soft);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--danger);
+}
+
+.error-note .err-icon {
+  display: flex;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.error-note .err-body {
+  flex: 1;
+  min-width: 0;
   word-break: break-word;
 }
 
-.error-note span {
-  flex: 1;
+.error-note button {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: transparent;
 }
 
-/* Small reusable status badges. */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 999px;
+/* --------------------------------- toasts --------------------------------- */
+
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 340px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
   border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-2);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text);
+  pointer-events: auto;
+  animation: toast-in var(--dur) var(--ease);
+}
+
+.toast .toast-icon {
+  display: flex;
+  flex: 0 0 auto;
+  margin-top: 1px;
   color: var(--text-faint);
-  white-space: nowrap;
 }
 
-.badge.ok {
-  color: #9fe0b1;
-  border-color: #2c5c3c;
-  background: #12261a;
+.toast.ok .toast-icon {
+  color: var(--ok);
 }
 
-.badge.warn {
-  color: #ffd28d;
-  border-color: #5e4a22;
-  background: #241d10;
+.toast.err .toast-icon {
+  color: var(--danger);
 }
 
-.badge.err {
-  color: #ffb3ae;
-  border-color: #5a2c29;
-  background: #211614;
+.toast.info .toast-icon {
+  color: var(--info);
 }
 
-.badge.info {
-  color: #a9c9f7;
-  border-color: #27405e;
-  background: #152238;
+.toast .toast-body {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
 }
 
-.badge.mute {
-  color: var(--text-faint);
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

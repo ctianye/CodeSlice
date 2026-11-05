@@ -26,9 +26,39 @@ DEFAULT_REPLY = (
 )
 
 
+def _has_tool_result(payload: dict) -> bool:
+    """True once the conversation already contains a tool result.
+
+    Prevents an infinite propose-call loop: first turn proposes the tool, the
+    turn after the tool runs gets a plain answer.
+    """
+    for message in payload.get("messages") or []:
+        if message.get("role") == "tool":
+            return True
+    return False
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     reply: str = DEFAULT_REPLY
+    tool: str = ""
+    tool_file: str = ".shots/mock-write.txt"
+
+    def tool_args(self) -> str:
+        if self.tool == "write_file":
+            args = {
+                "path": self.tool_file,
+                "content": "由 mock 模型写入，用于验证审批卡片。\n",
+                "reason": "验证写入文件的审批界面",
+            }
+        elif self.tool == "run_command":
+            args = {
+                "command": "git status --short",
+                "reason": "验证命令执行的审批界面",
+            }
+        else:
+            args = {}
+        return json.dumps(args, ensure_ascii=False)
 
     def log_message(self, fmt: str, *args) -> None:  # keep the console quiet
         print(f"[mock] {fmt % args}", flush=True)
@@ -109,7 +139,21 @@ class Handler(BaseHTTPRequestHandler):
         for i in range(0, len(text), 6):
             emit({**base, "choices": [{"index": 0, "delta": {"content": text[i : i + 6]}, "finish_reason": None}]})
             time.sleep(0.012)
-        emit({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+
+        if self.tool and not _has_tool_result(payload):
+            # Emit one tool call so the approval UI can be exercised. The shape
+            # mirrors what OpenAI-compatible providers stream: a tool_calls delta
+            # carrying name + a JSON-encoded argument string.
+            call = {
+                "index": 0,
+                "id": "call_mock_1",
+                "type": "function",
+                "function": {"name": self.tool, "arguments": self.tool_args()},
+            }
+            emit({**base, "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]})
+            emit({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+        else:
+            emit({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
         done = b"data: [DONE]\n\n"
         self.wfile.write(f"{len(done):X}\r\n".encode() + done + b"\r\n")
         self.wfile.write(b"0\r\n\r\n")
@@ -124,9 +168,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8899)
     parser.add_argument("--reply", default=DEFAULT_REPLY)
+    parser.add_argument(
+        "--tool",
+        default="",
+        choices=["", "write_file", "run_command"],
+        help="also stream one tool call so the approval UI can be exercised",
+    )
+    parser.add_argument("--tool-file", default=".shots/mock-write.txt", help="path for the write_file tool call")
     args = parser.parse_args(argv)
 
     Handler.reply = args.reply
+    Handler.tool = args.tool
+    Handler.tool_file = args.tool_file
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"[mock] listening on http://127.0.0.1:{args.port}/v1", flush=True)
     try:

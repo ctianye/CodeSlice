@@ -56,10 +56,19 @@ body `{"path": "D:\\repo", "name": "repo"}`（name 可省略，取目录名）
 → `{"id": int, "kind": str, "status": "pending|running|done|error", "progress": int,
     "message": str, "stats": {"files": int, "chunks": int, "vectors": int} | null, "error": str | null}`
 
+### GET /api/projects/{project_id}/index
+→ `{"project": Project, "last_job": Job | null, "files": int, "indexed_at": str | null,
+    "embed_models": [str], "active_embed_model": str | null, "embedding_configured": bool}`
+`embed_models` 是当前索引里出现过的向量模型名（去重）；`active_embed_model` 是**已配置**的模型；
+`embedding_configured` 为 `false` 时检索只走关键词。前端用 `embed_models` 里出现与
+`active_embed_model` 不同的值来判断「切换模型后需要重建索引」。
+
 ### GET /api/projects/{project_id}/search?q=&top_k=8
 → `[RetrievedChunk]`
 `RetrievedChunk` = `{"path": str, "start_line": int, "end_line": int, "symbol": str | null,
 "kind": str, "content": str, "score": float, "retriever": "keyword|vector|hybrid"}`
+笔记也在这条管道里：`kind="note"` 时 `path` 为 `note://<note_id>`、行号为 0，
+前端据此跳到笔记面板而不是编辑器。
 
 ## 4. 设置 / 模型
 
@@ -75,6 +84,25 @@ body `{"chat": {... 可选 "api_key": str}, "embedding": {...|null}}`
 ### POST /api/settings/model/test
 → `{"ok": bool, "latency_ms": int | null, "detail": str}`
 
+### GET /api/settings/ollama/status
+探测本机 Ollama（默认 `http://127.0.0.1:11434`，可用环境变量 `CODESLICE_OLLAMA_URL` 覆盖）。
+**总是 200**，Ollama 不在时 `installed=false` 且 `error` 有值。
+→ `{"installed": bool, "version": str | null, "models": [str],
+    "base_url": str, "openai_base_url": str, "presets": [OllamaPreset], "error": str | null}`
+`OllamaPreset` = `{"id": str, "model": str, "label": str, "size": str, "size_bytes": int,
+"context": str, "params": str, "description": str, "requirement": str}`
+目前固定两个预设：`bge-m3`、`qwen3-embedding:0.6b`。
+
+### POST /api/settings/ollama/pull  （SSE, `text/event-stream`）
+body `{"model": "bge-m3" | "qwen3-embedding:0.6b"}`（**只接受预设名单**，其他值 400
+`{"detail": "unsupported model: ..."}`，不会开流）
+逐条 `data: <event JSON>\n\n`：
+- `progress` `{model, status, detail, total, completed, percent}` —— `percent` 0~100
+- `error` `{model, detail}`
+- `done` `{model}`
+下载完成后服务端**不写任何配置**；由前端用户确认后再调 `PUT /api/settings/model`
+写 `embedding: {"model", "base_url": "<openai_base_url>", "api_key": "ollama"}`。
+
 ## 5. 对话 / Agent（SSE）
 
 ### POST /api/conversations
@@ -85,8 +113,28 @@ body `{"project_id": int, "title": str | null, "file_path": str | null,
 "created_at": str, "updated_at": str}`
 `mode="snippet"` 表示“片段对话”，检索只围绕该文件/选区；`project` 表示项目问答。
 
-### GET /api/conversations?project_id=
+### GET /api/conversations?project_id=&include_others=false
 → `[Conversation]`
+`include_others=true` 时先返回 `project_id` 本项目的会话，再追加其他项目的会话（各自按
+`updated_at` 倒序），供侧栏「其他项目」分组使用；不传 `project_id` 时返回全部。每条会话
+额外带 `project_name: str | null` 与 `has_note: bool`（该会话是否已生成笔记）。
+
+### GET /api/projects/{project_id}/conversations/by-file?path=
+→ `[Conversation]`（绑定到该文件的会话，按起始行升序）
+`path` 是项目内相对路径，越界（如 `../x`）返回 400，文件不存在返回 404。编辑器里的代码卡片
+用这个端点列出某个文件上已有的对话；每条额外带 `has_note: bool` 与 `note_id: int | null`
+（该会话生成的笔记 id，卡片据此直接跳到笔记）。
+
+### POST /api/conversations/{conversation_id}/messages/{message_id}/note
+把一条**助手**消息整理成保存在该项目下的阅读笔记（同会话已有笔记时覆盖更新）。
+→ `{"id", "project_id", "conversation_id", "title", "content_md", "created_at",
+"updated_at", "summary_failed": bool, "summary_error": str | null, "refs": int,
+"indexed": bool}`；消息不存在 404、`role != assistant` 400、消息为空 400。
+同步返回（非 SSE）：只做一次短模型调用，卡片拿到结果后直接切成「笔记」状态。
+笔记正文是固定模板：`# 标题` / `## 知识点` / `## 关联代码` / `## 要点` / `## 何时使用`，
+`## 关联代码` 由该消息的 citations 从磁盘读取原文渲染。
+**模型失败不再报 400**：仍然保存降级正文（原始回答 + 来源位置），置 `summary_failed=true`
+并在 `summary_error` 写明原因。`refs` 是关联代码段数，`indexed` 表示是否已写入检索索引。
 
 ### GET /api/conversations/{conversation_id}
 → `{"conversation": Conversation, "messages": [Message], "pending_interrupt": Interrupt | null}`
@@ -122,9 +170,16 @@ body `{"interrupt_id": str, "decision": "approve"|"deny"|"approve_session"|"appr
 
 ### GET/POST /api/notes  （POST body `{"project_id", "title", "content_md", "conversation_id"?}`）
 `Note` = `{"id": int, "project_id": int, "conversation_id": str | null, "title": str,
-"content_md": str, "created_at": str, "updated_at": str}`
+"content_md": str, "created_at": str, "updated_at": str, "indexed": bool}`
+`indexed` 表示这条笔记当前是否在检索索引里（写入/编辑时同步，删除时同步移除）。
 
 ### PUT/DELETE /api/notes/{note_id}
+PUT body `{"title"?, "content_md"?}` → `Note`（同步刷新其检索片段）。
+DELETE → `{"ok": true}`（同时删除对应检索片段与 FTS 行）。
+
+### POST /api/notes/{note_id}/export
+把笔记写成项目 `.md` 文件，目录为 `<data_dir>/notes/<项目名>/`，重名自动加时间戳。
+→ `{"path": str, "directory": str, "filename": str, "bytes": int}`；笔记不存在 404。
 
 ### GET /api/projects/{project_id}/anchors
 `Anchor` = `{"id": int, "conversation_id": str, "file_path": str, "commit_sha": str | null,

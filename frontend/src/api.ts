@@ -12,15 +12,20 @@ import type {
   ConversationDetail,
   CreateConversationBody,
   FileContent,
+  GeneratedNote,
   GitDiff,
   GitStatus,
   Health,
+  IndexStatus,
   Job,
   ModelSettings,
   ModelSettingsUpdate,
   ModelTestResult,
   Note,
   NoteCreateBody,
+  NoteExport,
+  OllamaPullEvent,
+  OllamaStatus,
   Project,
   ResumeBody,
   RetrievedChunk,
@@ -150,6 +155,10 @@ export const getGitDiff = (projectId: number, path?: string): Promise<GitDiff> =
 export const startIndex = (projectId: number): Promise<{ job_id: number }> =>
   request<{ job_id: number }>(`/api/projects/${projectId}/index`, { method: 'POST' })
 
+/** Index state for one project, including which embedding model built the vectors. */
+export const getIndexStatus = (projectId: number, signal?: AbortSignal): Promise<IndexStatus> =>
+  request<IndexStatus>(`/api/projects/${projectId}/index`, { signal })
+
 export const getJob = (jobId: number, signal?: AbortSignal): Promise<Job> =>
   request<Job>(`/api/jobs/${jobId}`, { signal })
 
@@ -182,15 +191,58 @@ export const testModel = (): Promise<ModelTestResult> =>
 export const clearModelKey = (slot: 'chat' | 'embedding' = 'chat'): Promise<{ ok: boolean }> =>
   request<{ ok: boolean }>(`/api/settings/model/key?slot=${slot}`, { method: 'DELETE' })
 
+/* ---------------------------------- ollama --------------------------------- */
+
+export const getOllamaStatus = (): Promise<OllamaStatus> => request<OllamaStatus>('/api/settings/ollama/status')
+
+/**
+ * Streams download progress for one preset model.
+ *
+ * Reuses `postSse` so the framing/abort behaviour matches chat streaming. The
+ * backend rejects an unknown model with 400 *before* the stream opens; that
+ * arrives as a single `error` event, not a thrown ApiError.
+ */
+export function pullOllamaModel(model: string, signal?: AbortSignal): AsyncGenerator<OllamaPullEvent> {
+  return postJsonSse<OllamaPullEvent>('/api/settings/ollama/pull', { model }, signal)
+}
+
 /* ------------------------------ conversations ------------------------------- */
 
 export const createConversation = (body: CreateConversationBody): Promise<Conversation> =>
   request<Conversation>('/api/conversations', { method: 'POST', body })
 
-export const listConversations = (projectId: number, signal?: AbortSignal): Promise<Conversation[]> =>
-  request<Conversation[]>(`/api/conversations?${new URLSearchParams({ project_id: String(projectId) }).toString()}`, {
-    signal,
-  })
+export const listConversations = (
+  projectId: number,
+  signal?: AbortSignal,
+  options?: { includeOthers?: boolean },
+): Promise<Conversation[]> => {
+  const params = new URLSearchParams({ project_id: String(projectId) })
+  if (options?.includeOthers) params.set('include_others', 'true')
+  return request<Conversation[]>(`/api/conversations?${params.toString()}`, { signal })
+}
+
+/**
+ * Conversations anchored to one file, ordered by starting line.
+ *
+ * Backs the code cards in the editor. The server resolves `path` under the
+ * project root, so a path outside the project comes back as 400.
+ */
+export const listConversationsByFile = (
+  projectId: number,
+  path: string,
+  signal?: AbortSignal,
+): Promise<Conversation[]> =>
+  request<Conversation[]>(
+    `/api/projects/${projectId}/conversations/by-file?${new URLSearchParams({ path }).toString()}`,
+    { signal },
+  )
+
+/** Summarises one assistant answer into a saved note; resolves with the note. */
+export const createNoteFromMessage = (conversationId: string, messageId: string): Promise<GeneratedNote> =>
+  request<GeneratedNote>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/note`,
+    { method: 'POST' },
+  )
 
 export const getConversation = (conversationId: string, signal?: AbortSignal): Promise<ConversationDetail> =>
   request<ConversationDetail>(`/api/conversations/${encodeURIComponent(conversationId)}`, { signal })
@@ -201,15 +253,22 @@ export const deleteConversation = (conversationId: string): Promise<{ ok: boolea
 /* ----------------------------------- SSE ----------------------------------- */
 
 /**
- * Opens an SSE POST stream and yields parsed `data: {...}` events.
+ * Opens an SSE POST stream and yields parsed `data: {...}` frames.
  *
  * Both `POST /messages` and `POST /resume` are JSON requests that answer with
  * `text/event-stream`, so EventSource cannot be used. The server closes the
- * stream after `done`; a nonzero HTTP status is raised as ApiError *before*
- * any event is yielded (e.g. 400 "model not configured"), and transport errors
- * surface as an `error` event so the caller only has one failure channel.
+ * stream after `done`; a nonzero HTTP status is reported as one `error` event
+ * *before* any frame is yielded (e.g. 400 "model not configured"), and transport
+ * errors surface the same way so the caller only has one failure channel.
+ *
+ * Generic over the event union so the Ollama pull stream can share the framing
+ * and abort handling without pretending its events are agent events.
  */
-export async function* postSse(path: string, body: unknown, signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+export async function* postJsonSse<T extends { type: string }>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): AsyncGenerator<T> {
   let res: Response
   try {
     res = await fetch(`${apiBase()}${path}`, {
@@ -220,17 +279,17 @@ export async function* postSse(path: string, body: unknown, signal?: AbortSignal
     })
   } catch (err) {
     if (signal?.aborted) return
-    yield { type: 'error', detail: `无法连接本机服务：${(err as Error).message}` }
+    yield { type: 'error', detail: `无法连接本机服务：${(err as Error).message}` } as unknown as T
     return
   }
 
   if (!res.ok) {
     const apiErr = await parseError(res)
-    yield { type: 'error', detail: apiErr.detail }
+    yield { type: 'error', detail: apiErr.detail } as unknown as T
     return
   }
   if (!res.body) {
-    yield { type: 'error', detail: '服务未返回数据流' }
+    yield { type: 'error', detail: '服务未返回数据流' } as unknown as T
     return
   }
 
@@ -249,16 +308,16 @@ export async function* postSse(path: string, body: unknown, signal?: AbortSignal
       while (sep >= 0) {
         const frame = buffer.slice(0, sep)
         buffer = buffer.slice(sep + (buffer[sep] === '\r' ? 4 : 2))
-        const events = parseFrame(frame)
+        const events = parseFrame<T>(frame)
         for (const evt of events) yield evt
         sep = findFrameEnd(buffer)
       }
     }
-    const tail = parseFrame(buffer)
+    const tail = parseFrame<T>(buffer)
     for (const evt of tail) yield evt
   } catch (err) {
     if (!signal?.aborted) {
-      yield { type: 'error', detail: `读取数据流失败：${(err as Error).message}` }
+      yield { type: 'error', detail: `读取数据流失败：${(err as Error).message}` } as unknown as T
     }
   } finally {
     try {
@@ -269,6 +328,11 @@ export async function* postSse(path: string, body: unknown, signal?: AbortSignal
   }
 }
 
+/** Agent-event view of {@link postJsonSse}. */
+export function postSse(path: string, body: unknown, signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+  return postJsonSse<AgentStreamEvent>(path, body, signal)
+}
+
 function findFrameEnd(buffer: string): number {
   const lf = buffer.indexOf('\n\n')
   const crlf = buffer.indexOf('\r\n\r\n')
@@ -277,8 +341,8 @@ function findFrameEnd(buffer: string): number {
   return Math.min(lf, crlf)
 }
 
-function parseFrame(frame: string): AgentStreamEvent[] {
-  const out: AgentStreamEvent[] = []
+function parseFrame<T extends { type: string }>(frame: string): T[] {
+  const out: T[] = []
   for (const rawLine of frame.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line || line.startsWith(':')) continue // comment/keep-alive
@@ -286,14 +350,14 @@ function parseFrame(frame: string): AgentStreamEvent[] {
     const payload = line.slice(5).trim()
     if (!payload || payload === '[DONE]') continue
     try {
-      const parsed = JSON.parse(payload) as AgentStreamEvent
+      const parsed = JSON.parse(payload) as T
       if (parsed && typeof parsed === 'object' && typeof (parsed as { type?: unknown }).type === 'string') {
         out.push(parsed)
       } else {
-        out.push({ type: 'unknown', raw: parsed })
+        out.push({ type: 'unknown', raw: parsed } as unknown as T)
       }
     } catch {
-      out.push({ type: 'unknown', raw: payload })
+      out.push({ type: 'unknown', raw: payload } as unknown as T)
     }
   }
   return out
@@ -338,6 +402,10 @@ export const updateNote = (noteId: number, body: Partial<NoteCreateBody>): Promi
 
 export const deleteNote = (noteId: number): Promise<{ ok: boolean }> =>
   request<{ ok: boolean }>(`/api/notes/${noteId}`, { method: 'DELETE' })
+
+/** Writes the note to a `.md` file under the app data dir; resolves with its path. */
+export const exportNote = (noteId: number): Promise<NoteExport> =>
+  request<NoteExport>(`/api/notes/${noteId}/export`, { method: 'POST' })
 
 /* ---------------------------------- anchors -------------------------------- */
 

@@ -7,6 +7,7 @@ import { useAsync } from '../hooks/useAsync'
 import { formatRelative, shortenPath } from '../lib/format'
 import { useApp } from '../state/AppState'
 import { ErrorNote, Loading } from './Feedback'
+import { Icon } from './Icon'
 
 /**
  * First-run / project-picker screen. Picks a folder through the Electron dialog
@@ -57,10 +58,28 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
   return (
     <div className="welcome">
       <div className="welcome-inner">
-        <h1>CodeSlice</h1>
-        <p className="lede">本地优先的代码阅读助手。指向一个代码目录，就能边读代码边向 Agent 提问。</p>
+        <div className="welcome-hero">
+          <span className="welcome-eyebrow">
+            <Icon name="shield" size={11} />
+            本地优先 · 数据不出本机
+          </span>
+          <h1>
+            把代码读成<span className="grad">一段一段</span>的样子
+          </h1>
+          <p className="lede">
+            CodeSlice 把项目按函数与类切成可读的小段，每段配一个独立对话。选中几行就能单独追问，
+            回答里带可点击的代码引用。用自己的 API Key，索引与对话都留在本机。
+          </p>
+        </div>
 
         <div className="add-project-card">
+          <div className="card-title">
+            <Icon name="folder-open" size={13} />
+            添加一个本地项目
+            <span className="spacer" />
+            <span className="muted">支持 40+ 种语言</span>
+          </div>
+
           <div className="row">
             <input
               placeholder="D:\\path\\to\\your\\repo"
@@ -72,16 +91,24 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
               }}
             />
             {isDesktop ? (
-              <button onClick={() => void choose()} disabled={adding}>
-                选择文件夹…
+              <button onClick={() => void choose()} disabled={adding} type="button">
+                <Icon name="folder" size={12} />
+                选择文件夹
               </button>
             ) : null}
-            <button className="primary" onClick={() => void add()} disabled={adding || path.trim() === ''}>
+            <button
+              className="primary"
+              onClick={() => void add()}
+              disabled={adding || path.trim() === ''}
+              type="button"
+            >
               {adding ? '添加中…' : '添加项目'}
             </button>
           </div>
+
           <div className="actions">
             <span className="hint">
+              <Icon name="shield" size={10} />{' '}
               {isDesktop
                 ? '项目路径只在本机读写，不会上传到任何服务器。'
                 : '浏览器模式下无法唤起系统目录选择器，请手动粘贴绝对路径。'}
@@ -112,6 +139,7 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
                   window.location.reload()
                 }}
                 disabled={token.trim() === ''}
+                type="button"
               >
                 保存令牌
               </button>
@@ -125,22 +153,44 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
         {list.error ? <ErrorNote message={list.error} onRetry={list.reload} /> : null}
 
         {!list.loading && known.length === 0 && !list.error ? (
-          <div className="list-empty">还没有添加任何项目。选择一个本地代码目录开始吧。</div>
+          <div className="list-empty">
+            还没有添加任何项目。选择一个本地代码目录开始吧。
+          </div>
         ) : null}
 
         <div className="project-grid">
           {known.map((project) => (
-            <button className="project-card" key={project.id} onClick={() => open(project)} title={project.path}>
-              <span className="name">{project.name}</span>
+            <button
+              className="project-card"
+              key={project.id}
+              onClick={() => open(project)}
+              title={project.path}
+              type="button"
+            >
+              <span className="name">
+                <Icon name="folder" size={13} />
+                {project.name}
+              </span>
               <span className="path">{shortenPath(project.path, 48)}</span>
               <span className="meta">
                 <span className={`badge ${project.indexed_at ? 'ok' : 'mute'}`}>
                   {project.indexed_at ? '已索引' : '未索引'}
                 </span>
-                <span>{project.indexed_at ? `索引于 ${formatRelative(project.indexed_at)}` : '尚未建立索引'}</span>
+                <span className="muted">
+                  {project.indexed_at
+                    ? `索引于 ${formatRelative(project.indexed_at)}`
+                    : '尚未建立索引'}
+                </span>
               </span>
             </button>
           ))}
+        </div>
+
+        <div className="welcome-foot">
+          <Icon name="terminal" size={11} />
+          <span>
+            快捷键：<kbd>Enter</kbd> 发送问题 · <kbd>Ctrl</kbd> + <kbd>F</kbd> 在文件中查找
+          </span>
         </div>
       </div>
     </div>

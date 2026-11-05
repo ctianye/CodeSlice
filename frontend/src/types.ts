@@ -74,6 +74,19 @@ export interface Job {
 
 export type Retriever = 'keyword' | 'vector' | 'hybrid'
 
+/** GET /api/projects/{id}/index — beyond the contract, needed for model switches. */
+export interface IndexStatus {
+  project: Project
+  last_job: Job | null
+  files: number
+  indexed_at: string | null
+  /** Distinct embed_model values present in this project's vectors. */
+  embed_models: string[]
+  /** Model the backend would use right now (null when unconfigured). */
+  active_embed_model: string | null
+  embedding_configured: boolean
+}
+
 export interface RetrievedChunk {
   path: string
   start_line: number
@@ -118,14 +131,55 @@ export interface ModelSettings {
 
 /** PUT body: an api_key here is write-only and never echoed back. */
 export interface ModelSettingsUpdate {
-  chat: Partial<ModelConfig> & { api_key?: string | null }
-  embedding: (Partial<EmbeddingConfig> & { api_key?: string | null }) | null
+  /** Omit to leave the chat model untouched (the backend treats a missing key as "no change"). */
+  chat?: Partial<ModelConfig> & { api_key?: string | null }
+  embedding?: (Partial<EmbeddingConfig> & { api_key?: string | null }) | null
 }
 
 export interface ModelTestResult {
   ok: boolean
   latency_ms: number | null
   detail: string
+}
+
+/* ---------------------------------- ollama --------------------------------- */
+
+/** One curated local embedding model the settings screen can offer. */
+export interface OllamaPreset {
+  id: string
+  model: string
+  label: string
+  /** Human-readable download size, e.g. "1.2 GB". */
+  size: string
+  size_bytes: number
+  context: string
+  params: string
+  description: string
+  /** e.g. "CPU 可跑". */
+  requirement: string
+}
+
+export interface OllamaStatus {
+  installed: boolean
+  version: string | null
+  /** Model names reported by the local daemon, e.g. "bge-m3:latest". */
+  models: string[]
+  base_url: string
+  /** The OpenAI-compatible prefix to store as the embedding base_url. */
+  openai_base_url: string
+  presets: OllamaPreset[]
+  /** Why the probe failed; null when installed. */
+  error: string | null
+}
+
+export interface OllamaPullEvent {
+  type: 'progress' | 'error' | 'done'
+  model: string
+  status?: string
+  detail?: string
+  total?: number
+  completed?: number
+  percent?: number
 }
 
 /* -------------------------------- conversations ----------------------------- */
@@ -142,6 +196,12 @@ export interface Conversation {
   end_line: number | null
   created_at: string
   updated_at: string
+  /** Owner project's display name; present on list responses. */
+  project_name?: string | null
+  /** True when a note was already generated from this conversation. */
+  has_note?: boolean
+  /** Id of that note, so the card can jump straight to it. */
+  note_id?: number | null
 }
 
 export interface Citation {
@@ -285,6 +345,23 @@ export interface Note {
   content_md: string
   created_at: string
   updated_at: string
+  /** True when the note owns a retrieval row, i.e. the agent can cite it. */
+  indexed?: boolean
+}
+
+/** Returned by the note-from-message endpoint, which also reports how it went. */
+export interface GeneratedNote extends Note {
+  summary_failed: boolean
+  summary_error: string | null
+  refs: number
+  indexed: boolean
+}
+
+export interface NoteExport {
+  path: string
+  directory: string
+  filename: string
+  bytes: number
 }
 
 export interface NoteCreateBody {

@@ -43,6 +43,10 @@ ignore = ["B008", "B904"]
 [tool.ruff.lint.per-file-ignores]
 # conftest must set env vars before importing the app package.
 "tests/conftest.py" = ["E402"]
+# scripts/ holds local diagnostic helpers (HTTP smoke tests, CDP screenshots,
+# a fake model server). They embed long JS/JSON snippets and use broad guards on
+# purpose, and they are never imported by the app.
+"scripts/*.py" = ["E501", "SIM105", "SIM110"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

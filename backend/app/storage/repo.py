@@ -140,16 +140,74 @@ def get_conversation(conversation_id: str) -> dict[str, Any] | None:
         return _row(conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone())
 
 
-def list_conversations(project_id: int | None = None) -> list[dict[str, Any]]:
+# One row per conversation, plus the two fields the sidebar needs: which project
+# it belongs to (so "other conversations" rows can be labelled) and whether a
+# note already exists (so code cards can switch to the "笔记" state). Both are
+# computed in the same statement on purpose — the sidebar must not issue one
+# query per row.
+_CONVERSATION_SELECT = """
+    SELECT c.*,
+           p.name AS project_name,
+           EXISTS(SELECT 1 FROM notes n WHERE n.conversation_id = c.id) AS has_note
+      FROM conversations c
+      LEFT JOIN projects p ON p.id = c.project_id
+"""
+
+
+def _conversation_rows(rows) -> list[dict[str, Any]]:
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["has_note"] = bool(item.get("has_note"))
+        out.append(item)
+    return out
+
+
+def list_conversations(project_id: int | None = None, include_others: bool = False) -> list[dict[str, Any]]:
+    """List conversations, newest first.
+
+    ``include_others`` keeps the current project's conversations on top and
+    appends every other project's conversations below, each group ordered by
+    ``updated_at`` descending. That single ordering lets the sidebar split the
+    list into two sections without a second request.
+    """
     with get_conn() as conn:
         if project_id is None:
-            rows = conn.execute("SELECT * FROM conversations ORDER BY updated_at DESC")
+            rows = conn.execute(_CONVERSATION_SELECT + " ORDER BY c.updated_at DESC").fetchall()
+        elif include_others:
+            rows = conn.execute(
+                _CONVERSATION_SELECT
+                + """ ORDER BY CASE WHEN c.project_id = ? THEN 0 ELSE 1 END,
+                             c.updated_at DESC""",
+                (project_id,),
+            ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM conversations WHERE project_id = ? ORDER BY updated_at DESC",
+                _CONVERSATION_SELECT + " WHERE c.project_id = ? ORDER BY c.updated_at DESC",
                 (project_id,),
-            )
-        return [dict(r) for r in rows]
+            ).fetchall()
+        return _conversation_rows(rows)
+
+
+def list_conversations_by_file(project_id: int, file_path: str) -> list[dict[str, Any]]:
+    """Conversations anchored to one file, ordered by their starting line.
+
+    Used by the code cards in the editor: for a given file we need every snippet
+    conversation that covers a line range, oldest line first.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT c.*, p.name AS project_name,
+                      EXISTS(SELECT 1 FROM notes n WHERE n.conversation_id = c.id) AS has_note,
+                      (SELECT n.id FROM notes n WHERE n.conversation_id = c.id
+                        ORDER BY n.id LIMIT 1) AS note_id
+                 FROM conversations c
+                 LEFT JOIN projects p ON p.id = c.project_id
+                WHERE c.project_id = ? AND c.file_path = ?
+                ORDER BY COALESCE(c.start_line, 0) ASC, c.updated_at DESC""",
+            (project_id, file_path),
+        ).fetchall()
+        return _conversation_rows(rows)
 
 
 def rename_conversation(conversation_id: str, title: str) -> None:
@@ -218,6 +276,21 @@ def list_messages(conversation_id: str) -> list[dict[str, Any]]:
             item["meta"] = _json(item.get("meta"))
             out.append(item)
         return out
+
+
+def get_message(conversation_id: str, message_id: str) -> dict[str, Any] | None:
+    """One message, scoped to its conversation so a stray id cannot leak across."""
+    with get_conn() as conn:
+        row = _row(
+            conn.execute(
+                "SELECT * FROM messages WHERE id = ? AND conversation_id = ?",
+                (message_id, conversation_id),
+            ).fetchone()
+        )
+    if row is not None:
+        row["citations"] = _json(row.get("citations"))
+        row["meta"] = _json(row.get("meta"))
+    return row
 
 
 # --------------------------------------------------------------------------- #
@@ -303,6 +376,17 @@ def list_notes(project_id: int) -> list[dict[str, Any]]:
 def get_note(note_id: int) -> dict[str, Any] | None:
     with get_conn() as conn:
         return _row(conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone())
+
+
+def find_note_for_conversation(conversation_id: str) -> dict[str, Any] | None:
+    """Return the note generated from a conversation, if any (newest first)."""
+    with get_conn() as conn:
+        return _row(
+            conn.execute(
+                "SELECT * FROM notes WHERE conversation_id = ? ORDER BY id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        )
 
 
 def create_note(project_id: int, title: str, content_md: str, conversation_id: str | None = None) -> dict[str, Any]:

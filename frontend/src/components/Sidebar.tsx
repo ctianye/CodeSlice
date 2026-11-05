@@ -1,65 +1,59 @@
 import type { ReactNode } from 'react'
-import { usePersistedState } from '../hooks/useAsync'
+import { useApp } from '../state/AppState'
+import type { SidebarTab } from '../state/AppState'
 import { AnchorsPanel } from './AnchorsPanel'
 import { ConversationList } from './ConversationList'
 import { FilePanel } from './FilePanel'
+import { Icon } from './Icon'
+import type { IconName } from './Icon'
 import { NotesPanel } from './NotesPanel'
 
-type Tab = 'files' | 'chats' | 'notes' | 'anchors'
-
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'files', label: '文件' },
-  { id: 'chats', label: '对话' },
-  { id: 'notes', label: '笔记' },
-  { id: 'anchors', label: '锚点' },
+const TABS: Array<{ id: SidebarTab; label: string; icon: IconName; hint: string }> = [
+  { id: 'files', label: '文件', icon: 'folder', hint: '文件树与项目搜索' },
+  { id: 'chats', label: '对话', icon: 'message', hint: '本项目与其他项目的对话' },
+  { id: 'notes', label: '笔记', icon: 'notes', hint: '阅读笔记' },
+  { id: 'anchors', label: '锚点', icon: 'anchor', hint: '代码锚点状态' },
 ]
 
 interface SidebarProps {
   onNewConversation: () => void
 }
 
-/** Left pane: file tree / conversations / notes / anchors behind tabs. */
+/**
+ * Left pane: file tree / conversations / notes / anchors behind a tab rail.
+ *
+ * Each panel owns its own `.sidebar-section` (toolbar + scroll region) so the
+ * toolbar of one tab never scrolls away with another tab's content.
+ *
+ * The active tab lives in AppState (persisted) rather than here, because a code
+ * card in the editor needs to switch the sidebar to a note it just opened.
+ */
 export function Sidebar({ onNewConversation }: SidebarProps): ReactNode {
-  const [tab, setTab] = usePersistedState<Tab>('codeslice.sidebarTab', 'files')
+  const { sidebarTab, setSidebarTab } = useApp()
 
   return (
     <div className="sidebar">
-      <div className="sidebar-tabs" role="tablist">
+      <div className="sidebar-tabs" role="tablist" aria-label="侧边栏视图">
         {TABS.map((item) => (
           <button
             key={item.id}
+            type="button"
             role="tab"
-            aria-selected={tab === item.id}
-            className={tab === item.id ? 'active' : ''}
-            onClick={() => setTab(item.id)}
+            aria-selected={sidebarTab === item.id}
+            className={sidebarTab === item.id ? 'active' : ''}
+            title={item.hint}
+            onClick={() => setSidebarTab(item.id)}
           >
+            <Icon name={item.icon} size={14} />
             {item.label}
           </button>
         ))}
       </div>
 
-      {tab === 'files' ? <FilePanel /> : null}
-      {tab === 'chats' ? (
-        <div className="sidebar-section">
-          <div className="sidebar-scroll">
-            <ConversationList onNewConversation={onNewConversation} />
-          </div>
-        </div>
-      ) : null}
-      {tab === 'notes' ? (
-        <div className="sidebar-section">
-          <div className="sidebar-scroll">
-            <NotesPanel />
-          </div>
-        </div>
-      ) : null}
-      {tab === 'anchors' ? (
-        <div className="sidebar-section">
-          <div className="sidebar-scroll">
-            <AnchorsPanel />
-          </div>
-        </div>
-      ) : null}
+      {sidebarTab === 'files' ? <FilePanel /> : null}
+      {sidebarTab === 'chats' ? <ConversationList onNewConversation={onNewConversation} /> : null}
+      {sidebarTab === 'notes' ? <NotesPanel /> : null}
+      {sidebarTab === 'anchors' ? <AnchorsPanel /> : null}
     </div>
   )
 }

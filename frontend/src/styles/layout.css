@@ -1,86 +1,91 @@
+/* =============================================================================
+   Shell: top bar, three-pane workspace, splitters, status bar.
+   ========================================================================== */
+
 .app-shell {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  background: var(--bg);
 }
 
+/* --------------------------------- top bar -------------------------------- */
+
 .topbar {
+  position: relative;
+  z-index: var(--z-topbar);
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 44px;
-  flex: 0 0 44px;
-  padding: 0 12px;
+  height: 46px;
+  flex: 0 0 46px;
+  padding: 0 0 0 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  user-select: none;
+  background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg) 12%);
   -webkit-app-region: drag;
-  -webkit-user-select: none;
+  user-select: none;
 }
 
 .topbar button,
-.topbar-actions,
-.window-controls { -webkit-app-region: no-drag; }
-
-.window-controls {
-  height: 100%;
-  display: flex;
-  align-items: stretch;
-  margin: 0 -12px 0 4px;
+.topbar .project-chip,
+.topbar-actions {
+  -webkit-app-region: no-drag;
 }
 
-.window-control {
-  width: 44px;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 16px;
-}
-
-.window-control:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
-.window-control.close:hover:not(:disabled) { background: #c42b1c; color: white; }
-
-.topbar .brand {
+.brand {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: var(--text);
+  padding-right: 4px;
 }
 
-.topbar .brand .dot {
-  width: 8px;
-  height: 8px;
+.brand .logo {
+  display: flex;
+  filter: drop-shadow(0 2px 6px rgba(76, 141, 255, 0.28));
+}
+
+/* legacy dot, kept for older markup */
+.brand .dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 10px rgba(91, 157, 255, 0.7);
+  box-shadow: 0 0 10px var(--accent-line);
 }
 
-.topbar .spacer {
-  flex: 1;
+.topbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
 }
 
 .project-chip {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
+  min-width: 0;
+  max-width: 46vw;
+  height: 26px;
+  padding: 0 10px;
   border-radius: 999px;
+  border: 1px solid var(--border);
   background: var(--bg-elevated);
-  font-size: 11.5px;
-  color: var(--text-dim);
-  max-width: 340px;
+  cursor: default;
+}
+
+.project-chip:hover {
+  border-color: var(--border-strong);
 }
 
 .project-chip .name {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text);
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -88,25 +93,60 @@
 
 .project-chip .path {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  direction: rtl;
+  text-align: left;
 }
 
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
+
+.topbar-actions button {
+  height: 28px;
+}
+
+/* --------------------------------- window --------------------------------- */
+
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: 6px;
+}
+
+.window-control {
+  width: 46px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 0;
+}
+
+.window-control:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.window-control.close:hover:not(:disabled) {
+  background: #c42b1c;
+  color: #fff;
+}
+
+/* -------------------------------- workspace ------------------------------- */
 
 .workspace {
   flex: 1;
-  min-height: 0;
   display: flex;
-  align-items: stretch;
-  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
 }
 
 .pane {
@@ -114,7 +154,6 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  height: 100%;
   overflow: hidden;
 }
 
@@ -122,30 +161,31 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
-  flex: 0 0 34px;
+  height: 36px;
+  flex: 0 0 36px;
   padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   color: var(--text-dim);
 }
 
 .pane-body {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  overflow: auto;
 }
 
+/* -------------------------------- splitters ------------------------------- */
+
 .splitter {
+  position: relative;
   flex: 0 0 5px;
-  width: 5px;
   cursor: col-resize;
   background: transparent;
-  position: relative;
-  z-index: 5;
+  z-index: var(--z-splitter);
+  touch-action: none;
 }
 
 .splitter::after {
@@ -153,10 +193,82 @@
   position: absolute;
   inset: 0 2px;
   background: var(--border);
-  transition: background 0.12s ease;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .splitter:hover::after,
-.splitter.dragging::after {
-  background: var(--accent-dim);
+.splitter.dragging::after,
+.splitter:focus-visible::after {
+  background: var(--accent);
+}
+
+.splitter:focus-visible {
+  outline: none;
+}
+
+/* ------------------------------- status bar ------------------------------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.statusbar .status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.statusbar .status-item.clickable {
+  border: 0;
+  background: transparent;
+  padding: 2px 5px;
+  margin: -2px -5px;
+  border-radius: var(--radius-xs);
+  font-size: 10.5px;
+  height: auto;
+  color: inherit;
+}
+
+.statusbar .status-item.clickable:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+
+.statusbar .status-item .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.statusbar .status-item.ok .status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.statusbar .status-item.warn .status-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
+
+.statusbar .status-item.err .status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.statusbar .status-item.busy .status-dot {
+  background: var(--accent);
+  animation: pulse 1.6s var(--ease) infinite;
 }

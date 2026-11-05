@@ -16,7 +16,10 @@ import websockets
 
 async def run(port: int, expression: str) -> int:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=10) as resp:
-        pages = [t for t in json.loads(resp.read().decode("utf-8")) if t.get("type") == "page"]
+        targets = [t for t in json.loads(resp.read().decode("utf-8")) if t.get("type") == "page"]
+    # Electron also exposes its devtools window as a page target; the app itself
+    # is the http one, so prefer that instead of whatever comes first.
+    pages = [t for t in targets if str(t.get("url", "")).startswith("http")] or targets
     if not pages:
         print("no page target")
         return 2

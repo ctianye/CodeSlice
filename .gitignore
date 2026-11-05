@@ -97,4 +97,11 @@ $RECYCLE.BIN/
 
 # --- Logs --------------------------------------------------------------------
 *.log
+*.err
+# dev-server stdout captured by local helper scripts
+/*.out
 logs/
+
+# --- Local verification artifacts (screenshots, backend stderr, ACL repair) --
+.shots/
+acl-recovery/

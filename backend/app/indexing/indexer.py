@@ -20,7 +20,7 @@ from app.indexing.chunker import chunk_file
 from app.indexing.languages import detect_language
 from app.models import embeddings as emb
 from app.retrieval import tokenize
-from app.services import paths
+from app.services import notes_index, paths
 from app.storage import repo
 
 log = logging.getLogger(__name__)
@@ -101,7 +101,9 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
     model_name = emb.embedding_model_name() if use_embeddings else None
     total = max(1, len(files))
 
-    pending_vectors: list[tuple[int, str]] = []  # (chunk_id, content)
+    # chunk id -> text still needing a vector, keyed by id so a chunk that was
+    # just rewritten is not embedded twice in the same run.
+    pending_vectors: dict[int, str] = {}
 
     for idx, (path, stat) in enumerate(files, start=1):
         rel = path.relative_to(root).as_posix()
@@ -183,7 +185,7 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
                     ),
                 )
                 if use_embeddings:
-                    pending_vectors.append((chunk_id, chunk["content"]))
+                    pending_vectors[chunk_id] = chunk["content"]
                 stats["chunks"] += 1
         stats["files"] += 1
         if idx % 10 == 0 or idx == total:
@@ -203,14 +205,28 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
                 conn.execute("DELETE FROM chunks WHERE project_id = ? AND path = ?", (project_id, rel))
                 conn.execute("DELETE FROM indexed_files WHERE project_id = ? AND path = ?", (project_id, rel))
 
+    # Chunks carried over from an earlier run keep their old vectors. When the
+    # configured embedding model changed (e.g. the user switched to a local
+    # Ollama model), those vectors are not comparable with new query vectors, so
+    # re-embed them here instead of forcing the user to re-parse every file.
+    if use_embeddings and model_name:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, content FROM chunks WHERE project_id = ? AND (embed_model IS NULL OR embed_model <> ?)",
+                (project_id, model_name),
+            ).fetchall()
+        for row in rows:
+            pending_vectors.setdefault(int(row["id"]), str(row["content"]))
+
     if pending_vectors and model_name:
         progress(92, f"生成向量 {len(pending_vectors)} 段…", stats)
         try:
-            texts = [content for _, content in pending_vectors]
+            items = list(pending_vectors.items())
+            texts = [content for _, content in items]
             vectors = emb.embed_texts(texts)
             if vectors:
                 with write_conn() as conn:
-                    for (chunk_id, _), vector in zip(pending_vectors, vectors, strict=False):
+                    for (chunk_id, _), vector in zip(items, vectors, strict=False):
                         conn.execute(
                             "UPDATE chunks SET vector = ?, embed_model = ? WHERE id = ?",
                             (emb.pack(vector), model_name, chunk_id),
@@ -219,6 +235,15 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
         except Exception as exc:  # embedding failures must not fail the index job
             log.warning("embedding failed: %s", exc)
             stats["embedding_error"] = f"{type(exc).__name__}: {exc}"[:300]
+
+    # Notes are chunks too (path = note://<id>), so a rebuild must put them back:
+    # the file scan above only knows about files on disk, and clear_index wipes
+    # every chunk of the project. Re-sync also drops rows for deleted notes.
+    try:
+        note_stats = notes_index.sync_project_notes(project_id)
+        stats["notes"] = int(note_stats.get("notes", 0))
+    except Exception as exc:  # note indexing must not fail the file index
+        log.warning("note index sync failed: %s", exc)
 
     repo.mark_project_indexed(project_id)
     progress(100, "索引完成", stats, status="done")

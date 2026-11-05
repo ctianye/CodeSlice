@@ -46,8 +46,9 @@ def main() -> None:
 
         tree = client.get(f"/projects/{pid}/tree", params={"depth": 2})
         entries = tree.json()
-        check("tree", tree.status_code == 200 and isinstance(entries, list) and entries,
-              [e["name"] for e in entries[:5]])
+        check(
+            "tree", tree.status_code == 200 and isinstance(entries, list) and entries, [e["name"] for e in entries[:5]]
+        )
 
         file_resp = client.get(f"/projects/{pid}/file", params={"path": "backend/app/main.py"})
         check("read file", file_resp.status_code == 200 and "create_app" in file_resp.json()["content"])
@@ -75,8 +76,14 @@ def main() -> None:
 
         conv = client.post(
             "/conversations",
-            json={"project_id": pid, "mode": "snippet", "file_path": "backend/app/main.py",
-                  "start_line": 1, "end_line": 20, "selected_code": "def create_app():"},
+            json={
+                "project_id": pid,
+                "mode": "snippet",
+                "file_path": "backend/app/main.py",
+                "start_line": 1,
+                "end_line": 20,
+                "selected_code": "def create_app():",
+            },
         )
         check("create conversation", conv.status_code == 200, conv.text[:200])
         cid = conv.json()["id"]

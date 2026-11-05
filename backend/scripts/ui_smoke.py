@@ -66,6 +66,11 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
 
 async def run(devtools_port: int, api_port: int, token: str) -> int:
     pages = [t for t in _targets(devtools_port) if t.get("type") == "page"]
+    # The docked DevTools window is also a page target; the renderer is the one
+    # served over http.
+    http_pages = [t for t in pages if str(t.get("url", "")).startswith("http")]
+    if http_pages:
+        pages = http_pages
     if not pages:
         print("no page target — is the app running with --remote-debugging-port?")
         return 2
@@ -102,7 +107,9 @@ async def run(devtools_port: int, api_port: int, token: str) -> int:
         failures += not check("document title is CodeSlice", title == "CodeSlice", str(title))
 
         body_len = await cdp.evaluate("document.body.innerText.trim().length")
-        failures += not check("page rendered visible text", isinstance(body_len, int) and body_len > 0, f"{body_len} chars")
+        failures += not check(
+            "page rendered visible text", isinstance(body_len, int) and body_len > 0, f"{body_len} chars"
+        )
 
         text = await cdp.evaluate("document.body.innerText")
         failures += not check(
@@ -115,23 +122,23 @@ async def run(devtools_port: int, api_port: int, token: str) -> int:
         health = await cdp.evaluate(
             "fetch('/api/health').then(r => r.status + ' ' + r.statusText).catch(e => 'ERR ' + e)"
         )
-        failures += not check("same-origin /api/health reachable from the renderer", str(health).startswith("200"), str(health))
+        failures += not check(
+            "same-origin /api/health reachable from the renderer", str(health).startswith("200"), str(health)
+        )
 
         authed = await cdp.evaluate(
             "fetch('/api/projects', {headers: {'X-Session-Token': (window.codeslice && window.codeslice.token) || ''}})"
             ".then(async r => r.status + ' ' + (await r.text()).slice(0, 60)).catch(e => 'ERR ' + e)"
         )
-        failures += not check("token from the bridge authorizes /api/projects", str(authed).startswith("200"), str(authed))
-
-        monaco = await cdp.evaluate(
-            "fetch('/monaco/vs/loader.js').then(r => r.status).catch(e => 'ERR ' + e)"
+        failures += not check(
+            "token from the bridge authorizes /api/projects", str(authed).startswith("200"), str(authed)
         )
+
+        monaco = await cdp.evaluate("fetch('/monaco/vs/loader.js').then(r => r.status).catch(e => 'ERR ' + e)")
         failures += not check("Monaco loads offline through the backend", str(monaco) == "200", str(monaco))
 
         # No fattening stack of console errors on the welcome screen.
-        errors = await cdp.evaluate(
-            "JSON.stringify((window.__codesliceErrors || []).slice(0, 5))"
-        )
+        errors = await cdp.evaluate("JSON.stringify((window.__codesliceErrors || []).slice(0, 5))")
         if errors and errors != "[]":
             print(f"        console errors: {errors}")
         if token:

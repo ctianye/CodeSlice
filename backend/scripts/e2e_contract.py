@@ -18,6 +18,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -206,25 +207,77 @@ def main() -> int:
         detail.text[:200],
     )
 
-    # SSE plumbing: without a model configured the endpoint must fail fast with a
-    # 4xx JSON error rather than hanging or emitting a broken stream.
+    others = client.get("/api/conversations", params={"project_id": project_id, "include_others": "true"})
+    check(
+        "GET /conversations?include_others=true",
+        others.status_code == 200
+        and isinstance(others.json(), list)
+        and all({"project_name", "has_note"} <= set(row) for row in others.json()),
+        others.text[:200],
+    )
+
+    by_file = client.get(
+        f"/api/projects/{project_id}/conversations/by-file",
+        params={"path": target},
+    )
+    check(
+        "GET /conversations/by-file lists the file's conversations",
+        by_file.status_code == 200 and any(row["id"] == conversation_id for row in by_file.json()),
+        by_file.text[:200],
+    )
+    by_file_bad = client.get(
+        f"/api/projects/{project_id}/conversations/by-file",
+        params={"path": "../escape.py"},
+    )
+    check("by-file rejects a path outside the project", by_file_bad.status_code in (400, 404), by_file_bad.status_code)
+    by_file_missing = client.get(
+        f"/api/projects/{project_id}/conversations/by-file",
+        params={"path": "no-such-file.py"},
+    )
+    check("by-file 404s for an unknown file", by_file_missing.status_code == 404, by_file_missing.status_code)
+
+    note_from_message = client.post(f"/api/conversations/{conversation_id}/messages/does-not-exist/note")
+    check(
+        "POST /messages/{id}/note 404s for an unknown message",
+        note_from_message.status_code == 404,
+        note_from_message.text[:200],
+    )
+
+    # SSE plumbing. With no chat model configured the endpoint must fail fast with
+    # a 4xx JSON error rather than hanging or emitting a broken stream; when a
+    # model *is* configured (a real one, or the mock used for UI checks) the same
+    # call must instead open a valid event stream. Asserting only the first case
+    # made this script fail against any instance that had a model set up.
+    model_configured = bool(payload.get("chat", {}).get("api_key_configured"))
     stream = client.post(
         f"/api/conversations/{conversation_id}/messages",
         json={"content": "解释一下这个函数"},
     )
-    check(
-        "POST /messages without model -> 4xx JSON",
-        stream.status_code == 400 and "detail" in stream.json(),
-        f"{stream.status_code} {stream.text[:200]}",
-    )
+    if model_configured:
+        check(
+            "POST /messages opens an SSE stream when a model is configured",
+            stream.status_code == 200
+            and stream.headers.get("content-type", "").startswith("text/event-stream")
+            and "data:" in stream.text,
+            f"{stream.status_code} {stream.text[:200]}",
+        )
+    else:
+        check(
+            "POST /messages without model -> 4xx JSON",
+            stream.status_code == 400 and "detail" in stream.json(),
+            f"{stream.status_code} {stream.text[:200]}",
+        )
 
+    # The turn above may have produced no interrupt; the endpoint must still answer
+    # with a well-formed stream (it re-attaches to whatever is pending, including
+    # nothing). Only a bad decision is a hard client error.
     resume = client.post(
         f"/api/conversations/{conversation_id}/resume",
         json={"interrupt_id": "no-such-interrupt", "decision": "approve"},
     )
     check(
-        "POST /resume without a pending interrupt -> 4xx JSON",
-        resume.status_code in (400, 404) and "detail" in resume.json(),
+        "POST /resume without a pending interrupt does not 5xx",
+        resume.status_code in (200, 400, 404),
         f"{resume.status_code} {resume.text[:200]}",
     )
 
@@ -238,25 +291,77 @@ def main() -> int:
     check("GET /interrupt", interrupt.status_code in (200, 404), interrupt.text[:200])
 
     print("\n== notes / anchors / command rules ==")
+    # A marker that appears nowhere in the project tree, so the assertion below
+    # proves the note itself reached the index. Any common word would tie with
+    # real files and make this check depend on ranking noise.
+    marker = "zebrafish_quokka_marker"
     note = client.post(
         "/api/notes",
         json={
             "project_id": project_id,
             "title": "e2e note",
-            "body": "记住 agent 的审批流",
-            "file_path": target,
-            "start_line": 1,
-            "end_line": 20,
+            "content_md": f"# e2e note\n\n记住 agent 的审批流（{marker}）。",
+            "conversation_id": conversation_id,
         },
     )
     check("POST /notes", note.status_code in (200, 201), note.text[:300])
-    note_id = note.json()["id"]
+    note_body = note.json()
+    note_id = note_body["id"]
+    check(
+        "POST /notes reports whether it entered the knowledge base",
+        isinstance(note_body.get("indexed"), bool),
+        note.text[:200],
+    )
 
     note_list = client.get("/api/notes", params={"project_id": project_id})
-    check("GET /notes", note_list.status_code == 200 and any(n["id"] == note_id for n in note_list.json()))
+    check(
+        "GET /notes",
+        note_list.status_code == 200
+        and any(n["id"] == note_id and isinstance(n.get("indexed"), bool) for n in note_list.json()),
+        note_list.text[:200],
+    )
+
+    note_hit = client.get(f"/api/projects/{project_id}/search", params={"q": marker, "top_k": 8})
+    check(
+        "search finds the note as a knowledge-base chunk",
+        note_hit.status_code == 200
+        and any(row.get("path") == f"note://{note_id}" and row.get("kind") == "note" for row in note_hit.json()),
+        note_hit.text[:300],
+    )
 
     note_put = client.put(f"/api/notes/{note_id}", json={"title": "e2e note v2"})
     check("PUT /notes/{id}", note_put.status_code == 200, note_put.text[:200])
+
+    after_edit = client.get(f"/api/projects/{project_id}/search", params={"q": marker, "top_k": 8})
+    check(
+        "editing a note keeps exactly one searchable chunk",
+        after_edit.status_code == 200
+        and sum(1 for row in after_edit.json() if row.get("path") == f"note://{note_id}") == 1,
+        after_edit.text[:300],
+    )
+
+    note_export = client.post(f"/api/notes/{note_id}/export")
+    check("POST /notes/{id}/export", note_export.status_code == 200, note_export.text[:300])
+    if note_export.status_code == 200:
+        exported = note_export.json()
+        export_path = Path(exported["path"])
+        check(
+            "exported markdown lands on disk",
+            export_path.is_file() and export_path.suffix == ".md" and exported["bytes"] > 0,
+            exported,
+        )
+        check(
+            "exported markdown starts with the note title",
+            export_path.is_file() and export_path.read_text(encoding="utf-8").startswith("# e2e note v2"),
+            export_path,
+        )
+
+    export_missing = client.post("/api/notes/999999/export")
+    check(
+        "POST /notes/{id}/export 404s for an unknown note",
+        export_missing.status_code == 404,
+        export_missing.status_code,
+    )
 
     anchors = client.get(f"/api/projects/{project_id}/anchors")
     check("GET /projects/{id}/anchors", anchors.status_code == 200, anchors.text[:200])

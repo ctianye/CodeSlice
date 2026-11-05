@@ -1,42 +1,73 @@
+/* =============================================================================
+   Sidebar: tab rail, file tree, conversation/note/anchor lists, search.
+   ========================================================================== */
+
 .sidebar {
-  width: 100%;
-  height: 100%;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
+  background: var(--bg-panel);
 }
+
+/* --------------------------------- tabs ---------------------------------- */
 
 .sidebar-tabs {
   display: flex;
-  height: 32px;
-  flex: 0 0 32px;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: 37px;
+  padding: 0 4px;
+  gap: 1px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
 }
 
 .sidebar-tabs button {
+  position: relative;
   flex: 1;
   height: 100%;
-  border: none;
+  flex-direction: row;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 2px;
+  border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--text-faint);
   font-size: 11px;
-  letter-spacing: 0.3px;
-  border-bottom: 2px solid transparent;
-  padding: 0;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--text-faint);
+  transition: color var(--dur-fast) var(--ease);
 }
 
-.sidebar-tabs button:hover:not(.active) {
+.sidebar-tabs button:hover:not(:disabled) {
+  background: transparent;
   color: var(--text-dim);
-  background: var(--bg-hover);
 }
 
 .sidebar-tabs button.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-  background: var(--bg-elevated);
+  color: var(--accent);
 }
+
+.sidebar-tabs button.active::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+
+.sidebar-tabs button .tab-count {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+/* -------------------------------- toolbar -------------------------------- */
 
 .sidebar-section {
   display: flex;
@@ -48,122 +79,211 @@
 .sidebar-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 8px;
-  border-bottom: 1px solid var(--border);
+  gap: 4px;
+  padding: 8px 8px;
   flex: 0 0 auto;
+  min-height: 0;
+  flex-wrap: wrap;
 }
 
-.sidebar-toolbar .grow {
+.sidebar-toolbar.grow {
   flex: 1;
-  min-width: 0;
 }
 
-.sidebar-toolbar input {
-  padding: 4px 8px;
-  font-size: 11px;
+.sidebar-toolbar .search-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-toolbar .search-field .search-icon {
+  position: absolute;
+  left: 9px;
+  display: flex;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.sidebar-toolbar .search-field input {
+  height: 30px;
+  padding-left: 29px;
+  padding-right: 28px;
+  font-size: 12px;
+  background: var(--bg);
+}
+
+.sidebar-toolbar .search-field .clear-btn {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.sidebar-toolbar .search-field .clear-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .sidebar-scroll {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 4px 0 12px;
+  overflow-y: auto;
+  padding-bottom: 10px;
 }
 
-/* -------------------------------- file tree ------------------------------- */
+/* ------------------------------- file tree -------------------------------- */
+
+.tree {
+  padding: 2px 0 8px;
+}
 
 .tree-node {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
   padding-right: 8px;
-  cursor: pointer;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-dim);
   font-size: 12px;
-  user-select: none;
-  white-space: nowrap;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
 }
 
-.tree-node:hover {
+.tree-node:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.tree-node.selected {
+.tree-node.selected,
+.tree-node.selected:hover:not(:disabled) {
   background: var(--bg-active);
-  color: #eaf1ff;
+  color: var(--text);
+}
+
+.tree-node.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
 }
 
 .tree-node .twist {
-  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 14px;
-  text-align: center;
   color: var(--text-faint);
-  font-size: 9px;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.tree-node .twist.open {
+  transform: rotate(90deg);
 }
 
 .tree-node .icon {
-  width: 13px;
-  flex: 0 0 13px;
-  text-align: center;
-  font-size: 10px;
+  display: flex;
+  flex: 0 0 14px;
   color: var(--text-faint);
 }
 
 .tree-node.dir .icon {
-  color: #7d94b5;
+  color: var(--accent);
+  opacity: 0.82;
+}
+
+.tree-node.file .icon {
+  opacity: 0.86;
 }
 
 .tree-node .label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-node.dirty .label::after {
-  content: '●';
-  color: var(--warn);
-  font-size: 8px;
-  margin-left: 5px;
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  margin-bottom: 1px;
+  border-radius: 50%;
+  background: var(--warn);
   vertical-align: middle;
 }
 
-/* ------------------------------ conversation ------------------------------ */
+/* -------------------------------- list rows ------------------------------- */
 
 .list-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  color: var(--text-dim);
   cursor: pointer;
-  border-left: 2px solid transparent;
 }
 
-.list-row:hover {
+.list-row:hover:not(:disabled) {
   background: var(--bg-hover);
+  color: var(--text);
 }
 
 .list-row.active {
   background: var(--bg-active);
-  border-left-color: var(--accent);
+  color: var(--text);
+}
+
+.list-row .row-icon {
+  display: flex;
+  flex: 0 0 14px;
+  color: var(--text-faint);
 }
 
 .list-row .body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .list-row .title {
   font-size: 12px;
-  color: var(--text);
+  font-weight: 500;
+  color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .list-row .sub {
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -171,26 +291,251 @@
 }
 
 .list-row .row-actions {
-  display: none;
-  gap: 2px;
-}
-
-.list-row:hover .row-actions {
   display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
-.list-empty {
-  padding: 14px 12px;
+.list-row:hover .row-actions,
+.list-row.active .row-actions,
+.list-row .row-actions:focus-within {
+  opacity: 1;
+}
+
+.list-row .row-actions button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.7;
 }
 
-/* ---------------------------------- notes -------------------------------- */
+.list-row .row-actions button:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.list-row .row-actions button.del:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ---------------------------- conversation groups -------------------------- */
+
+/* Group header: "本项目对话" on top, "其他对话" below a hairline divider. */
+.list-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px 4px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  user-select: none;
+}
+
+.list-section-head.divided {
+  margin-top: 8px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.list-section-head .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-section-head .count {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+/* Small "has note" marker inline in a conversation subtitle. */
+.list-row .sub .note-dot {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: var(--accent);
+  vertical-align: -1px;
+}
+
+/* -------------------------------- search --------------------------------- */
+
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.search-result {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-dim);
+  white-space: normal;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.search-result:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+
+.search-result .sr-path {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result .sr-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.search-result pre {
+  margin: 0;
+  padding: 7px 8px;
+  max-height: 108px;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------- progress -------------------------------- */
+
+.progress-track {
+  height: 3px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), #8b7cff);
+  transition: width var(--dur) var(--ease);
+}
+
+.first-index {
+  margin: 0 8px 10px;
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.first-index .first-index-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.first-index p {
+  margin: 0 0 8px;
+  line-height: 1.6;
+}
+
+.index-card {
+  margin: 0 8px 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.index-card .index-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.index-card .index-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------- notes --------------------------------- */
+
+.sidebar-scroll.padded {
+  padding: 8px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
 .note-item {
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(34, 44, 58, 0.6);
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.note-item:hover {
+  border-color: var(--accent-line);
+  background: var(--bg-hover);
+}
+
+.note-item:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .note-item .note-head {
@@ -201,99 +546,151 @@
 
 .note-item .note-title {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 
-.note-item .note-title:hover {
-  text-decoration: underline;
+.note-item .note-head .row-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.note-item:hover .note-head .row-actions {
+  opacity: 1;
 }
 
 .note-item .note-body {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.6;
   color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 72px;
-  overflow: hidden;
-  cursor: pointer;
 }
 
 .note-item .note-time {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 10px;
   color: var(--text-faint);
 }
 
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--ok);
+  background: var(--ok-soft);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.notice svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--ok);
+}
+
+.notice .notice-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
 .note-editor {
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-line);
+  background: var(--bg-panel);
 }
 
 .note-editor .actions {
   display: flex;
+  align-items: center;
   gap: 6px;
-  justify-content: flex-end;
 }
 
-/* --------------------------------- search -------------------------------- */
+/* -------------------------------- anchors -------------------------------- */
 
-.search-result {
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(34, 44, 58, 0.6);
+.anchor-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
   cursor: pointer;
+  color: var(--text-dim);
 }
 
-.search-result:hover {
+.anchor-row:hover:not(:disabled) {
   background: var(--bg-hover);
+  color: var(--text);
 }
 
-.search-result .sr-path {
-  font-size: 11px;
-  color: var(--accent);
+.anchor-row .anchor-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.anchor-row .anchor-path {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.search-result .sr-meta {
+.anchor-row .anchor-lines {
   font-size: 10px;
   color: var(--text-faint);
-  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 
-.search-result pre {
-  margin: 4px 0 0;
-  font-size: 10.5px;
-  color: var(--text-dim);
-  max-height: 76px;
-  overflow: hidden;
-  white-space: pre-wrap;
-  word-break: break-word;
+
+
+.tree-node .tree-spinner {
+  width: 10px;
+  height: 10px;
+  margin-left: auto;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 640ms linear infinite;
 }
 
-/* Index job progress ------------------------------------------------------ */
-.progress-track {
-  height: 4px;
-  width: 100%;
-  border-radius: 999px;
-  background: var(--bg-active);
-  overflow: hidden;
+.tree-loading {
+  padding: 4px 0 4px 0;
 }
 
-.progress-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
-  transition: width 0.25s ease;
+.tree-loading .loading-line {
+  padding: 0;
+  font-size: 11px;
 }
+
