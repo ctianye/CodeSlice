@@ -126,13 +126,19 @@ def _code_refs(conversation: dict[str, Any], message: dict[str, Any]) -> list[di
     root = Path(project["path"])
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, int, int]] = set()
-    for citation in citations[:MAX_CODE_REFS]:
+    for citation in citations:
         path = str(citation.get("path") or "")
+        # Knowledge-base notes are cited as note://<id>; they have no lines on disk,
+        # so keeping them here would only render "content could not be read".
+        if not path or notes_index.note_id_from_path(path) is not None:
+            continue
         start = int(citation.get("start_line") or 1)
         end = int(citation.get("end_line") or start)
         key = (path, start, end)
-        if not path or key in seen:
+        if key in seen:
             continue
+        if len(out) >= MAX_CODE_REFS:
+            break
         seen.add(key)
         snippet = _read_range(root, path, start, end)
         out.append(

@@ -215,6 +215,36 @@ def test_generate_note_from_assistant_message(client, tmp_path, conn_reset, echo
     assert cards[0]["note_id"] == body["id"]
 
 
+def test_note_citations_do_not_become_dead_code_blocks(client, tmp_path, conn_reset, echo):
+    """A reply that cites an earlier note must not copy note:// paths into 关联代码.
+
+    Notes have no lines on disk, so such a reference could only render
+    "引用位置的内容已读取不到" - useless in a note that is meant to be read later.
+    """
+    project = _make_project(tmp_path, "proj")
+    other = repo.create_note(project["id"], "earlier note", "# earlier note\n\nbody")
+    conversation = repo.create_conversation(
+        project["id"], "sample.py:2-3", mode="snippet", file_path="pkg/sample.py", start_line=2, end_line=3
+    )
+    answer = repo.add_message(
+        conversation["id"],
+        "assistant",
+        "先看之前的笔记，再看这段代码。",
+        citations=[
+            {"path": f"note://{other['id']}", "start_line": 1, "end_line": 1, "symbol": "earlier note"},
+            {"path": "pkg/sample.py", "start_line": 2, "end_line": 3, "symbol": "top"},
+        ],
+    )
+
+    echo()
+    body = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+
+    assert body["refs"] == 1
+    assert "### pkg/sample.py:2-3" in body["content_md"]
+    assert f"note://{other['id']}" not in body["content_md"]
+    assert "内容已读取不到" not in body["content_md"]
+
+
 def test_notes_are_reindexed_after_a_full_rebuild(client, tmp_path, conn_reset, echo):
     """A re-index wipes every chunk of the project, including note chunks."""
     project = _make_project(tmp_path, "proj")
