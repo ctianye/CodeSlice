@@ -111,7 +111,12 @@ desktop\release\
 | `-SkipFrontend` | 复用已有的 `frontend\dist`，跳过前端构建 |
 | `-Clean` | 删除 `desktop\release`；对 `frontend`/`desktop` 强制重新 `npm ci` |
 
-脚本会校验 Node 主版本 ≥ 24、两个 `package.json` 存在、后端产物存在，
+脚本会校验 Node 主版本 ≥ 24、两个 `package.json` 存在、后端产物存在；随后把
+`frontend\dist` 同步到 `desktop\dist`（`node desktop\scripts\copy-renderer.mjs`）。
+这一步不能省：electron-builder 既把 `desktop\dist` 打进 asar，又把它作为
+`extraResources` 交给后端 HTTP 服务，两处必须是同一份产物，而 `-SkipFrontend`
+复用的 `frontend\dist` 与仓库里遗留的 `desktop\dist` 很容易不是同一代。
+
 然后在 `desktop\release\win-unpacked\resources\backend\` 里**反查**
 `codeslice-backend.exe` 是否真的被打进了安装包——如果 electron-builder 的
 `extraResources` 路径写错，这一步会直接报错而不是产出一个装完打不开的安装器。
