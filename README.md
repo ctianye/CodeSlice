@@ -118,7 +118,7 @@ CodeSplit/
 │   │   └── storage/          # 数据访问层
 │   ├── pyproject.toml
 │   ├── scripts/              # smoke / e2e_contract / ui_smoke / mock_model 联调脚本
-│   ├── tests/                # pytest（9 个文件、108 个用例）
+│   ├── tests/                # pytest（12 个文件、145 个用例）
 │   └── .venv/                # uv 管理的虚拟环境（Python 3.11）
 ├── frontend/                 # Vite + React 渲染进程
 │   └── src/
@@ -210,7 +210,9 @@ pwsh -File packaging\build_desktop.ps1
 ```
 
 第一步会额外跑自检与冒烟测试（真实启动 exe、握手、调 `/api/health`、验证未授权请求
-返回 401、确认 SQLite 初始化）。第二步会校验安装包内确实包含
+返回 401、确认 SQLite 初始化）。第二步会先把 `frontend\dist` 同步到 `desktop\dist`
+（electron-builder 既把 `desktop\dist` 打进 asar，又把它作为 `extraResources` 交给后端
+HTTP 服务，两处必须是同一份产物），再校验安装包内确实包含
 `resources\backend\codeslice-backend.exe`，并比对安装包里的前端资源名与
 `desktop\dist` 是否一致（防止增量构建把上一版前端打进安装器）。
 
