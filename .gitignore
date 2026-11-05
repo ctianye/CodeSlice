@@ -68,6 +68,8 @@ pnpm-debug.log*
 *.sqlite3
 .codeslice/
 .devdata/
+.e2edata/
+.e2e_ready.txt
 
 # --- Environment / secrets ---------------------------------------------------
 .env
