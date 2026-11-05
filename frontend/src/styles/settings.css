@@ -1,0 +1,196 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 11, 0.66);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 40px 20px;
+}
+
+.modal {
+  width: 100%;
+  max-width: 700px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.modal-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-tabs button {
+  border: none;
+  border-radius: 5px 5px 0 0;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 5px 12px;
+  border-bottom: 2px solid transparent;
+}
+
+.modal-tabs button.active {
+  color: var(--text);
+  background: var(--bg-elevated);
+  border-bottom-color: var(--accent);
+}
+
+.modal-body {
+  padding: 14px 16px 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field.full {
+  grid-column: 1 / -1;
+}
+
+.field label {
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: var(--text-faint);
+}
+
+.field .hint {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.field label .configured {
+  color: #8ddb9f;
+  margin-left: 6px;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.form-actions .grow {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.test-result {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.test-result.ok {
+  border-color: #2c5c3c;
+  background: #12261a;
+  color: #a8e3b8;
+}
+
+.test-result.err {
+  border-color: #5a2c29;
+  background: #211614;
+  color: #ffb3ae;
+}
+
+.section-label {
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 18px 0 8px;
+}
+
+.section-label:first-child {
+  margin-top: 0;
+}
+
+/* -------------------------------- rule rows ------------------------------- */
+
+.rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  background: var(--bg-elevated);
+}
+
+.rule-row .pattern {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-row select {
+  width: auto;
+  padding: 2px 6px;
+  font-size: 10.5px;
+}
+
+.rule-form {
+  display: grid;
+  grid-template-columns: 1fr 110px 110px auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}

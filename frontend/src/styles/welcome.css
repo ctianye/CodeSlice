@@ -1,0 +1,145 @@
+.welcome {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: auto;
+  padding: 48px 32px 40px;
+}
+
+.welcome-inner {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.welcome h1 {
+  font-size: 26px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  letter-spacing: 0.3px;
+}
+
+.welcome .lede {
+  color: var(--text-dim);
+  margin: 0 0 28px;
+  font-size: 13px;
+}
+
+.welcome .section-title {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 26px 0 10px;
+}
+
+.add-project-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  padding: 18px;
+}
+
+.add-project-card .row {
+  display: flex;
+  gap: 8px;
+}
+
+.add-project-card .row input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.add-project-card .actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.add-project-card .hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  flex: 1;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.project-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.project-card .name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.project-card .path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.project-card .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.welcome .token-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 10px;
+}
+
+.welcome .token-row .field {
+  flex: 1;
+}
+
+/* Welcome screen inside the app shell (project switching). */
+.app-shell > .welcome {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.welcome-return {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 11px;
+  color: var(--text-faint);
+}

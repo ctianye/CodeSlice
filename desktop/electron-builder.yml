@@ -1,0 +1,56 @@
+appId: com.codeslice.app
+productName: CodeSlice
+copyright: Copyright © 2026 CodeSlice
+
+directories:
+  output: release
+  buildResources: build-assets
+
+# Renderer bundle + compiled Electron main/preload + manifest.
+files:
+  - dist/**
+  - electron/**
+  - package.json
+  - '!electron/*.ts'
+  - '!electron/tsconfig.json'
+  - '!**/*.map'
+
+# The packaged Python backend lands next to the app resources; main.ts spawns
+# <resources>/backend/codeslice-backend.exe.
+extraResources:
+  - from: ../packaging/dist-backend
+    to: backend
+    filter:
+      - '**/*'
+  # A second copy of the renderer, loaded by the backend over http://127.0.0.1.
+  # main.ts's http branch points CODESLICE_FRONTEND_DIST here. Shipping it via
+  # extraResources keeps it out of app.asar, so the Python server can read it
+  # from disk with an ordinary file path.
+  - from: dist
+    to: frontend
+    filter:
+      - '**/*'
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build-assets/icon.ico
+  artifactName: ${productName}-${version}-Setup.${ext}
+  # No signing configured for local builds.
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CodeSlice
+  installerIcon: build-assets/icon.ico
+  uninstallerIcon: build-assets/icon.ico
+  installerLanguages:
+    - zh_CN
+  language: '2052'
+  deleteAppDataOnUninstall: false

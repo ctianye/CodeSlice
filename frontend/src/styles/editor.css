@@ -1,0 +1,108 @@
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  background: var(--bg);
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0 10px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.editor-toolbar .file-path {
+  font-family: var(--mono);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+
+.editor-toolbar .spacer {
+  flex: 1;
+}
+
+.editor-toolbar .tag {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.editor-toolbar .tag.branch {
+  color: #9fc0ff;
+  border-color: #2f4a6d;
+}
+
+.editor-toolbar .tag.dirty {
+  color: #ffcf80;
+  border-color: #6a5223;
+}
+
+.editor-mount {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.editor-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.editor-placeholder .big {
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+/* Selection action bar floating above the editor. */
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #16233a;
+  border-top: 1px solid #24405f;
+  border-bottom: 1px solid #24405f;
+  font-size: 11px;
+  color: #bcd3f5;
+  flex: 0 0 auto;
+}
+
+.selection-bar .lines {
+  font-family: var(--mono);
+  color: #8fb6ec;
+}
+
+.selection-bar .spacer {
+  flex: 1;
+}
+
+/* Highlighted citation range decoration in Monaco. */
+.citation-highlight {
+  background: rgba(91, 157, 255, 0.16);
+  border-left: 2px solid var(--accent);
+}
+
+.citation-line-flash {
+  background: rgba(91, 157, 255, 0.22);
+}

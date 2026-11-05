@@ -1,0 +1,257 @@
+"""SQLite storage: single local database for business data, FTS5 index,
+vector storage and LangGraph checkpoints.
+
+All tables are created here so every module codes against one schema.
+Connections are opened per use (WAL mode) and guarded by a process-wide write
+lock, which is enough for a single-desktop-user service.
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+from app.core.config import settings
+
+_write_lock = threading.RLock()
+
+SCHEMA_SQL = """
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS projects (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL,
+    path          TEXT    NOT NULL UNIQUE,
+    excluded      TEXT,                       -- JSON list of extra ignore globs
+    created_at    TEXT    NOT NULL,
+    last_opened_at TEXT,
+    indexed_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id          TEXT PRIMARY KEY,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title       TEXT    NOT NULL,
+    mode        TEXT    NOT NULL DEFAULT 'snippet',   -- snippet | project
+    file_path   TEXT,
+    start_line  INTEGER,
+    end_line    INTEGER,
+    selected_code TEXT,
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,            -- user | assistant | tool
+    content         TEXT NOT NULL,
+    citations       TEXT,                     -- JSON list
+    meta            TEXT,                     -- JSON object
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS indexed_files (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    path        TEXT    NOT NULL,
+    language    TEXT,
+    size        INTEGER NOT NULL DEFAULT 0,
+    mtime       REAL    NOT NULL DEFAULT 0,
+    hash        TEXT,
+    status      TEXT    NOT NULL DEFAULT 'indexed',   -- indexed | skipped | error
+    indexed_at  TEXT,
+    UNIQUE(project_id, path)
+);
+
+CREATE TABLE IF NOT EXISTS chunks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    file_id       INTEGER REFERENCES indexed_files(id) ON DELETE CASCADE,
+    path          TEXT    NOT NULL,
+    language      TEXT,
+    kind          TEXT    NOT NULL DEFAULT 'block',   -- function | class | module | block | doc
+    symbol        TEXT,
+    parent_symbol TEXT,
+    start_line    INTEGER NOT NULL,
+    end_line      INTEGER NOT NULL,
+    content       TEXT    NOT NULL,
+    hash          TEXT    NOT NULL,
+    tokens        INTEGER NOT NULL DEFAULT 0,
+    embed_model   TEXT,
+    vector        BLOB,
+    created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks(project_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(project_id, path);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    content,
+    path,
+    symbol,
+    tokenize = 'unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS code_anchors (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    conversation_id TEXT    NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    file_path       TEXT    NOT NULL,
+    commit_sha      TEXT,
+    symbol          TEXT,
+    start_line      INTEGER NOT NULL,
+    end_line        INTEGER NOT NULL,
+    snippet         TEXT,
+    code_hash       TEXT,
+    status          TEXT NOT NULL DEFAULT 'unchanged',
+    checked_at      TEXT,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_anchors_project ON code_anchors(project_id);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    conversation_id TEXT,
+    title           TEXT NOT NULL,
+    content_md      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS command_rules (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    pattern       TEXT    NOT NULL,
+    scope         TEXT    NOT NULL DEFAULT 'once',   -- once | session | always
+    needs_confirm INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    interrupt_id    TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    decision        TEXT NOT NULL,
+    detail          TEXT,
+    created_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER,
+    kind        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    progress    INTEGER NOT NULL DEFAULT 0,
+    message     TEXT NOT NULL DEFAULT '',
+    stats       TEXT,
+    error       TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+
+def utcnow() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+@contextmanager
+def get_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """Open a connection. Writes must be wrapped in :func:`write_conn`."""
+    path = Path(db_path or settings.db_path)
+    conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def write_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    path = Path(db_path or settings.db_path)
+    with _write_lock:
+        conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def init_db(db_path: Path | None = None) -> None:
+    path = Path(db_path or settings.db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with write_conn(path) as conn:
+        conn.executescript(SCHEMA_SQL)
+        # Lightweight migrations for forward compatibility.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(chunks)")}
+        for name, ddl in (
+            ("embed_model", "ALTER TABLE chunks ADD COLUMN embed_model TEXT"),
+            ("vector", "ALTER TABLE chunks ADD COLUMN vector BLOB"),
+        ):
+            if name not in cols:
+                conn.execute(ddl)
+        conv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)")}
+        if "selected_code" not in conv_cols:
+            conn.execute("ALTER TABLE conversations ADD COLUMN selected_code TEXT")
+    _migrate_fts(path)
+
+
+def _migrate_fts(path: Path) -> None:
+    """Rebuild the FTS index when the tokenization scheme changes.
+
+    ``chunks_fts`` stores a bag of search tokens (see ``app.retrieval.tokenize``)
+    rather than raw text, so a stale index silently stops matching new-style
+    queries. Rebuilding is cheap enough to do lazily on startup.
+    """
+    from app.retrieval import tokenize  # local import: keeps core/db import-light
+
+    current = str(tokenize.INDEX_VERSION)
+    with get_conn(path) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'fts_version'").fetchone()
+    if row is not None and row["value"] == current:
+        return
+
+    log = logging.getLogger(__name__)
+    with write_conn(path) as conn:
+        rows = conn.execute("SELECT id, content, path, symbol FROM chunks").fetchall()
+        conn.execute("DELETE FROM chunks_fts")
+        for row in rows:
+            conn.execute(
+                "INSERT INTO chunks_fts (rowid, content, path, symbol) VALUES (?,?,?,?)",
+                (
+                    row["id"],
+                    tokenize.index_text(row["content"]),
+                    tokenize.index_text(row["path"]),
+                    tokenize.index_text(row["symbol"] or ""),
+                ),
+            )
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES ('fts_version', ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (current, utcnow()),
+        )
+    log.info("rebuilt full-text index for %d chunks (version %s)", len(rows), current)

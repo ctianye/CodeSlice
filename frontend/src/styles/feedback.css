@@ -1,0 +1,86 @@
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 26px 20px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.empty-state .empty-title {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.empty-state .empty-hint {
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.loading-line {
+  padding: 12px 14px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.error-note {
+  margin: 8px 10px;
+  padding: 7px 10px;
+  border: 1px solid #5a2c29;
+  border-radius: var(--radius);
+  background: #211614;
+  color: #ffb3ae;
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  word-break: break-word;
+}
+
+.error-note span {
+  flex: 1;
+}
+
+/* Small reusable status badges. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.badge.ok {
+  color: #9fe0b1;
+  border-color: #2c5c3c;
+  background: #12261a;
+}
+
+.badge.warn {
+  color: #ffd28d;
+  border-color: #5e4a22;
+  background: #241d10;
+}
+
+.badge.err {
+  color: #ffb3ae;
+  border-color: #5a2c29;
+  background: #211614;
+}
+
+.badge.info {
+  color: #a9c9f7;
+  border-color: #27405e;
+  background: #152238;
+}
+
+.badge.mute {
+  color: var(--text-faint);
+}

@@ -1,0 +1,27 @@
+{
+  "name": "codeslice-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CodeSlice renderer (Vite + React + TypeScript + Monaco)",
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "node scripts/copy-monaco.mjs",
+    "build": "node scripts/copy-monaco.mjs && tsc -b && vite build",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.6.0",
+    "monaco-editor": "^0.52.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

@@ -1,0 +1,17 @@
+# Build-only dependencies for the CodeSlice backend bundle.
+#
+# These are NOT runtime requirements of the app; backend/pyproject.toml stays the
+# single source of truth for what the application itself needs. Install into the
+# existing backend venv before running packaging/build_backend.ps1:
+#
+#   uv pip install --python backend\.venv\Scripts\python.exe -r packaging\requirements-packaging.txt
+#
+# Pinned exactly so releases are reproducible; bump deliberately.
+
+pyinstaller==6.22.3
+# Provides the PyInstaller hooks for third-party packages (numpy, keyring, ...).
+# PyInstaller resolves a compatible version itself, but pinning keeps builds stable.
+pyinstaller-hooks-contrib==2026.9
+# Needed by uv-created venvs: uv venvs ship without pip, and PyInstaller's
+# build helpers expect setuptools metadata tooling to be importable.
+setuptools==84.2.1
