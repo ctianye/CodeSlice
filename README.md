@@ -118,7 +118,7 @@ CodeSplit/
 │   │   └── storage/          # 数据访问层
 │   ├── pyproject.toml
 │   ├── scripts/              # smoke / e2e_contract / ui_smoke / mock_model 联调脚本
-│   ├── tests/                # pytest（12 个文件、145 个用例）
+│   ├── tests/                # pytest（12 个文件、147 个用例）
 │   └── .venv/                # uv 管理的虚拟环境（Python 3.11）
 ├── frontend/                 # Vite + React 渲染进程
 │   └── src/
@@ -229,6 +229,25 @@ HTTP 服务，两处必须是同一份产物），再校验安装包内确实包
 > `build_backend.ps1` 时**不要**加 `-SkipInstall`。
 
 打包细节、参数与故障排查见 **[packaging/README.md](packaging/README.md)**。
+
+### 验证打包产物
+
+安装包里的后端是 PyInstaller 单文件产物，工作目录、静态挂载与数据目录都和源码运行不同，
+因此它需要单独的检查（都以 httpx 直连，绕开控制台编码问题）：
+
+```powershell
+# 打包后端已启动：codeslice-backend.exe 会打印 CODESLICE_READY {"port":..., "token":...}
+backend\.venv\Scripts\python.exe backend\scripts\e2e_contract.py --base http://127.0.0.1:8199 --token pkgtoken
+backend\.venv\Scripts\python.exe backend\scripts\check_packaged_notes.py --base http://127.0.0.1:8199/api --token pkgtoken
+```
+
+`--base` 传**裸 origin**（脚本自己拼 `/api`）；要让 `e2e_contract.py` 里的 `GET /` 通过，
+启动时把 `CODESLICE_FRONTEND_DIST` 指向 `desktop\release\win-unpacked\resources\frontend`。
+`check_packaged_notes.py` 专门覆盖中文笔记的标题往返、`note://` 入库、导出文件名与
+「chunk 不重复标题」这些 PowerShell 控制台验证不了的部分。
+
+> 改了 `backend/app/**` 之后，**先**重跑 `build_backend.ps1` 再跑 `build_desktop.ps1`：
+> 后者只读 `packaging\dist-backend\`，不会重新编译后端，否则安装包里仍是旧代码。
 
 ---
 

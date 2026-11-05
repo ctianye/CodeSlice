@@ -243,27 +243,24 @@ def main() -> int:
         note_from_message.text[:200],
     )
 
-    # SSE plumbing. With no chat model configured the endpoint must fail fast with
-    # a 4xx JSON error rather than hanging or emitting a broken stream; when a
-    # model *is* configured (a real one, or the mock used for UI checks) the same
-    # call must instead open a valid event stream. Asserting only the first case
-    # made this script fail against any instance that had a model set up.
-    model_configured = bool(payload.get("chat", {}).get("api_key_configured"))
+    # SSE plumbing. The endpoint must either open a real event stream (a usable
+    # chat model is configured) or fail fast with a 4xx JSON error - never hang,
+    # never answer 200 with a broken body, never 5xx. Branching on
+    # `api_key_configured` alone is not enough: a stored key with an empty model
+    # name still fails, which made this check depend on keyring state.
     stream = client.post(
         f"/api/conversations/{conversation_id}/messages",
         json={"content": "解释一下这个函数"},
     )
-    if model_configured:
+    if stream.status_code == 200:
         check(
-            "POST /messages opens an SSE stream when a model is configured",
-            stream.status_code == 200
-            and stream.headers.get("content-type", "").startswith("text/event-stream")
-            and "data:" in stream.text,
+            "POST /messages opens a well-formed SSE stream",
+            stream.headers.get("content-type", "").startswith("text/event-stream") and "data:" in stream.text,
             f"{stream.status_code} {stream.text[:200]}",
         )
     else:
         check(
-            "POST /messages without model -> 4xx JSON",
+            "POST /messages without a usable model -> 4xx JSON",
             stream.status_code == 400 and "detail" in stream.json(),
             f"{stream.status_code} {stream.text[:200]}",
         )
