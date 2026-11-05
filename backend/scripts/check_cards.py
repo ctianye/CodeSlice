@@ -89,7 +89,14 @@ def main() -> int:
         ids = [row["id"] for row in rows]
         check("by-file only lists this file", all(row["file_path"] == args.path for row in rows))
         check("by-file is ordered by start line", ids.index(early["id"]) < ids.index(late["id"]))
-        check("by-file reports has_note=false before a note exists", all(row["has_note"] is False for row in rows))
+        # Older runs may have left their own conversations (and notes) on the same
+        # file, so only the two rows created above are asserted here.
+        fresh = [row for row in rows if row["id"] in (early["id"], late["id"])]
+        check(
+            "by-file reports has_note=false before a note exists",
+            len(fresh) == 2 and all(row["has_note"] is False for row in fresh),
+            f"{len(fresh)} fresh rows",
+        )
         check("by-file carries project_name", all(row.get("project_name") for row in rows))
 
         # --- traversal is rejected

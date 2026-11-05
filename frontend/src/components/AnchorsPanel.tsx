@@ -115,8 +115,8 @@ export function AnchorsPanel(): ReactNode {
             <div className="anchor-body">
               <div className="anchor-path">
                 <Icon name="file-code" size={11} />
-                {baseName(anchor.file_path)}
-                <span className="muted">· {anchor.file_path}</span>
+                <span className="anchor-name">{baseName(anchor.file_path)}</span>
+                <span className="anchor-dir muted">· {anchor.file_path}</span>
               </div>
               <div className="anchor-lines">
                 L{anchor.start_line}-{anchor.end_line}

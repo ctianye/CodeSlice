@@ -667,10 +667,34 @@
   white-space: nowrap;
 }
 
+/* The basename stays readable; the directory is what gets truncated. */
+.anchor-row .anchor-path > svg {
+  flex: 0 0 auto;
+}
+
+.anchor-row .anchor-name {
+  /* keeps the basename intact for as long as possible: only a long name
+     ellipsises itself, the directory is the part that gives way first */
+  flex: 0 0 auto;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.anchor-row .anchor-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .anchor-row .anchor-lines {
   font-size: 10px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 

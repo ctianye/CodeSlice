@@ -374,6 +374,31 @@ else {
     Write-Step 'Skipping frontend build (-SkipFrontend)'
 }
 
+<#
+    electron-builder packages `dist/**` from desktop/ (files:) and ships a second
+    copy as extraResources `from: dist -> frontend`. That desktop/dist tree is
+    produced by `npm run build:renderer` (scripts/copy-renderer.mjs, a plain
+    node script with no dependencies). It used to be an implicit part of
+    `npm run dist`, so invoking the script directly could package whatever
+    desktop/dist happened to contain - typically a renderer from an older
+    checkout. Always refresh it here, in both modes, so the installer can never
+    ship UI that does not match frontend/dist.
+#>
+Write-Step 'Syncing renderer into desktop/dist'
+$desktopDistIndex = Join-Path (Join-Path $DesktopDir 'dist') 'index.html'
+$copyCode = Invoke-Native -FilePath 'node' -Arguments @(
+    (Join-Path $DesktopDir 'scripts\copy-renderer.mjs')
+)
+if ($copyCode -ne 0) {
+    Write-Err "copying frontend/dist -> desktop/dist failed (exit $copyCode)"
+}
+elseif (Test-Path -LiteralPath $desktopDistIndex) {
+    Write-Ok "desktop/dist refreshed from frontend/dist"
+}
+else {
+    Write-Err "desktop/dist/index.html is missing after the copy"
+}
+
 if ($script:Failures -gt 0) { Exit-WithResult }
 
 # --------------------------------------------------------------------------
