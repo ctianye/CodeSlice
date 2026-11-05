@@ -113,8 +113,8 @@ CodeSplit/
 │   │   ├── services/         # 路径校验、git、锚点
 │   │   └── storage/          # 数据访问层
 │   ├── pyproject.toml
-│   ├── scripts/              # smoke.py / e2e_contract.py 联调脚本
-│   ├── tests/                # pytest（9 个文件、99 个用例）
+│   ├── scripts/              # smoke / e2e_contract / ui_smoke / mock_model 联调脚本
+│   ├── tests/                # pytest（9 个文件、108 个用例）
 │   └── .venv/                # uv 管理的虚拟环境（Python 3.11）
 ├── frontend/                 # Vite + React 渲染进程
 │   └── src/
@@ -259,7 +259,7 @@ pwsh -File packaging\build_desktop.ps1
 | `projects` | 已打开的项目（路径、排除标记、最后索引时间） |
 | `indexed_files` | 每个文件的索引状态：`indexed` / `skipped` / `error` |
 | `chunks` | 代码块（函数/类/模块/文本块）+ 向量 BLOB + 内容哈希 |
-| `chunks_fts` | FTS5 全文索引（`unicode61` 分词），供关键词检索 |
+| `chunks_fts` | FTS5 全文索引（中文按重叠二元组存词、英文小写词，关键词检索按覆盖率排序） |
 | `conversations` / `messages` | 对话与消息（含引用、工具调用元数据） |
 | `code_anchors` | 绑定到代码位置的锚点，状态 `unchanged` / `modified` / `moved` / `deleted` |
 | `notes` | 阅读笔记 |
@@ -308,6 +308,20 @@ CodeSlice 按「不信任本地服务的调用方」来设计——因为同一�
 - 写文件 / 执行命令的逐条授权与规则记忆
 - 模型配置（OpenAI 兼容 / Anthropic）+ 连通性测试
 - PyInstaller 后端 + electron-builder NSIS 安装器
+
+**已知局限（V1）**
+
+- 助手回答以纯文本渲染，不做 Markdown/代码高亮排版；引用以可点击的「路径:行号」小片呈现。
+- 侧栏「文件 / 对话 / 笔记 / 锚点」是标签页切换，不是全部堆叠展示。
+- 索引进度 900ms 轮询；进程重启后不会续接未完成的索引任务（需重新点「重建索引」）。
+- 「停止生成」只中断前端的 SSE 读取，服务端当前这一轮模型调用不会被取消。
+- 设置界面可覆盖写入 API Key，但暂时没有单独的「清除 Key」入口（需要时可用
+  `DELETE /api/settings/model/key?slot=chat`）。
+- 关闭窗口前没有二次确认，正在进行的流式回答会被直接打断。
+- 没有配置 Embedding 模型时，混合检索自动退回「关键词 + FTS5」模式，
+  语义召回不可用（UI 会提示「未配置向量模型，检索将退回关键词模式」）。
+- 第一版用 Tree-sitter 做结构切块，不含语言服务器（LSP）的跨文件符号解析；
+  未内置语法的语言退化为按行分块，检索仍可用。
 
 **后续（V1 之外）**
 
