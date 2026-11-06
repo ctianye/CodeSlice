@@ -245,7 +245,90 @@ PUT body `{"title"?, "content_md"?, "folder_id"?, "move_folder"?}` → `Note`（
 `CommandRule` = `{"id": int, "project_id": int, "pattern": str,
 "scope": "once"|"session"|"always", "needs_confirm": bool, "created_at": str}`
 
-## 7. 事件/错误约定
+## 7. 终端 / 沙箱（SSE）
+
+终端与 Agent 的 `run_command` 共用同一套命令策略（`app/services/sandbox.py` 的
+`BLOCKED_FRAGMENTS`），所以用户在面板里能跑的命令和 AI 能跑的命令永远一致。
+
+### POST /api/projects/{project_id}/terminal/run  （SSE, `text/event-stream`）
+body `{"command": str, "cwd"?: str}`；`cwd` 相对项目根，越界 / 不存在直接报错。
+帧序列：
+
+```
+data: {"type": "start", "command": str, "cwd": str}
+data: {"type": "output", "stream": "stdout"|"stderr", "text": str}   # 逐行，可能很多帧
+data: {"type": "exit", "code": int, "duration_ms": int, "truncated": bool}
+data: {"type": "done"}
+```
+
+被拒绝或失败时是 `start → error → done`（**没有** `exit` 帧，HTTP 仍是 200）：
+
+```
+data: {"type": "error", "detail": "已拒绝执行：该命令命中内置的危险命令黑名单。"}
+```
+
+- 真流式：`Popen(shell=True)` + 两个读线程 + `queue`，子进程吐一行就推一帧
+  （`ping` 实测每秒一帧），不是攒到进程结束后一次性返回。
+- 输出总量上限 200 KB，超出置 `truncated: true` 并停止读取；命令默认超时 300 秒，超时 kill 并推 `error`。
+- **不是 PTY**：`cd` / `vim` 这类跨命令状态和全屏 TUI 不工作，命令之间互相独立。
+
+### GET /api/projects/{project_id}/terminal/history?limit=50
+`limit` 走 `Query(ge=1, le=200)`，越界 422。→ `{"items": [TerminalHistoryItem]}`，**最新在前**。
+`TerminalHistoryItem` = `{"id": str, "command": str, "cwd": str, "source": "user"|"agent",
+"exit_code": int, "started_at": str, "duration_ms": int, "output_tail": str}`
+`cwd` 是相对项目根的标签（根目录为 `"."`）；`output_tail` 只保留最后 6 行、最多 2000 字符。
+历史在**内存环形缓冲**（每项目 200 条），进程重启即清空——命令行可能带 `-H` token，不能进明文 SQLite。
+
+### POST /api/projects/{project_id}/terminal/cancel
+→ `{"ok": true, "cancelled": int}`（该项目的活动子进程数，空闲时 0）。
+
+## 8. Agent 工作流节点配置
+
+图拓扑是**固定的**（`prepare → agent ⇄ run_one → finalize`），可改的是每个节点的行为；
+配置存在 `settings` 表的 `agent.node_config` 一个 JSON 键下，每一轮节点运行时才读取，
+所以保存后**下一轮对话立即生效，不需要重启**。
+
+### GET /api/agent/graph
+```json
+{
+  "nodes": [{
+    "id": "agent",
+    "label": "模型推理",
+    "kind": "input|llm|tool|output",
+    "description": str,
+    "editable": {"<key>": {"type": "int|float|bool|string|text", "min"?: num, "max"?: num}},
+    "defaults": {"<key>": any},
+    "config": {"<key>": any},
+    "stats": {"last_tokens": int, "last_duration_ms": int, "last_chunks": int, ...}
+  }],
+  "edges": [{"from": str, "to": str, "label"?: str, "conditional"?: bool}]
+}
+```
+节点顺序即执行顺序：`prepare`(准备上下文) / `agent`(模型推理) / `run_one`(执行工具) / `finalize`(收尾)。
+`editable` 就是表单 schema，前端按它渲染字段，后端加一个开关不需要改前端。
+`stats` 是**进程内**的上一轮数字，不持久化。
+
+### PUT /api/agent/graph/nodes/{node_id}
+body `{"config": {<部分字段>}}` → 单节点（形状同上）。只提交想改的键，其余保持已存值。
+- 未知节点 → 404 `{"detail": "unknown node: xxx"}`
+- 未知键 → 400 `{"detail": "unknown config key for agent: xxx"}`
+- 越界 → 400 `{"detail": "agent.temperature must be <= 2"}`
+- 类型不符 → 400（`bool` 不被当成数字，`"true"` 不会被当成 `true`）
+
+各节点可改项：
+
+| 节点 | 键 | 说明 |
+|---|---|---|
+| prepare | `retrieval_top_k` (1..20) | 检索片段数，默认 6 |
+| prepare | `include_git_branch` (bool) | 是否把当前分支写进 system prompt |
+| agent | `model` (str) | 留空沿用设置里的模型；填写则覆盖本节点使用的模型名 |
+| agent | `temperature` (0..2) / `max_tokens` (256..32768) | 覆盖设置里的采样参数 |
+| agent | `extra_prompt` (text) | 追加在 system prompt 末尾的额外要求 |
+| agent | `max_tool_rounds` (1..30) | 工具调用轮数上限 |
+| run_one | `max_tool_rounds` / `auto_approve_readonly_tools` | 只读工具是否免确认（当前只读工具本就不打断） |
+| finalize | `auto_retitle` (bool) | 是否把占位标题改成知识点标题 |
+
+## 9. 事件/错误约定
 
 - SSE 每行 `data: {...}`，`\n\n` 结尾；结束后服务端主动关流。
 - 模型未配置时 `POST messages` 返回 400 `{"detail": "model not configured"}`（HTTP 层，不进 SSE）。

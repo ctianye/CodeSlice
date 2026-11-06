@@ -37,12 +37,12 @@ backend/app/
   core/errors.py        统一错误
   storage/              repositories（projects/conversations/…）
   api/                  路由（projects, files, settings, notes, anchors,
-                        rules, jobs, index, search, chat）
+                        rules, jobs, index, search, chat, terminal, graph）
   indexing/             过滤、语言识别、切片、Embedding 调用
   retrieval/            关键词 + 向量混合检索
   models/               模型 / Embedding 适配层、凭据
-  tools/                受控工具（fs / git / command）
-  agent/                LangGraph 图、状态、事件、授权中断
+  services/             路径校验、git、锚点、终端沙箱（sandbox / terminal）
+  agent/                LangGraph 图、状态、事件、授权中断、节点配置
 frontend/               Vite + React + TS（renderer）
 desktop/                Electron main + preload + 打包配置
 tests/                  pytest（后端）
@@ -61,6 +61,9 @@ docs/                   本文件与 API_CONTRACT.md
 7. **上下文默认锁在选区**：片段对话默认只把选中的代码交给模型，不主动检索（`use_context=false`），需要周边实现时由用户显式打开「联系上下文」。早期版本无条件跑 `hybrid.search` 并把全部命中塞进 citation，导致「问一段代码、答整份文件」。
 8. **知识库跨项目、索引不跨项目**：`notes` 仍归属创建它的项目（检索与 `note://` 片段按项目走），阅读与归档由一个全局面板承担；`note_folders` 用 `parent_id` 自引用成树。移动必须显式 `move_folder`，否则 `null` 无法与「不改」区分。
 9. **标题由内容决定**：会话与笔记的标题都从回答内容提炼（`notegen.title_from_answer` 不调模型，`retitle` 才调），占位标题（`新对话`、`foo.py:12-30`）在 `finalize` 里被替换并 emit `status.stage="title"`；用户手改过的标题永不覆盖。历史对话不会再走 `finalize`，所以启动时由 `backfill_conversation_titles()` 补一次（优先取该对话笔记的标题，其次取最后一条回答；改写不碰 `updated_at`，避免历史对话被顶到侧栏最上面）。
+10. **编辑器是多标签但单面板**：`AppState` 里存 `tabs: EditorTab[]` + `activeTabIndex`，`openFile` / `noteView` 降级为 `activeTab` 的 `useMemo` 派生值——这样二十多处消费者（CodePane、NoteReader、FileTree、NotesPanel…）不必知道标签的存在，行为和单文档时完全一致。点笔记里的引用会把文件**追加**成新标签而不是替换当前笔记，避免「看引用就丢掉正在读的笔记」。
+11. **终端与 Agent 共用一套命令策略**：危险命令黑名单（`services/sandbox.py` 的 `BLOCKED_FRAGMENTS`）是同一个对象，AI 的 `run_command` 和用户在终端敲的命令命中同一份名单；终端历史只放内存环形缓冲（命令可能带 `-H` token，不能进明文 SQLite）。实现是 `Popen(shell=True)` + 读线程 + `queue` 的真流式，不是 PTY，因此没有跨命令的 shell 状态。
+12. **工作流节点可配、拓扑不可改**：`agent/node_config.py` 的 `NODES` 既是默认值表也是表单 schema，`GET /api/agent/graph` 直接序列化它，节点在运行时读自己的合并配置（存在 `settings` 表的 `agent.node_config` 一个 JSON 键里），所以保存后下一轮即刻生效、无需重启；边的走向由 `graph.py` 固定，面板只做只读镜像。选这个而不是画布编辑，是因为拓扑稳定对 Agent 的可预测性更重要，而画布编辑器成本高且容易让用户连出不可用的图。
 
 ## 分层边界
 
@@ -70,6 +73,7 @@ docs/                   本文件与 API_CONTRACT.md
 | Electron main | 启动/回收 Python 子进程、注入令牌、窗口生命周期 | 业务数据写入 |
 | FastAPI | 校验、编排、读写本地数据 | 直接调用模型 SDK 以外的网络写操作 |
 | agent/tools | 通过受控工具读写文件、跑命令 | 绕过授权节点直接落盘 |
+| services/terminal | 在项目根内、黑名单外起子进程 | 跳出项目目录 / 复用 shell 状态 |
 | indexing | 只读项目文件、写索引表 | 修改用户源码 |
 
 ## 开发/运行

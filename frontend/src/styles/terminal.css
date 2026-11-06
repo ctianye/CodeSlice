@@ -1,0 +1,262 @@
+/* =============================================================================
+   Integrated terminal dock (frontend/src/components/TerminalPanel.tsx).
+   All classes are prefixed `terminal-` so this file can be imported/reordered
+   without touching the pane styles in layout.css.
+   ========================================================================== */
+
+.terminal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 120px;
+  max-height: 480px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+/* ------------------------------- drag handle ------------------------------ */
+
+.terminal-drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: row-resize;
+  z-index: var(--z-splitter);
+  touch-action: none;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.terminal-drag:hover,
+.terminal-drag.dragging,
+.terminal-drag:focus-visible {
+  background: var(--accent);
+}
+
+.terminal-drag:focus-visible {
+  outline: none;
+}
+
+/* --------------------------------- header --------------------------------- */
+
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 30px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 11px;
+  user-select: none;
+}
+
+.terminal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.terminal-meta {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.terminal-meta.mono {
+  font-family: var(--mono);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.terminal-head .spacer {
+  flex: 1;
+}
+
+.terminal-head button {
+  height: 22px;
+}
+
+/* -------------------------------- output ---------------------------------- */
+
+.terminal-out {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-ligatures: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+  tab-size: 4;
+}
+
+.terminal-out .empty-state {
+  padding: 18px 0;
+}
+
+.terminal-line {
+  padding: 0;
+  margin: 0;
+}
+
+.terminal-line.stdout {
+  color: var(--text-dim);
+}
+
+.terminal-line.stderr {
+  color: color-mix(in srgb, var(--danger) 72%, var(--text-dim));
+  background: color-mix(in srgb, var(--danger-soft) 34%, transparent);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+
+.terminal-line.command {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text);
+}
+
+.terminal-line.command:first-child {
+  margin-top: 0;
+}
+
+.terminal-prompt-mark {
+  color: var(--accent);
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.terminal-command {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.terminal-line.error {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 6px;
+  margin: 4px 0;
+  border-left: 2px solid var(--danger);
+  border-radius: var(--radius-xs);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.terminal-line.notice {
+  color: var(--warn);
+  padding: 2px 0;
+}
+
+.terminal-line.exit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0 2px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
+.terminal-exit-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid color-mix(in srgb, var(--ok) 38%, transparent);
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-exit-badge.bad {
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.terminal-duration {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+/* ------------------------------- input row -------------------------------- */
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 34px;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.terminal-caret {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.terminal-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+}
+
+.terminal-input:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.terminal-input:focus {
+  background: var(--bg);
+  border-color: var(--accent-line);
+  box-shadow: none;
+}
+
+.terminal-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* ------------------------------- light theme ------------------------------ */
+
+:root[data-theme='light'] .terminal-panel {
+  background: var(--bg-sunken);
+}
+
+:root[data-theme='light'] .terminal-line.stderr {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger-soft) 70%, transparent);
+}
+
+:root[data-theme='light'] .terminal-input:focus {
+  background: #fff;
+}

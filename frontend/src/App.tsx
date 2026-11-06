@@ -5,10 +5,12 @@ import { usePersistedState } from './hooks/useAsync'
 import { ChatPane } from './components/ChatPane'
 import { CodePane } from './components/CodePane'
 import type { SnippetSelection } from './components/CodePane'
+import { EditorTabs } from './components/EditorTabs'
 import { NoteReader } from './components/NoteReader'
 import { SettingsModal } from './components/SettingsModal'
 import { Sidebar } from './components/Sidebar'
 import { Splitter } from './components/Splitter'
+import { TerminalPanel } from './components/TerminalPanel'
 import { TopBar } from './components/TopBar'
 import { WelcomePage } from './components/WelcomePage'
 import { useApp } from './state/AppState'
@@ -16,6 +18,10 @@ import { useApp } from './state/AppState'
 /**
  * App shell: top bar + three panes (sidebar / editor / chat) joined by
  * draggable splitters. Shows the welcome screen while no project is open.
+ *
+ * The editor pane is a tab strip plus one body. A note opened from the sidebar
+ * becomes a tab like any file, so jumping from a note to the code it quotes
+ * leaves the note reachable instead of destroying it.
  */
 export function App(): ReactNode {
   const { project, setProjects, setProject, setActiveConversationId, noteView } = useApp()
@@ -23,6 +29,7 @@ export function App(): ReactNode {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [snippet, setSnippet] = useState<SnippetSelection | null>(null)
   const [sidebarEpoch, setSidebarEpoch] = useState(0)
+  const [terminalOpen, setTerminalOpen] = usePersistedState('codeslice.terminalOpen', false)
 
   const [sidebarWidth, setSidebarWidth] = usePersistedState('codeslice.sidebarWidth', 268)
   const [chatWidth, setChatWidth] = usePersistedState('codeslice.chatWidth', 430)
@@ -99,14 +106,24 @@ export function App(): ReactNode {
 
         <Splitter value={sidebarWidth} onChange={setSidebarWidth} min={200} max={520} label="调整侧边栏宽度" />
 
-        <div className="pane" style={{ flex: '1 1 auto' }}>
-          {/* A note takes over the editor pane: reading it is the task, and the
-              sidebar is too narrow for rendered Markdown. Closing returns to code. */}
-          {noteView ? (
-            <NoteReader />
-          ) : (
-            <CodePane onAskSelection={setSnippet} onOpenFile={openFileList} />
-          )}
+        <div className="pane editor-pane-host" style={{ flex: '1 1 auto' }}>
+          {/* The strip only appears once something is open; with no tabs the
+              pane falls through to the editor's own empty state. */}
+          <EditorTabs onToggleTerminal={() => setTerminalOpen((open) => !open)} terminalOpen={terminalOpen} />
+          <div className="editor-pane-body">
+            {noteView ? (
+              <NoteReader />
+            ) : (
+              <CodePane onAskSelection={setSnippet} onOpenFile={openFileList} />
+            )}
+          </div>
+          {/* The terminal docks under the editor, not under the whole shell: it
+              is about the code the editor is showing. */}
+          <TerminalPanel
+            projectId={project.id}
+            open={terminalOpen}
+            onToggle={() => setTerminalOpen(false)}
+          />
         </div>
 
         <Splitter

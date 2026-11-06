@@ -69,6 +69,7 @@ def build_system_prompt(
     project_name: str,
     git_branch: str | None = None,
     use_context: bool = False,
+    extra_prompt: str | None = None,
 ) -> str:
     """Assemble the system prompt for one turn.
 
@@ -76,6 +77,10 @@ def build_system_prompt(
     button. A snippet conversation defaults to the selected code only: retrieving
     extra chunks made the model talk about neighbouring files even when the user
     asked about five lines.
+
+    ``extra_prompt`` is the free-form instruction from the workflow panel (agent
+    node config). It goes last so it reads as the final, most specific instruction
+    and never displaces the built-in rules above it.
     """
     parts = [BASE, TOOL_NOTE]
     parts.append(f"项目：{project_name}" + (f"（分支 {git_branch}）" if git_branch else ""))
@@ -97,4 +102,7 @@ def build_system_prompt(
             parts.append("同文件内的其他相关片段：\n" + context)
     else:
         parts.append(PROJECT.format(context=context or "（没有检索到相关片段）"))
+    extra = (extra_prompt or "").strip()
+    if extra:
+        parts.append("额外要求（用户在工作流面板中补充）：\n" + extra)
     return "\n\n".join(parts)

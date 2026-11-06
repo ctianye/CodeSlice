@@ -1,0 +1,361 @@
+/* Agent workflow panel (`.graph-*`). Layout: a fixed toolbar from sidebar.css
+   plus a vertical flow of node cards inside `.sidebar-scroll`. */
+
+.graph-toolbar {
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.graph-toolbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+.graph-scroll {
+  gap: 0;
+}
+
+/* ---------------------------------- flow ---------------------------------- */
+
+.graph-step {
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-node {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.graph-node:hover {
+  border-color: var(--border-strong);
+}
+
+.graph-node.expanded {
+  border-color: var(--border-accent);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+.graph-node-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.graph-node-head:hover {
+  background: none;
+}
+
+.graph-node-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+
+.graph-node-icon.kind-input {
+  color: var(--info);
+  background: var(--info-soft);
+}
+
+.graph-node-icon.kind-llm {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.graph-node-icon.kind-tool {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.graph-node-icon.kind-output {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.graph-node-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.graph-node-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-node-kind {
+  font-size: 9.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex: 0 0 auto;
+}
+
+.graph-node-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.graph-node-desc {
+  margin: 0;
+  padding: 0 8px 6px 37px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.graph-node-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 8px 7px 37px;
+}
+
+.graph-stat {
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.graph-node-loop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 8px 7px 37px;
+}
+
+.graph-loop-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+/* ------------------------------- connectors ------------------------------- */
+
+.graph-connector {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0 2px 18px;
+  flex-wrap: wrap;
+}
+
+.graph-line {
+  width: 1px;
+  height: 14px;
+  margin-left: 1px;
+  background: var(--border-strong);
+  flex: 0 0 auto;
+}
+
+.graph-line.dashed {
+  background: none;
+  border-left: 1px dashed var(--border-strong);
+}
+
+.graph-arrow {
+  display: inline-flex;
+  align-items: center;
+  margin-left: -6px;
+  color: var(--text-faint);
+}
+
+.graph-edge-label {
+  font-size: 9px;
+  color: var(--text-faint);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 1.6;
+}
+
+/* ---------------------------------- form ---------------------------------- */
+
+.graph-form {
+  padding: 2px 8px 8px 37px;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+.graph-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.graph-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.graph-field label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.graph-field input[type='text'],
+.graph-field input[type='number'],
+.graph-field textarea {
+  width: 100%;
+  padding: 5px 7px;
+  font-size: 11.5px;
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.graph-field textarea {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 62px;
+}
+
+.graph-field input:focus,
+.graph-field textarea:focus {
+  border-color: var(--border-accent);
+  background: var(--bg);
+}
+
+.graph-field .hint {
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+.graph-field-bool label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.graph-field-bool input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.graph-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.graph-dirty {
+  font-size: 9.5px;
+  color: var(--warn);
+}
+
+.graph-saved {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--ok);
+}
+
+.graph-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 7px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--danger);
+  word-break: break-word;
+}
+
+/* ---------------------------------- loops --------------------------------- */
+
+.graph-loops {
+  margin: 10px 0 0;
+  padding: 7px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.graph-loops-title {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.graph-loop-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 1px 0;
+}
+
+.graph-loop-label {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--text-faint);
+}
+
+.graph-footnote {
+  margin: 10px 0 2px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}

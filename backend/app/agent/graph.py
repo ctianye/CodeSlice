@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from typing import Annotated, Any, TypedDict
 
@@ -37,7 +38,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import Command, interrupt
 
-from app.agent import checkpoints, prompts
+from app.agent import checkpoints, node_config, prompts
 from app.agent import tools as agent_tools
 from app.core.errors import ConfigMissing, NotFound
 from app.models import config as model_config
@@ -49,6 +50,9 @@ log = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 10
 MAX_HISTORY_MESSAGES = 30
+
+# Tools that only read the project, so they can never need an approval prompt.
+READONLY_TOOLS = frozenset({"list_files", "read_file", "search_code", "git_diff"})
 
 
 class AgentState(TypedDict, total=False):
@@ -179,12 +183,100 @@ def _dedupe_citations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # nodes
 # --------------------------------------------------------------------------- #
+def _node_config(node_id: str) -> dict[str, Any]:
+    """Effective config for one node; defaults if the stored row is unusable."""
+    try:
+        return node_config.get_config(node_id)
+    except Exception:  # pragma: no cover - config is best effort
+        log.warning("could not read node config for %s", node_id, exc_info=True)
+        return dict(node_config.NODES[node_id]["defaults"])
+
+
+def _extra_prompt() -> str | None:
+    """The agent node's extra instruction, passed to the prompt builder."""
+    text = str(_node_config("agent").get("extra_prompt") or "").strip()
+    return text or None
+
+
+def _max_tool_rounds() -> int:
+    """Rounds cap: the stricter of the agent and run_one node values.
+
+    Both nodes expose the knob because both sit in the reasoning/tool loop, so the
+    effective limit is the smaller one and neither panel value is inert.
+    """
+    try:
+        agent_value = int(_node_config("agent").get("max_tool_rounds") or MAX_TOOL_ROUNDS)
+        tool_value = int(_node_config("run_one").get("max_tool_rounds") or MAX_TOOL_ROUNDS)
+    except Exception:  # pragma: no cover
+        return MAX_TOOL_ROUNDS
+    return max(1, min(30, min(agent_value, tool_value)))
+
+
+def _apply_model_name(model: Any, name: str) -> Any:
+    """Point an already-built chat model at another model id.
+
+    ``model_config.build_chat_model`` builds from the saved provider settings and
+    its signature must stay as it is, so the per-node override is applied on the
+    instance instead. Pydantic copies keep every other field (key, base_url,
+    timeouts) intact; anything unexpected keeps the model as configured.
+    """
+    if not name:
+        return model
+    try:
+        fields = getattr(type(model), "model_fields", {}) or {}
+        key = "model_name" if "model_name" in fields else ("model" if "model" in fields else None)
+        if key is None or str(getattr(model, key, "")) == name:
+            return model
+        return model.model_copy(update={key: name})
+    except Exception:  # pragma: no cover - a model id is never worth failing a turn
+        log.warning("could not override model name to %s", name, exc_info=True)
+        return model
+
+
+def _build_model(config: dict[str, Any]) -> Any:
+    """Build the chat model with the agent node's temperature/token budget.
+
+    Test doubles monkeypatch ``build_chat_model`` with a zero-argument callable, so
+    a signature mismatch falls back to the plain call instead of failing the turn.
+    """
+    kwargs: dict[str, Any] = {}
+    temperature = config.get("temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        kwargs["temperature"] = float(temperature)
+    max_tokens = config.get("max_tokens")
+    if isinstance(max_tokens, int) and not isinstance(max_tokens, bool):
+        kwargs["max_tokens"] = max_tokens
+    try:
+        model = model_config.build_chat_model(**kwargs)
+    except TypeError:  # a stubbed builder without the override parameters
+        model = model_config.build_chat_model()
+    return _apply_model_name(model, str(config.get("model") or "").strip())
+
+
+def _usage_tokens(message: Any) -> int | None:
+    """Total tokens billed by the provider, when it reported them."""
+    usage = getattr(message, "usage_metadata", None)
+    if isinstance(usage, dict):
+        total = usage.get("total_tokens")
+        if isinstance(total, int) and total >= 0:
+            return total
+    return None
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
 def prepare(state: AgentState) -> dict[str, Any]:
     project = repo.get_project(int(state["project_id"]))
     if project is None:
         raise NotFound("project not found")
     root = paths.resolve_root(project["path"])
     query = state.get("query") or ""
+    # Node config is read per run so a change in the workflow panel applies to the
+    # very next turn; a bad stored row must not break the turn, hence the fallback.
+    config = _node_config("prepare")
+    top_k = max(1, min(20, int(config.get("retrieval_top_k") or 6)))
     # Snippet conversations look only at the selected code unless the user turned
     # on "联系上下文": retrieving neighbours made the answer drift into other files.
     snippet = state.get("mode") == "snippet" and bool(state.get("file_path"))
@@ -196,23 +288,24 @@ def prepare(state: AgentState) -> dict[str, Any]:
     chunks: list[dict[str, Any]] = []
     if retrieve:
         if snippet:
-            found = hybrid.search(int(state["project_id"]), query, top_k=10)
+            found = hybrid.search(int(state["project_id"]), query, top_k=top_k)
             same_file = [c for c in found if c["path"] == state["file_path"]]
             chunks = same_file or found[:4]
         else:
-            chunks = hybrid.search(int(state["project_id"]), query, top_k=8)
+            chunks = hybrid.search(int(state["project_id"]), query, top_k=top_k)
 
     citations = [_citation_from_chunk(c) for c in chunks][:8]
     for citation in citations:
         _emit({"type": "citation", **citation})
 
     branch = None
-    try:
-        status = git_service.current_state(root)
-        if status.get("is_repo"):
-            branch = status.get("branch")
-    except Exception:  # pragma: no cover - git is optional
-        branch = None
+    if config.get("include_git_branch", True):
+        try:
+            status = git_service.current_state(root)
+            if status.get("is_repo"):
+                branch = status.get("branch")
+        except Exception:  # pragma: no cover - git is optional
+            branch = None
 
     selected_code = state.get("selected_code")
     if not selected_code and snippet:
@@ -228,7 +321,9 @@ def prepare(state: AgentState) -> dict[str, Any]:
         project_name=project["name"],
         git_branch=branch,
         use_context=use_context,
+        extra_prompt=_extra_prompt(),
     )
+    node_config.record_run("prepare", last_chunks=len(chunks), last_top_k=top_k)
     return {
         "system": system,
         "context": hybrid.context_for_prompt(chunks),
@@ -241,7 +336,9 @@ def prepare(state: AgentState) -> dict[str, Any]:
 
 def agent(state: AgentState) -> dict[str, Any]:
     _emit({"type": "status", "stage": "plan", "detail": "模型生成回答"})
-    model = model_config.build_chat_model()
+    config = _node_config("agent")
+    started = time.monotonic()
+    model = _build_model(config)
     bound = model.bind_tools(agent_tools.bound_tools())
 
     history: list[AnyMessage] = list(state.get("messages") or [])
@@ -261,9 +358,15 @@ def agent(state: AgentState) -> dict[str, Any]:
                 _emit({"type": "token", "delta": delta})
     except Exception as exc:
         log.exception("model call failed")
+        node_config.record_run(
+            "agent",
+            last_duration_ms=_elapsed_ms(started),
+            last_error=f"{type(exc).__name__}: {exc}",
+        )
         return {"error": f"{type(exc).__name__}: {exc}", "pending_calls": []}
 
     if accumulated is None:
+        node_config.record_run("agent", last_duration_ms=_elapsed_ms(started), last_error="model returned no output")
         return {"error": "model returned no output", "pending_calls": []}
 
     message = AIMessage(
@@ -284,9 +387,17 @@ def agent(state: AgentState) -> dict[str, Any]:
         _emit({"type": "status", "stage": "execute", "detail": f"准备执行 {len(calls)} 个工具"})
 
     rounds = int(state.get("tool_rounds") or 0) + 1
-    if rounds > MAX_TOOL_ROUNDS:
+    max_rounds = _max_tool_rounds()
+    if rounds > max_rounds:
         calls = []
 
+    node_config.record_run(
+        "agent",
+        last_tokens=_usage_tokens(accumulated),
+        last_duration_ms=_elapsed_ms(started),
+        last_tool_calls=len(calls),
+        last_round=rounds,
+    )
     return {
         "messages": [message],
         "pending_calls": calls,
@@ -310,8 +421,20 @@ def run_one(state: AgentState) -> dict[str, Any]:
         raise NotFound("project not found")
     root = paths.resolve_root(project["path"])
     session_approvals = list(state.get("session_approvals") or [])
+    config = _node_config("run_one")
 
     approved = name not in agent_tools.DANGEROUS_TOOLS or name in session_approvals
+    readonly = name in READONLY_TOOLS
+    if readonly and bool(config.get("auto_approve_readonly_tools", True)):
+        # Read-only tools never interrupt today (they are not in DANGEROUS_TOOLS),
+        # so this is a future-proof switch, not a behaviour change: when it is on
+        # the call counts as pre-approved and no prompt could ever appear.
+        approved = True
+    elif readonly:
+        # Turning it off only records that the call ran unreviewed; asking for
+        # approval on every list_files would make the agent unusable.
+        log.debug("read-only tool %s ran without auto approval", name)
+
     if name in ("run_command", "write_file") and not approved:
         # "总是允许" rules persist per project: a command glob for run_command,
         # a path glob for write_file (both are matched by match_rule).
@@ -378,6 +501,13 @@ def run_one(state: AgentState) -> dict[str, Any]:
     ok = not result.startswith(("工具执行失败", "工具执行异常", "已拒绝执行"))
     summary = result.splitlines()[0][:200] if result else ""
     _emit({"type": "tool_result", "call_id": call_id, "ok": ok, "summary": summary})
+    node_config.record_run(
+        "run_one",
+        last_tool=name,
+        last_ok=ok,
+        last_round=int(state.get("tool_rounds") or 0),
+        remaining_calls=len(rest),
+    )
 
     citations = list(state.get("citations") or [])
     if name == "read_file" and ok:
@@ -412,29 +542,37 @@ def finalize(state: AgentState) -> dict[str, Any]:
         _emit({"type": "error", "detail": "empty model output"})
     saved = repo.add_message(state["conversation_id"], "assistant", text, citations=citations or None, meta=meta)
     _emit({"type": "message", "message": saved})
-    _retitle_placeholder(state["conversation_id"], text)
+    config = _node_config("finalize")
+    retitled = False
+    if bool(config.get("auto_retitle", True)):
+        retitled = _retitle_placeholder(state["conversation_id"], text)
+    node_config.record_run("finalize", last_chars=len(text), last_citations=len(citations), retitled=retitled)
     return {"citations": citations}
 
 
-def _retitle_placeholder(conversation_id: str, answer: str) -> None:
+def _retitle_placeholder(conversation_id: str, answer: str) -> bool:
     """Replace an auto-generated title with one that names the knowledge point.
 
     A conversation is created before the user has asked anything, so its title is
     a placeholder ("关于 README.md 第 357-359 行", "全项目对话"). Once an answer
     exists, the first line of it says what the session is actually about. User
     renames are never overwritten — only the app's own placeholders are.
+
+    Returns whether the title actually changed.
     """
     try:
         conversation = repo.get_conversation(conversation_id)
         if conversation is None or not notegen.is_auto_title(conversation.get("title")):
-            return
+            return False
         title = notegen.title_from_answer(answer)
         if not title:
-            return
+            return False
         repo.rename_conversation(conversation_id, title)
         _emit({"type": "status", "stage": "title", "detail": title})
+        return True
     except Exception:  # a nicer title is never worth failing the turn
         log.warning("conversation retitle failed", exc_info=True)
+        return False
 
 
 # --------------------------------------------------------------------------- #

@@ -12,10 +12,12 @@ plain string that becomes the ``ToolMessage`` content.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import fnmatch
 import shutil
 import subprocess
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,7 @@ from langchain_core.tools import BaseTool, tool
 
 from app.core.errors import AppError
 from app.retrieval import hybrid
-from app.services import paths
+from app.services import paths, sandbox
 from app.services.git_service import diff as git_diff_text
 
 DANGEROUS_TOOLS = {"write_file", "run_command"}
@@ -34,17 +36,10 @@ MAX_TOOL_OUTPUT = 6000
 MAX_WRITE_BYTES = 400_000
 COMMAND_TIMEOUT = 120
 
-_BLOCKED_COMMAND_FRAGMENTS = (
-    "rm -rf /",
-    "format ",
-    "shutdown",
-    "reboot",
-    "diskpart",
-    "del /f /s /q c:\\",
-    "rd /s /q c:\\",
-    "mkfs",
-    ":(){",
-)
+# The denylist lives in ``app.services.sandbox`` so the integrated terminal and
+# this tool cannot drift apart; ``_is_blocked`` stays as the local entry point
+# used by the tests.
+_BLOCKED_COMMAND_FRAGMENTS = sandbox.BLOCKED_FRAGMENTS
 
 
 def _clip(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
@@ -159,16 +154,22 @@ def _resolve_cwd(root: Path, cwd: str | None) -> Path:
 
 
 def _is_blocked(command: str) -> bool:
-    lowered = command.lower()
-    return any(fragment.lower() in lowered for fragment in _BLOCKED_COMMAND_FRAGMENTS)
+    return sandbox.is_blocked(command)
 
 
-def _run_command(root: Path, command: str, cwd: str | None = None, reason: str | None = None) -> str:
+def _run_command(
+    root: Path,
+    command: str,
+    cwd: str | None = None,
+    reason: str | None = None,
+    project_id: int | None = None,
+) -> str:
     if _is_blocked(command):
         return "已拒绝执行：该命令命中内置的危险命令黑名单。"
     workdir = _resolve_cwd(root, cwd)
     if not workdir.is_dir():
         return f"工作目录不存在：{cwd}"
+    started = time.monotonic()
     try:
         completed = subprocess.run(
             command,
@@ -181,17 +182,49 @@ def _run_command(root: Path, command: str, cwd: str | None = None, reason: str |
             timeout=COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
+        _record_agent_command(root, project_id, command, workdir, -1, started, f"命令超时（>{COMMAND_TIMEOUT}s）")
         return f"命令超时（>{COMMAND_TIMEOUT}s）：{command}"
     except OSError as exc:
+        _record_agent_command(root, project_id, command, workdir, -1, started, f"命令无法启动：{exc}")
         return f"命令无法启动：{exc}"
     out = (completed.stdout or "").strip()
     err = (completed.stderr or "").strip()
+    _record_agent_command(root, project_id, command, workdir, completed.returncode, started, f"{out}\n{err}")
     parts = [f"$ {command}", f"退出码：{completed.returncode}"]
     if out:
         parts.append("stdout:\n" + out)
     if err:
         parts.append("stderr:\n" + err)
     return _clip("\n\n".join(parts))
+
+
+def _record_agent_command(
+    root: Path,
+    project_id: int | None,
+    command: str,
+    workdir: Path,
+    exit_code: int,
+    started: float,
+    output: str,
+) -> None:
+    """Mirror an approved agent command into the terminal history panel.
+
+    Pure convenience: a broken buffer must never change what the tool returns,
+    and the history keeps only the tail — the full output already lives in the
+    conversation's tool message.
+    """
+    if project_id is None:
+        return
+    with contextlib.suppress(Exception):  # history is best effort
+        sandbox.record(
+            project_id=project_id,
+            command=command,
+            cwd=sandbox.cwd_label(root, workdir),
+            source="agent",
+            exit_code=exit_code,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            output_tail=output,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -265,6 +298,7 @@ def run_tool(name: str, args: dict[str, Any], root: Path, project_id: int) -> st
                 str(args.get("command") or ""),
                 str(args.get("cwd") or "") or None,
                 str(args.get("reason") or "") or None,
+                project_id=project_id,
             )
     except AppError as exc:
         return f"工具执行失败：{exc.detail}"
