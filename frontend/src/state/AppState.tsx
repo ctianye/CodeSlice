@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+﻿import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Citation, Note, Project } from '../types'
 import { usePersistedState } from '../hooks/useAsync'
@@ -28,9 +28,27 @@ interface AppState {
   openFile: OpenFileState | null
   /** Open a file in the editor, optionally highlighting a line range. */
   reveal: (path: string, start?: number, end?: number) => void
-  revealTarget: RevealTarget | null
+  /**
+   * Range currently outlined as "you jumped here from a citation".
+   *
+   * Owned here rather than inside the editor pane because opening a citation
+   * from a note unmounts the note reader and mounts the pane fresh; a ref in the
+   * pane would forget the previous range and "click the same chip again to clear
+   * it" could never work. `null` means nothing is highlighted.
+   */
+  citationHighlight: RevealTarget | null
+  /** Drop the citation outline without touching the open file or selection. */
+  clearCitation: () => void
   activeConversationId: string | null
   setActiveConversationId: (id: string | null) => void
+  /**
+   * Bumped when something asks the conversation list to scroll the active row
+   * into view (clicking a code-card title, for example). The list is the only
+   * component that knows the row's DOM node.
+   */
+  conversationFocusNonce: number
+  /** Activate a conversation and ask the sidebar list to reveal it. */
+  focusConversation: (id: string) => void
   /** Bumped whenever conversations/notes should be re-fetched. */
   refreshKey: number
   bumpRefresh: () => void
@@ -59,12 +77,12 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
   const [projects, setProjects] = useState<Project[]>([])
   const [project, setProjectState] = useState<Project | null>(null)
   const [openFile, setOpenFile] = useState<OpenFileState | null>(null)
-  const [revealTarget, setRevealTarget] = useState<RevealTarget | null>(null)
   const [activeConversationId, setActiveConversationIdState] = usePersistedState<string | null>(
     'codeslice.activeConversation',
     null,
   )
   const [refreshKey, setRefreshKey] = useState(0)
+  const [conversationFocusNonce, setConversationFocusNonce] = useState(0)
   const [theme, setTheme] = usePersistedState<AppTheme>('codeslice.theme', 'light')
   const [sidebarTab, setSidebarTabState] = usePersistedState<SidebarTab>('codeslice.sidebarTab', 'files')
   const [focusNoteId, setFocusNoteId] = useState<number | null>(null)
@@ -80,7 +98,7 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
         if (prev?.id !== next?.id) {
           setActiveConversationIdState(null)
           setOpenFile(null)
-          setRevealTarget(null)
+          setCitationHighlight(null)
           setNoteView(null)
         }
         return next
@@ -89,14 +107,30 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
     [setActiveConversationIdState],
   )
 
+  /**
+   * Toggle a citation highlight, remembering which range is currently shown.
+   *
+   * The highlight has to survive a pane teardown: opening a citation from a note
+   * unmounts the reader and mounts the editor, so a ref inside `CodePane` was
+   * reset before the second click arrived and "click again to clear" never
+   * worked. Keeping the last reveal here makes the toggle stateless for the pane.
+   */
+  const [citationHighlight, setCitationHighlight] = useState<RevealTarget | null>(null)
+
   const reveal = useCallback((path: string, start?: number, end?: number) => {
     const from = start && start > 0 ? start : 1
     const to = end && end >= from ? end : from
     setOpenFile({ path, highlight: start || end ? { start: from, end: to } : null })
     // Jumping to code means leaving the note that was open in the same pane.
     setNoteView(null)
-    setRevealTarget((prev) => ({ path, start_line: from, end_line: to, symbol: null, nonce: (prev?.nonce ?? 0) + 1 }))
+    setCitationHighlight((prev) => {
+      const same = prev && prev.path === path && prev.start_line === from && prev.end_line === to
+      // Second click on the same chip is a request to drop the highlight again.
+      return same ? null : { path, start_line: from, end_line: to, symbol: null, nonce: 0 }
+    })
   }, [])
+
+  const clearCitation = useCallback(() => setCitationHighlight(null), [])
 
   const bumpRefresh = useCallback(() => setRefreshKey((n) => n + 1), [])
 
@@ -106,6 +140,22 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
   )
 
   const setSidebarTab = useCallback((next: SidebarTab) => setSidebarTabState(next), [setSidebarTabState])
+
+  /**
+   * Open a conversation and make sure the user can see which one it is.
+   *
+   * Clicking a title strip in the editor used to change `activeConversationId`
+   * and nothing else: if the list was showing another tab the row was invisible,
+   * and even on the right tab a long list could leave it scrolled out of view.
+   */
+  const focusConversation = useCallback(
+    (id: string) => {
+      setActiveConversationIdState(id)
+      setSidebarTabState('chats')
+      setConversationFocusNonce((n) => n + 1)
+    },
+    [setActiveConversationIdState, setSidebarTabState],
+  )
 
   const focusNote = useCallback((noteId: number | null) => {
     setFocusNoteId(noteId)
@@ -125,9 +175,12 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setProjects,
       openFile,
       reveal,
-      revealTarget,
+      citationHighlight,
+      clearCitation,
       activeConversationId,
       setActiveConversationId,
+      conversationFocusNonce,
+      focusConversation,
       refreshKey,
       bumpRefresh,
       sidebarTab,
@@ -145,9 +198,12 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setProject,
       openFile,
       reveal,
-      revealTarget,
+      citationHighlight,
+      clearCitation,
       activeConversationId,
       setActiveConversationId,
+      conversationFocusNonce,
+      focusConversation,
       refreshKey,
       bumpRefresh,
       sidebarTab,

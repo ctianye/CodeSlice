@@ -7,6 +7,7 @@ const STAGE_TEXT: Record<AgentStage, string> = {
   execute: '执行工具',
   verify: '校验结果',
   summarize: '整理回答',
+  title: '起标题',
 }
 
 export function stageLabel(stage: string): string {

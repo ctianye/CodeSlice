@@ -155,7 +155,18 @@
 /* --------------------------- citation decorations ------------------------- */
 
 .citation-highlight {
-  background: var(--accent-soft);
+  /* A citation lands on a range the model quoted, which can be a whole file.
+     Keep it a thin left rail instead of a tint so a wide range does not read as
+     "the file is selected", and so it is clearly different from a conversation
+     frame (which is the blue box). */
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* Lines toggled by clicking the gutter: they accumulate until cleared, so the
+   marker has to read as "chosen", not as a text selection. */
+.pick-line {
+  background: var(--bg-active);
   border-left: 2px solid var(--accent);
 }
 

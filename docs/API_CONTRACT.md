@@ -57,8 +57,12 @@ body `{"path": "D:\\repo", "name": "repo"}`（name 可省略，取目录名）
     "message": str, "stats": {"files": int, "chunks": int, "vectors": int} | null, "error": str | null}`
 
 ### GET /api/projects/{project_id}/index
-→ `{"project": Project, "last_job": Job | null, "files": int, "indexed_at": str | null,
-    "embed_models": [str], "active_embed_model": str | null, "embedding_configured": bool}`
+→ `{"project": Project, "last_job": Job | null, "files": int, "chunks": int, "vectors": int,
+    "indexed_at": str | null, "embed_models": [str], "active_embed_model": str | null,
+    "embedding_configured": bool}`
+`files` / `chunks` / `vectors` 是**当前索引里的累计值**（不是最近一次任务增量）。前端工具栏据此
+显示「309 文件 · 1508 片段」，避免增量任务只扫了 7 个文件就让用户以为索引是空的。未配置
+embedding 时 `vectors` 恒为 0，检索只走关键词，这是正常状态。
 `embed_models` 是当前索引里出现过的向量模型名（去重）；`active_embed_model` 是**已配置**的模型；
 `embedding_configured` 为 `false` 时检索只走关键词。前端用 `embed_models` 里出现与
 `active_embed_model` 不同的值来判断「切换模型后需要重建索引」。
@@ -157,10 +161,14 @@ body `{"project_id": int, "title": str | null, "file_path": str | null,
 "reason": str, "tool_call_id": str}}`
 
 ### POST /api/conversations/{conversation_id}/messages  （SSE, `text/event-stream`）
-body `{"content": str}`
+body `{"content": str, "use_context": bool}`
+`use_context` 只在片段对话里有意义，默认 `false`：此时模型只看得到选中的那段代码，
+prompt 里明确禁止主动去别处读文件，也不会返回 citation。用户在输入框打开「联系上下文」
+后传 `true`，才会追加同文件内的相关片段并允许检索。
 逐条 `data: <AgentEvent JSON>\n\n`，事件 `type`：
 - `token` `{delta}`            —— 模型增量文本
-- `status` `{stage, detail?}`  —— `classify|retrieve|plan|execute|verify|summarize`
+- `status` `{stage, detail?}`  —— `classify|retrieve|plan|execute|verify|summarize|title`
+  （`title` 是本回合结束后把占位标题改成知识点标题时发的一次状态，`detail` 就是新标题）
 - `citation` `{path,start_line,end_line,symbol}` —— 引用的代码位置
 - `tool_call` `{name, args, call_id}`
 - `tool_result` `{call_id, ok, summary}`
@@ -168,6 +176,9 @@ body `{"content": str}`
 - `message` `{message: Message}` —— 本回合最终落库的助手消息
 - `error` `{detail}`
 - `done` `{}`
+
+占位标题（`新对话` / `项目问答` / `foo.py:12-30` / `<项目> · 阅读笔记`）会在 `finalize` 里被
+替换成根据回答整理的知识点标题，并 emit `status.stage="title"`；用户手动改过的标题不会被覆盖。
 
 ### POST /api/conversations/{conversation_id}/resume
 body `{"interrupt_id": str, "decision": "approve"|"deny"|"approve_session"|"approve_always",
@@ -179,14 +190,34 @@ body `{"interrupt_id": str, "decision": "approve"|"deny"|"approve_session"|"appr
 
 ## 6. 笔记 / 代码锚点 / 命令规则
 
-### GET/POST /api/notes  （POST body `{"project_id", "title", "content_md", "conversation_id"?}`）
-`Note` = `{"id": int, "project_id": int, "conversation_id": str | null, "title": str,
-"content_md": str, "created_at": str, "updated_at": str, "indexed": bool}`
+### GET /api/notes?project_id=&folder_id=&unfiled=
+→ `[Note]`
+不传 `project_id` 时返回**所有项目**的笔记（知识库是跨项目的入口），每条带
+`project_name: str | null` 供列表标注来源；传了则只返回该项目。`folder_id` 限定某个文件夹，
+`unfiled=true` 只给未归档的（两者互斥，`unfiled` 优先）。
+`Note` = `{"id": int, "project_id": int, "project_name": str | null, "folder_id": int | null,
+"conversation_id": str | null, "title": str, "content_md": str, "created_at": str,
+"updated_at": str, "indexed": bool}`
 `indexed` 表示这条笔记当前是否在检索索引里（写入/编辑时同步，删除时同步移除）。
+笔记仍然归属它被创建时的项目（检索、导出都按项目走），但**阅读和归档不受项目限制**。
+
+### POST /api/notes
+body `{"project_id", "title", "content_md", "conversation_id"?, "folder_id"?}` → `Note`
 
 ### PUT/DELETE /api/notes/{note_id}
-PUT body `{"title"?, "content_md"?}` → `Note`（同步刷新其检索片段）。
-DELETE → `{"ok": true}`（同时删除对应检索片段与 FTS 行）。
+PUT body `{"title"?, "content_md"?, "folder_id"?, "move_folder"?}` → `Note`（同步刷新其检索片段）。
+`folder_id` 只有配合 `move_folder=true` 才会生效——否则 `null` 与「不改」无法区分，
+移出文件夹就永远表达不出来。DELETE → `{"ok": true}`（同时删除对应检索片段与 FTS 行）。
+
+### GET /api/note-folders → `[NoteFolder]`
+`NoteFolder` = `{"id": int, "parent_id": int | null, "name": str, "created_at": str,
+"note_count": int}`（`note_count` 只统计直接归在该文件夹下的笔记，不含子文件夹）
+
+### POST /api/note-folders   body `{"name", "parent_id"?}` → `NoteFolder`
+### PUT /api/note-folders/{folder_id}   body `{"name"?, "parent_id"?, "move"?}` → `NoteFolder`
+`parent_id` 同样需要 `move=true` 才生效；不存在返回 404。
+### DELETE /api/note-folders/{folder_id} → `{"ok": true}`
+删除文件夹**不删笔记**：其中的笔记落回「未分类」（`folder_id` 置空），子文件夹级联删除。
 
 ### GET /api/notes/{note_id}
 → `Note`（带当前 `indexed` 状态）；笔记不存在 404。

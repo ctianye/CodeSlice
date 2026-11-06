@@ -42,7 +42,7 @@ from app.agent import tools as agent_tools
 from app.core.errors import ConfigMissing, NotFound
 from app.models import config as model_config
 from app.retrieval import hybrid
-from app.services import git_service, paths
+from app.services import git_service, notegen, paths
 from app.storage import repo
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class AgentState(TypedDict, total=False):
     end_line: int | None
     selected_code: str | None
     query: str
+    use_context: bool
     system: str
     context: str
     citations: list[dict[str, Any]]
@@ -184,12 +185,17 @@ def prepare(state: AgentState) -> dict[str, Any]:
         raise NotFound("project not found")
     root = paths.resolve_root(project["path"])
     query = state.get("query") or ""
+    # Snippet conversations look only at the selected code unless the user turned
+    # on "联系上下文": retrieving neighbours made the answer drift into other files.
+    snippet = state.get("mode") == "snippet" and bool(state.get("file_path"))
+    use_context = bool(state.get("use_context"))
+    retrieve = bool(query.strip()) and (not snippet or use_context)
 
-    _emit({"type": "status", "stage": "retrieve", "detail": "检索相关代码"})
+    _emit({"type": "status", "stage": "retrieve", "detail": "检索相关代码" if retrieve else "读取选中的代码"})
 
     chunks: list[dict[str, Any]] = []
-    if query.strip():
-        if state.get("mode") == "snippet" and state.get("file_path"):
+    if retrieve:
+        if snippet:
             found = hybrid.search(int(state["project_id"]), query, top_k=10)
             same_file = [c for c in found if c["path"] == state["file_path"]]
             chunks = same_file or found[:4]
@@ -209,7 +215,7 @@ def prepare(state: AgentState) -> dict[str, Any]:
         branch = None
 
     selected_code = state.get("selected_code")
-    if not selected_code and state.get("mode") == "snippet" and state.get("file_path"):
+    if not selected_code and snippet:
         selected_code = _read_snippet(root, state["file_path"], state.get("start_line"), state.get("end_line"))
 
     system = prompts.build_system_prompt(
@@ -221,6 +227,7 @@ def prepare(state: AgentState) -> dict[str, Any]:
         context=hybrid.context_for_prompt(chunks),
         project_name=project["name"],
         git_branch=branch,
+        use_context=use_context,
     )
     return {
         "system": system,
@@ -405,7 +412,29 @@ def finalize(state: AgentState) -> dict[str, Any]:
         _emit({"type": "error", "detail": "empty model output"})
     saved = repo.add_message(state["conversation_id"], "assistant", text, citations=citations or None, meta=meta)
     _emit({"type": "message", "message": saved})
+    _retitle_placeholder(state["conversation_id"], text)
     return {"citations": citations}
+
+
+def _retitle_placeholder(conversation_id: str, answer: str) -> None:
+    """Replace an auto-generated title with one that names the knowledge point.
+
+    A conversation is created before the user has asked anything, so its title is
+    a placeholder ("关于 README.md 第 357-359 行", "全项目对话"). Once an answer
+    exists, the first line of it says what the session is actually about. User
+    renames are never overwritten — only the app's own placeholders are.
+    """
+    try:
+        conversation = repo.get_conversation(conversation_id)
+        if conversation is None or not notegen.is_auto_title(conversation.get("title")):
+            return
+        title = notegen.title_from_answer(answer)
+        if not title:
+            return
+        repo.rename_conversation(conversation_id, title)
+        _emit({"type": "status", "stage": "title", "detail": title})
+    except Exception:  # a nicer title is never worth failing the turn
+        log.warning("conversation retitle failed", exc_info=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -454,7 +483,7 @@ def _config(conversation_id: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # public API used by the SSE routes
 # --------------------------------------------------------------------------- #
-def start_turn(conversation_id: str, text: str) -> Iterator[dict[str, Any]]:
+def start_turn(conversation_id: str, text: str, use_context: bool = False) -> Iterator[dict[str, Any]]:
     conversation = repo.get_conversation(conversation_id)
     if conversation is None:
         raise NotFound("conversation not found")
@@ -471,11 +500,18 @@ def start_turn(conversation_id: str, text: str) -> Iterator[dict[str, Any]]:
 
     inputs: dict[str, Any]
     if has_history:
-        inputs = {"messages": [user_message], "query": text, "citations": [], "error": None}
+        inputs = {
+            "messages": [user_message],
+            "query": text,
+            "use_context": use_context,
+            "citations": [],
+            "error": None,
+        }
     else:
         inputs = {
             "messages": [user_message],
             "query": text,
+            "use_context": use_context,
             "project_id": int(conversation["project_id"]),
             "conversation_id": conversation_id,
             "mode": conversation.get("mode") or "snippet",

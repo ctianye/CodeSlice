@@ -6,6 +6,10 @@ interface ComposerProps {
   busy: boolean
   disabled: boolean
   selectionHint: string | null
+  /** Show the 「联系上下文」 toggle: only meaningful for a bound code snippet. */
+  contextToggle: boolean
+  useContext: boolean
+  onToggleContext: (next: boolean) => void
   /** Text pushed in from outside (e.g. a suggested prompt). The nonce forces a
    *  re-fill when the same suggestion is picked twice. */
   draft?: { text: string; nonce: number } | null
@@ -18,6 +22,9 @@ export function Composer({
   busy,
   disabled,
   selectionHint,
+  contextToggle,
+  useContext,
+  onToggleContext,
   draft,
   onSend,
   onStop,
@@ -77,6 +84,22 @@ export function Composer({
         />
 
         <div className="composer-actions">
+          {contextToggle ? (
+            <button
+              className={`small context-toggle${useContext ? ' on' : ''}`}
+              onClick={() => onToggleContext(!useContext)}
+              title={
+                useContext
+                  ? '当前会读取同文件的其他片段来补充背景；点击只看选中的代码'
+                  : '当前只讲选中的这段代码；点击允许模型参考上下文'
+              }
+              aria-pressed={useContext}
+              type="button"
+            >
+              <Icon name="anchor" size={11} />
+              联系上下文
+            </button>
+          ) : null}
           <span className="grow">
             {busy ? '正在生成回答…' : (
               <span className="row" style={{ gap: 4 }}>

@@ -22,20 +22,42 @@ class NoteCreate(BaseModel):
     title: str = Field(min_length=1)
     content_md: str = ""
     conversation_id: str | None = None
+    folder_id: int | None = None
 
 
 class NoteUpdate(BaseModel):
     title: str | None = None
     content_md: str | None = None
+    folder_id: int | None = None
+    move_folder: bool = False
 
 
-def _with_index_state(notes: list[dict[str, Any]], project_id: int) -> list[dict[str, Any]]:
-    """Attach ``indexed`` so the UI can show the "已入知识库" badge."""
-    try:
-        indexed = notes_index.indexed_note_ids(project_id)
-    except Exception:  # a missing chunk table must not hide the notes
-        log.warning("note index state unavailable", exc_info=True)
-        indexed = set()
+class FolderCreate(BaseModel):
+    name: str = Field(min_length=1)
+    parent_id: int | None = None
+
+
+class FolderUpdate(BaseModel):
+    name: str | None = None
+    parent_id: int | None = None
+    move: bool = False
+
+
+def _with_index_state(notes: list[dict[str, Any]], project_id: int | None = None) -> list[dict[str, Any]]:
+    """Attach ``indexed`` so the UI can show the "已入知识库" badge.
+
+    The knowledge base lists notes from several projects at once, so the indexed
+    chunk set is resolved per project instead of assuming one.
+    """
+    project_ids = {project_id} if project_id is not None else {int(n["project_id"]) for n in notes}
+    indexed: set[int] = set()
+    for pid in project_ids:
+        if pid is None:
+            continue
+        try:
+            indexed |= notes_index.indexed_note_ids(int(pid))
+        except Exception:  # a missing chunk table must not hide the notes
+            log.warning("note index state unavailable", exc_info=True)
     return [{**note, "indexed": int(note["id"]) in indexed} for note in notes]
 
 
@@ -51,8 +73,26 @@ def _index_note(note: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/notes")
-def list_notes(_: TokenDep, project_id: int) -> list[dict[str, Any]]:
-    return _with_index_state(repo.list_notes(project_id), project_id)
+def list_notes(
+    _: TokenDep,
+    project_id: int | None = None,
+    folder_id: int | None = None,
+    unfiled: bool = False,
+) -> list[dict[str, Any]]:
+    """List notes in the knowledge base.
+
+    Without ``project_id`` this spans **every** project: a note about a library is
+    as useful in the next repo as it was in the one that produced it. Passing
+    ``project_id`` keeps the old per-project behaviour for the panel's project
+    filter. ``folder_id`` / ``unfiled`` narrow to one place in the folder tree.
+    """
+    if project_id is None:
+        notes = repo.list_all_notes(folder_id=folder_id, unfiled=unfiled)
+    else:
+        notes = [
+            note for note in repo.list_notes(project_id) if (folder_id is None or note.get("folder_id") == folder_id)
+        ]
+    return _with_index_state(notes)
 
 
 @router.get("/notes/{note_id}")
@@ -78,7 +118,13 @@ def retitle_note(note_id: int, _: TokenDep) -> dict[str, Any]:
 def create_note(body: NoteCreate, _: TokenDep) -> dict[str, Any]:
     if repo.get_project(body.project_id) is None:
         raise NotFound("project not found")
-    note = repo.create_note(body.project_id, body.title, body.content_md, body.conversation_id)
+    note = repo.create_note(
+        body.project_id,
+        body.title,
+        body.content_md,
+        body.conversation_id,
+        folder_id=body.folder_id,
+    )
     if note is None:  # pragma: no cover - defensive
         raise NotFound("note not found")
     return _index_note(note)
@@ -86,7 +132,13 @@ def create_note(body: NoteCreate, _: TokenDep) -> dict[str, Any]:
 
 @router.put("/notes/{note_id}")
 def update_note(note_id: int, body: NoteUpdate, _: TokenDep) -> dict[str, Any]:
-    note = repo.update_note(note_id, body.title, body.content_md)
+    note = repo.update_note(
+        note_id,
+        body.title,
+        body.content_md,
+        folder_id=body.folder_id,
+        move_folder=body.move_folder,
+    )
     if note is None:
         raise NotFound("note not found")
     return _index_note(note)
@@ -105,6 +157,35 @@ def delete_note(note_id: int, _: TokenDep) -> dict[str, bool]:
 @router.post("/notes/{note_id}/export")
 def export_note(note_id: int, _: TokenDep) -> dict[str, Any]:
     return notes_export.export_note(note_id)
+
+
+# --------------------------------------------------------------------------- #
+# knowledge-base folders
+# --------------------------------------------------------------------------- #
+@router.get("/note-folders")
+def list_note_folders(_: TokenDep) -> list[dict[str, Any]]:
+    """The user's own tree for the knowledge base."""
+    return repo.list_note_folders()
+
+
+@router.post("/note-folders")
+def create_note_folder(body: FolderCreate, _: TokenDep) -> dict[str, Any]:
+    return repo.create_note_folder(body.name, body.parent_id)
+
+
+@router.put("/note-folders/{folder_id}")
+def update_note_folder(folder_id: int, body: FolderUpdate, _: TokenDep) -> dict[str, Any]:
+    folder = repo.rename_note_folder(folder_id, body.name, body.parent_id, move=body.move)
+    if folder is None:
+        raise NotFound("folder not found")
+    return folder
+
+
+@router.delete("/note-folders/{folder_id}")
+def delete_note_folder(folder_id: int, _: TokenDep) -> dict[str, bool]:
+    """Notes inside fall back to 未分类 instead of being deleted with the folder."""
+    repo.delete_note_folder(folder_id)
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- #

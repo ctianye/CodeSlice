@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api'
+import type { NoteFolder } from '../types'
 import { formatRelative } from '../lib/format'
 import { useApp } from '../state/AppState'
 import { ErrorNote } from './Feedback'
@@ -23,6 +24,7 @@ export function NoteReader(): ReactNode {
   const [busy, setBusy] = useState<'retitle' | 'export' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [folders, setFolders] = useState<NoteFolder[]>([])
 
   const note = noteView
 
@@ -32,6 +34,18 @@ export function NoteReader(): ReactNode {
     setError(null)
     setNotice(null)
   }, [note?.id, refreshKey])
+
+  // The folder picker needs the whole tree, not just this note's folder.
+  useEffect(() => {
+    const controller = new AbortController()
+    api
+      .listNoteFolders(controller.signal)
+      .then(setFolders)
+      .catch(() => {
+        /* the picker simply stays empty */
+      })
+    return () => controller.abort()
+  }, [refreshKey])
 
   const body = useMemo(() => stripTitleLine(note?.content_md ?? ''), [note?.content_md])
 
@@ -118,6 +132,19 @@ export function NoteReader(): ReactNode {
     setActiveConversationId(note.conversation_id)
   }
 
+  const moveToFolder = async (value: string) => {
+    const folderId = value === '' ? null : Number(value)
+    setError(null)
+    try {
+      const updated = await api.updateNote(note.id, { folder_id: folderId, move_folder: true })
+      openNoteView(updated)
+      bumpRefresh()
+      setNotice(folderId === null ? '已移出文件夹' : '已移到所选文件夹')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   return (
     <div className="note-reader">
       <div className="note-reader-bar">
@@ -130,6 +157,11 @@ export function NoteReader(): ReactNode {
         </div>
 
         <div className="note-reader-meta">
+          {note.project_name ? (
+            <span className="badge mute" title="笔记写于哪个项目">
+              {note.project_name}
+            </span>
+          ) : null}
           {note.indexed ? (
             <span className="badge ok" title="这条笔记已进入检索索引，提问时可能被引用">
               已入知识库
@@ -143,6 +175,22 @@ export function NoteReader(): ReactNode {
         </div>
 
         <div className="note-reader-actions">
+          {folders.length > 0 ? (
+            <select
+              className="note-reader-folder"
+              value={note.folder_id == null ? '' : String(note.folder_id)}
+              onChange={(event) => void moveToFolder(event.target.value)}
+              title="把这条笔记放进文件夹"
+              aria-label="笔记所在文件夹"
+            >
+              <option value="">未分类</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={String(folder.id)}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {note.conversation_id ? (
             <button type="button" className="ghost small" onClick={openSource} title="在右侧打开生成它的对话">
               <Icon name="message" size={12} />

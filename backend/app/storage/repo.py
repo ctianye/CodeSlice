@@ -170,6 +170,10 @@ def list_conversations(project_id: int | None = None, include_others: bool = Fal
     appends every other project's conversations below, each group ordered by
     ``updated_at`` descending. That single ordering lets the sidebar split the
     list into two sections without a second request.
+
+    Conversations without messages are listed too: the sidebar needs to see the
+    one the user is about to type into. Abandoned ones are cleaned up by
+    :func:`purge_empty_conversations` and by the renderer when it switches away.
     """
     with get_conn() as conn:
         if project_id is None:
@@ -187,6 +191,22 @@ def list_conversations(project_id: int | None = None, include_others: bool = Fal
                 (project_id,),
             ).fetchall()
         return _conversation_rows(rows)
+
+
+def purge_empty_conversations(older_than_minutes: int = 60) -> int:
+    """Delete abandoned conversations that never received a message.
+
+    A freshly created one is spared for an hour: the user may still be typing
+    into it, and deleting it mid-edit would turn the next send into a 404.
+    """
+    with write_conn() as conn:
+        cur = conn.execute(
+            """DELETE FROM conversations
+                WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)
+                  AND datetime(updated_at) < datetime('now', ?)""",
+            (f"-{int(older_than_minutes)} minutes",),
+        )
+        return int(cur.rowcount or 0)
 
 
 def list_conversations_by_file(project_id: int, file_path: str) -> list[dict[str, Any]]:
@@ -375,9 +395,38 @@ def list_notes(project_id: int) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
+# The knowledge base is deliberately cross-project: a reading note about a
+# library is just as useful while working in another repo. ``project_name`` lets
+# the panel show where each note came from without a second request.
+_NOTE_SELECT = """
+    SELECT n.*, p.name AS project_name
+      FROM notes n
+      LEFT JOIN projects p ON p.id = n.project_id
+"""
+
+
+def list_all_notes(folder_id: int | None = None, unfiled: bool = False) -> list[dict[str, Any]]:
+    """Every note in the knowledge base, newest first.
+
+    ``folder_id`` narrows to one folder; ``unfiled`` returns only notes that have
+    no folder yet (the "未分类" bucket).
+    """
+    with get_conn() as conn:
+        if unfiled:
+            rows = conn.execute(_NOTE_SELECT + " WHERE n.folder_id IS NULL ORDER BY n.updated_at DESC").fetchall()
+        elif folder_id is not None:
+            rows = conn.execute(
+                _NOTE_SELECT + " WHERE n.folder_id = ? ORDER BY n.updated_at DESC",
+                (folder_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(_NOTE_SELECT + " ORDER BY n.updated_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_note(note_id: int) -> dict[str, Any] | None:
     with get_conn() as conn:
-        return _row(conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone())
+        return _row(conn.execute(_NOTE_SELECT + " WHERE n.id = ?", (note_id,)).fetchone())
 
 
 def find_note_for_conversation(conversation_id: str) -> dict[str, Any] | None:
@@ -391,33 +440,107 @@ def find_note_for_conversation(conversation_id: str) -> dict[str, Any] | None:
         )
 
 
-def create_note(project_id: int, title: str, content_md: str, conversation_id: str | None = None) -> dict[str, Any]:
+def create_note(
+    project_id: int,
+    title: str,
+    content_md: str,
+    conversation_id: str | None = None,
+    folder_id: int | None = None,
+) -> dict[str, Any]:
     now = utcnow()
     with write_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO notes (project_id, conversation_id, title, content_md, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?)",
-            (project_id, conversation_id, title, content_md, now, now),
+            "INSERT INTO notes (project_id, conversation_id, folder_id, title, content_md, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (project_id, conversation_id, folder_id, title, content_md, now, now),
         )
         note_id = int(cur.lastrowid or 0)
     return get_note(note_id)  # type: ignore[return-value]
 
 
-def update_note(note_id: int, title: str | None, content_md: str | None) -> dict[str, Any] | None:
+def update_note(
+    note_id: int,
+    title: str | None,
+    content_md: str | None,
+    folder_id: int | None = None,
+    move_folder: bool = False,
+) -> dict[str, Any] | None:
+    """Update a note; ``move_folder`` is how a caller clears ``folder_id``.
+
+    ``None`` already means "leave unchanged" for title/content, so moving a note
+    back to 未分类 needs an explicit flag rather than a sentinel value.
+    """
     note = get_note(note_id)
     if note is None:
         return None
     with write_conn() as conn:
         conn.execute(
-            "UPDATE notes SET title = ?, content_md = ?, updated_at = ? WHERE id = ?",
+            "UPDATE notes SET title = ?, content_md = ?, folder_id = ?, updated_at = ? WHERE id = ?",
             (
                 title if title is not None else note["title"],
                 content_md if content_md is not None else note["content_md"],
+                folder_id if move_folder else note.get("folder_id"),
                 utcnow(),
                 note_id,
             ),
         )
     return get_note(note_id)
+
+
+# --------------------------------------------------------------------------- #
+# note folders (user-made knowledge-base tree)
+# --------------------------------------------------------------------------- #
+def list_note_folders() -> list[dict[str, Any]]:
+    """All folders plus how many notes each holds directly."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT f.*, (SELECT COUNT(*) FROM notes n WHERE n.folder_id = f.id) AS note_count
+                 FROM note_folders f
+                ORDER BY f.name COLLATE NOCASE ASC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_note_folder(name: str, parent_id: int | None = None) -> dict[str, Any]:
+    now = utcnow()
+    with write_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO note_folders (parent_id, name, created_at) VALUES (?,?,?)",
+            (parent_id, name, now),
+        )
+        folder_id = int(cur.lastrowid or 0)
+        row = conn.execute("SELECT * FROM note_folders WHERE id = ?", (folder_id,)).fetchone()
+    return dict(row)  # type: ignore[arg-type]
+
+
+def rename_note_folder(
+    folder_id: int,
+    name: str | None,
+    parent_id: int | None = None,
+    move: bool = False,
+) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM note_folders WHERE id = ?", (folder_id,)).fetchone()
+        if row is None:
+            return None
+        folder = dict(row)
+        conn.execute(
+            "UPDATE note_folders SET name = ?, parent_id = ? WHERE id = ?",
+            (
+                name if name is not None else folder["name"],
+                parent_id if move else folder["parent_id"],
+                folder_id,
+            ),
+        )
+        row = conn.execute("SELECT * FROM note_folders WHERE id = ?", (folder_id,)).fetchone()
+    return dict(row)  # type: ignore[arg-type]
+
+
+def delete_note_folder(folder_id: int) -> None:
+    """Delete a folder; its notes fall back to 未分类, child folders go too."""
+    with write_conn() as conn:
+        conn.execute("UPDATE notes SET folder_id = NULL WHERE folder_id = ?", (folder_id,))
+        conn.execute("DELETE FROM note_folders WHERE id = ?", (folder_id,))
 
 
 def delete_note(note_id: int) -> None:

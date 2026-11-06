@@ -5,6 +5,7 @@ import type { Job, JobStatus, RetrievedChunk, TreeNode } from '../types'
 import { useAsync } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
 import { useIndexJob } from '../hooks/useIndexJob'
+import type { IndexTotals } from '../hooks/useIndexJob'
 import { EmptyState, ErrorNote, Loading } from './Feedback'
 import { FileTree } from './FileTree'
 import { Icon } from './Icon'
@@ -74,6 +75,7 @@ export function FilePanel(): ReactNode {
   const dirtyPaths = new Set(git.data ? [...git.data.modified, ...git.data.untracked] : [])
   const job = index.job
   const jobBusy = job !== null && (job.status === 'running' || job.status === 'pending')
+  const totals = index.totals
 
   return (
     <div className="sidebar-section">
@@ -83,11 +85,17 @@ export function FilePanel(): ReactNode {
           className="small"
           onClick={index.start}
           disabled={index.starting || jobBusy}
-          title="为当前项目建立/更新代码索引"
+          title="索引在后台自动维护；代码改动没有被发现时可以手动重跑一次"
         >
           <Icon name="database" size={12} />
-          {index.starting ? '提交中…' : '建立索引'}
+          {index.starting ? '提交中…' : jobBusy ? '索引中…' : '更新索引'}
         </button>
+        {totals && totals.files > 0 ? (
+          <span className="badge mute" title="当前索引里已有的文件 / 片段 / 向量数">
+            {totals.files} 文件 · {totals.chunks} 片段
+            {totals.vectors > 0 ? ` · ${totals.vectors} 向量` : ''}
+          </span>
+        ) : null}
         {git.data ? (
           <span
             className={`badge ${git.data.dirty ? 'warn' : 'ok'}`}
@@ -111,21 +119,21 @@ export function FilePanel(): ReactNode {
       </div>
 
       {index.error ? <ErrorNote message={index.error} /> : null}
-      {job ? <IndexCard job={job} onDismiss={index.dismiss} /> : null}
+      {job ? <IndexCard job={job} totals={totals} onDismiss={index.dismiss} /> : null}
       {index.firstRun && !job ? (
         <div className="first-index">
           <div className="first-index-head">
             <Icon name="database" size={12} />
-            首次使用请先建立索引
+            正在建立索引
           </div>
-          <p>建立索引后，检索、引用和对话才能定位到具体代码。</p>
+          <p>首次打开项目会自动建立索引，完成后检索、引用和对话就能定位到具体代码。</p>
           <button
             type="button"
-            className="small primary"
+            className="small"
             onClick={index.start}
             disabled={index.starting || index.checking}
           >
-            {index.starting ? '提交中…' : '立即建立索引'}
+            {index.starting ? '提交中…' : '重新开始'}
           </button>
         </div>
       ) : null}
@@ -217,12 +225,21 @@ const JOB_BADGE: Record<JobStatus, string> = {
 
 interface IndexCardProps {
   job: Job
+  totals: IndexTotals | null
   onDismiss: () => void
 }
 
-/** Compact progress card for the running/last index job. */
-function IndexCard({ job, onDismiss }: IndexCardProps): ReactNode {
+/**
+ * Compact progress card for the running/last index job.
+ *
+ * While a job runs its own counters are the interesting ones; once it settled
+ * the card falls back to the cumulative index size, because "文件 0 片段 0" after
+ * a no-op incremental run is true-but-useless.
+ */
+function IndexCard({ job, totals, onDismiss }: IndexCardProps): ReactNode {
   const percent = Math.max(0, Math.min(100, job.progress))
+  const busy = job.status === 'running' || job.status === 'pending'
+  const shown = busy || !totals ? job.stats : totals
   return (
     <div className="index-card">
       <div className="index-head">
@@ -245,11 +262,11 @@ function IndexCard({ job, onDismiss }: IndexCardProps): ReactNode {
         <div className="progress-fill" style={{ width: `${percent}%` }} />
       </div>
 
-      {job.stats ? (
+      {shown ? (
         <div className="index-stats">
-          <span>文件 {job.stats.files}</span>
-          <span>片段 {job.stats.chunks}</span>
-          <span>向量 {job.stats.vectors}</span>
+          <span>文件 {shown.files}</span>
+          <span>片段 {shown.chunks}</span>
+          <span>向量 {shown.vectors}</span>
         </div>
       ) : null}
 

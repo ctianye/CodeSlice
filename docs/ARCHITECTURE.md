@@ -18,7 +18,7 @@
 │ FastAPI 接口层                              │
 │  ├ projects / files / git / index / search  │
 │  ├ conversations / chat(SSE) / resume        │
-│  ├ notes / code_anchors / command_rules      │
+│  ├ notes / note_folders / code_anchors / command_rules      │
 │  └ settings(model, embedding) / credentials  │
 │ LangGraph 学习工作流 + SQLite checkpointer   │
 │  ├ indexing: 过滤 → 语言识别 → Tree-sitter    │
@@ -58,6 +58,9 @@ docs/                   本文件与 API_CONTRACT.md
 4. **代码与对话解耦但可追溯**：`code_anchors` 记录文件路径、commit、符号名、行范围、代码摘要与 hash；代码被改动后锚点状态标为 `modified/moved/deleted`，历史对话保留，用户可手动重新关联。
 5. **检查点进 SQLite**：LangGraph `SqliteSaver`，授权暂停后可恢复；`jobs` 表给索引进度的轮询。
 6. **向量索引可替换**：`retrieval/vector_store.py` 定义 `VectorStore` 协议，V1 用 SQLite BLOB + numpy 实现，避免 Chroma 打包体积/兼容风险。
+7. **上下文默认锁在选区**：片段对话默认只把选中的代码交给模型，不主动检索（`use_context=false`），需要周边实现时由用户显式打开「联系上下文」。早期版本无条件跑 `hybrid.search` 并把全部命中塞进 citation，导致「问一段代码、答整份文件」。
+8. **知识库跨项目、索引不跨项目**：`notes` 仍归属创建它的项目（检索与 `note://` 片段按项目走），阅读与归档由一个全局面板承担；`note_folders` 用 `parent_id` 自引用成树。移动必须显式 `move_folder`，否则 `null` 无法与「不改」区分。
+9. **标题由内容决定**：会话与笔记的标题都从回答内容提炼（`notegen.title_from_answer` 不调模型，`retitle` 才调），占位标题（`新对话`、`foo.py:12-30`）在 `finalize` 里被替换并 emit `status.stage="title"`；用户手改过的标题永不覆盖。
 
 ## 分层边界
 

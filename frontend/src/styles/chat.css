@@ -542,12 +542,15 @@
   background: var(--bg-panel);
 }
 
+/* The box owns the outline: the textarea is a borderless surface inside it, so
+   the two rounded rectangles used to read as one box cutting through another. */
 .composer .composer-box {
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-strong);
   background: var(--bg);
+  overflow: hidden;
   transition:
     border-color var(--dur-fast) var(--ease),
     box-shadow var(--dur-fast) var(--ease);
@@ -560,9 +563,10 @@
 
 .composer textarea {
   border: 0;
+  border-radius: 0;
   background: transparent;
-  padding: 10px 11px 6px;
-  min-height: 60px;
+  padding: 11px 13px 6px;
+  min-height: 58px;
   max-height: 220px;
   resize: none;
   font-size: 12.5px;
@@ -572,7 +576,15 @@
 
 .composer textarea:focus {
   border: 0;
+  border-radius: 0;
+  outline: none;
   box-shadow: none;
+}
+
+/* Hairline between the input and the action row: keeps the two zones legible
+   without a second border around the text. */
+.composer .composer-actions {
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 .composer .selection-hint {
@@ -618,6 +630,27 @@
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 34%, transparent);
   background: var(--bg-elevated);
+}
+
+.composer .composer-actions .context-toggle {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.composer .composer-actions .context-toggle:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+/* On = the model may read the surrounding file. A filled chip keeps the state
+   readable at a glance without competing with the send button. */
+.composer .composer-actions .context-toggle.on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: var(--accent-soft);
 }
 
 .composer .composer-actions .stop:hover:not(:disabled) {

@@ -10,6 +10,7 @@ const STAGE_LABELS: Record<string, string> = {
   execute: '执行工具调用',
   verify: '校验结果',
   summarize: '整理回答',
+  title: '起标题',
 }
 
 export interface ActivityItem {
@@ -34,7 +35,7 @@ export interface ChatController {
   busy: boolean
   loading: boolean
   loadError: string | null
-  send: (content: string) => void
+  send: (content: string, options?: { useContext?: boolean }) => void
   resume: (decision: ApprovalDecision) => void
   stop: () => void
   reload: () => void
@@ -126,6 +127,14 @@ export function useChatStream(conversationId: string | null, onSettled?: () => v
         break
       }
       case 'status': {
+        // The backend renames a placeholder conversation once the first answer
+        // exists, so the title names what was learned. The event carries the new
+        // title; mirror it here so the header does not wait for a full reload.
+        if (event.stage === 'title' && event.detail) {
+          const title = event.detail
+          setConversation((prev) => (prev ? { ...prev, title } : prev))
+          break
+        }
         const label = STAGE_LABELS[event.stage] ?? event.stage
         setStream((prev) => {
           const base: StreamState = prev ?? { text: '', citations: [], activity: [], error: null }
@@ -230,7 +239,7 @@ export function useChatStream(conversationId: string | null, onSettled?: () => v
   )
 
   const send = useCallback(
-    (content: string) => {
+    (content: string, options?: { useContext?: boolean }) => {
       if (!conversationId) return
       const trimmed = content.trim()
       if (!trimmed) return
@@ -242,7 +251,10 @@ export function useChatStream(conversationId: string | null, onSettled?: () => v
         citations: null,
         meta: null,
       }
-      void drive((signal) => api.streamChat(conversationId, trimmed, signal), optimistic)
+      void drive(
+        (signal) => api.streamChat(conversationId, trimmed, signal, { useContext: options?.useContext }),
+        optimistic,
+      )
     },
     [conversationId, drive],
   )

@@ -117,10 +117,18 @@ CREATE TABLE IF NOT EXISTS code_anchors (
 );
 CREATE INDEX IF NOT EXISTS idx_anchors_project ON code_anchors(project_id);
 
+CREATE TABLE IF NOT EXISTS note_folders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id   INTEGER REFERENCES note_folders(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS notes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     conversation_id TEXT,
+    folder_id       INTEGER REFERENCES note_folders(id) ON DELETE SET NULL,
     title           TEXT NOT NULL,
     content_md      TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
@@ -217,6 +225,17 @@ def init_db(db_path: Path | None = None) -> None:
         conv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)")}
         if "selected_code" not in conv_cols:
             conn.execute("ALTER TABLE conversations ADD COLUMN selected_code TEXT")
+        # Notes started life bound to one project; the knowledge base now spans
+        # every project and is organised in a user-made folder tree.
+        note_cols = {r["name"] for r in conn.execute("PRAGMA table_info(notes)")}
+        if "folder_id" not in note_cols:
+            conn.execute(
+                "ALTER TABLE notes ADD COLUMN folder_id INTEGER REFERENCES note_folders(id) ON DELETE SET NULL"
+            )
+        # The index used to live next to the CREATE TABLE, which fails on an
+        # existing database: the column only appears in the ALTER above. Creating
+        # it here covers both fresh databases and migrated ones.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_folder ON notes(folder_id)")
     _migrate_fts(path)
 
 

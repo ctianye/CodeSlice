@@ -577,6 +577,38 @@ def _default_title(project: dict[str, Any] | None) -> str:
     return f"{name} · 阅读笔记"
 
 
+# Titles the app writes before it knows what the conversation is about. They
+# describe a location ("关于 README.md 第 357-359 行") or a mode, so the first
+# answer replaces them with the knowledge point.
+_AUTO_TITLE_RE = re.compile(
+    r"^(?:新对话|项目问答|全项目对话|.* · 阅读笔记"
+    r"|关于\s*\S+\s*第\s*\d+(?:\s*[-–~]\s*\d+)?\s*行"
+    r"|\S+:\d+(?:\s*[-–~]\s*\d+)?)$"
+)
+
+
+def is_auto_title(title: str | None) -> bool:
+    """True when the title is a placeholder rather than a knowledge point."""
+    return bool(_AUTO_TITLE_RE.match((title or "").strip()))
+
+
+def title_from_answer(answer: str) -> str:
+    """Cheap knowledge-point title taken from the first line of an answer.
+
+    No model call: this runs on every turn, and the note generator already asks
+    the model for a better title when the user saves one. It only has to be good
+    enough that the sidebar stops saying "关于 README.md 第 357-359 行".
+    """
+    for line in (answer or "").splitlines():
+        text = _MARKUP_RE.sub("", _HEADING_RE.sub(r"\1", line)).strip()
+        if len(text) < 4:
+            continue
+        title = _clean_title(text)
+        if title:
+            return title
+    return ""
+
+
 def _index_note(note: dict[str, Any]) -> bool:
     """Put the note into the retrieval pipeline; never fail the note over it."""
     try:

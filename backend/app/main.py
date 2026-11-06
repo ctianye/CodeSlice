@@ -30,6 +30,7 @@ from app.api import settings as settings_api
 from app.core.config import APP_NAME, VERSION, settings
 from app.core.db import init_db
 from app.core.errors import AppError
+from app.storage import repo
 
 log = logging.getLogger("codeslice")
 
@@ -60,6 +61,15 @@ async def lifespan(_: FastAPI):
     _configure_logging()
     settings.ensure_dirs()
     init_db()
+    # Opening the app is a good moment to drop conversations the user started and
+    # never typed into; only ones older than an hour go, so a half-written draft
+    # survives a restart.
+    try:
+        removed = repo.purge_empty_conversations(older_than_minutes=60)
+        if removed:
+            log.info("removed %d abandoned conversation(s)", removed)
+    except Exception:  # cleanup must never block startup
+        log.warning("empty-conversation cleanup failed", exc_info=True)
     log.info("%s %s starting, data_dir=%s", APP_NAME, VERSION, settings.data_dir)
     yield
     log.info("shutting down")

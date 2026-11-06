@@ -78,7 +78,12 @@ export type Retriever = 'keyword' | 'vector' | 'hybrid'
 export interface IndexStatus {
   project: Project
   last_job: Job | null
+  /** Files currently in the index (cumulative, not just this run's changes). */
   files: number
+  /** Chunks currently in the index (cumulative). */
+  chunks: number
+  /** Chunks carrying a vector; 0 while running in keyword-only mode. */
+  vectors: number
   indexed_at: string | null
   /** Distinct embed_model values present in this project's vectors. */
   embed_models: string[]
@@ -279,6 +284,9 @@ export type AgentStage =
   | 'execute'
   | 'verify'
   | 'summarize'
+  /** The conversation was renamed after its first answer, so the title names
+   *  the knowledge point instead of the code location. */
+  | 'title'
 
 export interface AgentEventToken {
   type: 'token'
@@ -353,6 +361,23 @@ export interface Note {
   updated_at: string
   /** True when the note owns a retrieval row, i.e. the agent can cite it. */
   indexed?: boolean
+  /** Folder the user filed this note under; null means "未分类". */
+  folder_id?: number | null
+  /**
+   * Display name of the project the note was written in. The knowledge base
+   * spans every project, so the panel needs to say where a note came from.
+   */
+  project_name?: string | null
+}
+
+/** A user-made folder in the knowledge base tree. */
+export interface NoteFolder {
+  id: number
+  parent_id: number | null
+  name: string
+  created_at: string
+  /** How many notes sit directly in this folder. */
+  note_count: number
 }
 
 /** Returned by the note-from-message endpoint, which also reports how it went. */
@@ -375,6 +400,15 @@ export interface NoteCreateBody {
   title: string
   content_md: string
   conversation_id?: string | null
+  folder_id?: number | null
+}
+
+export interface NoteUpdateBody {
+  title?: string
+  content_md?: string
+  folder_id?: number | null
+  /** Set to true to actually move the note; without it folder_id is ignored. */
+  move_folder?: boolean
 }
 
 /* ---------------------------------- anchors -------------------------------- */

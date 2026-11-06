@@ -44,6 +44,7 @@ def conn_reset():
         for table in (
             "code_anchors",
             "notes",
+            "note_folders",
             "command_rules",
             "approvals",
             "messages",

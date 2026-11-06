@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
 import type { Conversation } from '../types'
 import { useAsync } from '../hooks/useAsync'
@@ -20,8 +20,17 @@ interface ConversationListProps {
  * could disagree with the pagination of a future version.
  */
 export function ConversationList({ onNewConversation }: ConversationListProps): ReactNode {
-  const { project, projects, activeConversationId, setActiveConversationId, refreshKey, bumpRefresh } = useApp()
+  const {
+    project,
+    projects,
+    activeConversationId,
+    setActiveConversationId,
+    conversationFocusNonce,
+    refreshKey,
+    bumpRefresh,
+  } = useApp()
   const projectId = project?.id ?? null
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const { data, error, loading, reload } = useAsync(
     (signal) =>
@@ -56,6 +65,16 @@ export function ConversationList({ onNewConversation }: ConversationListProps): 
     bumpRefresh()
     reload()
   }
+
+  // A code-card title asked for its conversation: bring the row into view so the
+  // click has a visible result even in a long list.
+  useEffect(() => {
+    if (conversationFocusNonce === 0 || !activeConversationId) return
+    const host = scrollRef.current
+    if (!host) return
+    const row = host.querySelector<HTMLElement>(`[data-conversation-id="${CSS.escape(activeConversationId)}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [conversationFocusNonce, activeConversationId, items])
 
   const renderRow = (item: Conversation, showProject: boolean) => (
     <ConversationRow
@@ -94,7 +113,7 @@ export function ConversationList({ onNewConversation }: ConversationListProps): 
         <EmptyState icon="message" title="还没有打开项目" hint="先添加一个本地代码目录，再开始对话。" />
       ) : null}
 
-      <div className="sidebar-scroll">
+      <div className="sidebar-scroll" ref={scrollRef}>
         {loading && !data ? <Loading /> : null}
         {error ? <ErrorNote message={error} onRetry={reload} /> : null}
 
@@ -181,6 +200,7 @@ function ConversationRow({
   return (
     <div
       className={`list-row${active ? ' active' : ''}`}
+      data-conversation-id={conversation.id}
       role="button"
       tabIndex={0}
       aria-current={active ? 'true' : undefined}

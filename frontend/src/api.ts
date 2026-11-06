@@ -24,6 +24,8 @@ import type {
   Note,
   NoteCreateBody,
   NoteExport,
+  NoteFolder,
+  NoteUpdateBody,
   OllamaPullEvent,
   OllamaStatus,
   Project,
@@ -368,8 +370,10 @@ export function streamChat(
   conversationId: string,
   content: string,
   signal?: AbortSignal,
+  options?: { useContext?: boolean },
 ): AsyncGenerator<AgentStreamEvent> {
-  return postSse(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { content }, signal)
+  const body = options?.useContext ? { content, use_context: true } : { content }
+  return postSse(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, body, signal)
 }
 
 /** Resolve an approval interrupt; yields the continuation stream. */
@@ -384,15 +388,43 @@ export function streamResume(
 /* ----------------------------------- notes --------------------------------- */
 
 /**
- * `GET /api/notes` requires a `project_id` query parameter (the backend returns
- * 422 without it, even though API_CONTRACT.md does not document the filter).
- * The client-side filter is kept as a safety net so a future backend that
- * ignores the parameter still yields per-project notes.
+ * Lists notes for the knowledge base.
+ *
+ * Without any argument every project's notes come back in one list: the
+ * knowledge base is shared across projects, and each note carries
+ * `project_name` so the panel can show where it came from. Passing `projectId`
+ * narrows it to one project (the per-project sidebar view), `folderId` to one
+ * folder of the user's tree, and `unfiled` to notes that are not in a folder.
  */
-export const listNotes = async (projectId: number, signal?: AbortSignal): Promise<Note[]> => {
-  const notes = await request<Note[]>(`/api/notes?project_id=${projectId}`, { signal })
-  return notes.filter((n) => n.project_id === projectId)
+export const listNotes = async (
+  options: { projectId?: number | null; folderId?: number | null; unfiled?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<Note[]> => {
+  const params = new URLSearchParams()
+  if (options.projectId != null) params.set('project_id', String(options.projectId))
+  if (options.folderId != null) params.set('folder_id', String(options.folderId))
+  if (options.unfiled) params.set('unfiled', 'true')
+  const query = params.toString()
+  return request<Note[]>(`/api/notes${query ? `?${query}` : ''}`, { signal })
 }
+
+/* -------------------------------- note folders ----------------------------- */
+
+export const listNoteFolders = (signal?: AbortSignal): Promise<NoteFolder[]> =>
+  request<NoteFolder[]>('/api/note-folders', { signal })
+
+export const createNoteFolder = (body: {
+  name: string
+  parent_id?: number | null
+}): Promise<NoteFolder> => request<NoteFolder>('/api/note-folders', { method: 'POST', body })
+
+export const renameNoteFolder = (
+  folderId: number,
+  body: { name?: string; parent_id?: number | null; move?: boolean },
+): Promise<NoteFolder> => request<NoteFolder>(`/api/note-folders/${folderId}`, { method: 'PUT', body })
+
+export const deleteNoteFolder = (folderId: number): Promise<{ ok: boolean }> =>
+  request<{ ok: boolean }>(`/api/note-folders/${folderId}`, { method: 'DELETE' })
 
 export const createNote = (body: NoteCreateBody): Promise<Note> =>
   request<Note>('/api/notes', { method: 'POST', body })
@@ -412,7 +444,7 @@ export const createNoteFromConversation = (conversationId: string): Promise<Gene
     method: 'POST',
   })
 
-export const updateNote = (noteId: number, body: Partial<NoteCreateBody>): Promise<Note> =>
+export const updateNote = (noteId: number, body: NoteUpdateBody): Promise<Note> =>
   request<Note>(`/api/notes/${noteId}`, { method: 'PUT', body })
 
 export const deleteNote = (noteId: number): Promise<{ ok: boolean }> =>

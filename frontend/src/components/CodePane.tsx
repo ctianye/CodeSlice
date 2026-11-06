@@ -1,4 +1,5 @@
 import type { editor as MonacoEditor } from 'monaco-editor'
+import { Selection } from 'monaco-editor'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
@@ -33,10 +34,10 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const {
     project,
     openFile,
-    revealTarget,
+    citationHighlight,
+    clearCitation,
     activeConversationId,
-    setActiveConversationId,
-    setSidebarTab,
+    focusConversation,
     refreshKey,
     bumpRefresh,
     openNoteView,
@@ -72,12 +73,19 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const citationRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const hoverRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const frameRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const pickRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const zonesRef = useRef<{ update: (items: FrameZoneItem[]) => void; dispose: () => void } | null>(null)
   const detachRef = useRef<(() => void) | null>(null)
+  /** Pending rAF handle for selection updates; null when nothing is scheduled. */
+  const selectionFrame = useRef<number | null>(null)
+  /** Lines toggled by clicking the gutter — survives until a text drag or a reset. */
+  const pickedRef = useRef<number[]>([])
   // Flipped once Monaco is mounted; the decoration effects depend on it because
   // `editorRef` alone is not a dependency React can track.
   const [ready, setReady] = useState(false)
   const [selection, setSelection] = useState<{ start: number; end: number; code: string } | null>(null)
+  /** Gutter-picked lines when the user is assembling a multi-line question. */
+  const [picked, setPicked] = useState<{ lines: number[]; code: string } | null>(null)
   const [hoverRange, setHoverRange] = useState<{ start: number; end: number } | null>(null)
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [cardError, setCardError] = useState<string | null>(null)
@@ -94,9 +102,86 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       range.endColumn === 1 && range.endLineNumber > range.startLineNumber
         ? range.endLineNumber - 1
         : range.endLineNumber
-    const code = model.getValueInRange(range).replace(/\n+$/, '')
-    setSelection({ start: range.startLineNumber, end: endLine, code })
+    const start = range.startLineNumber
+    // Dragging over text takes over from gutter picking.
+    if (pickedRef.current.length > 0) {
+      pickedRef.current = []
+      pickRef.current?.clear()
+      setPicked(null)
+    }
+    setSelection((prev) => {
+      // Dragging fires this on every mouse move; skip the re-render (and the
+      // model.getValueInRange call) while the line span is unchanged.
+      if (prev && prev.start === start && prev.end === endLine) return prev
+      const code = model
+        .getValueInRange(new Selection(start, 1, endLine, model.getLineMaxColumn(endLine)))
+        .replace(/\n+$/, '')
+      return { start, end: endLine, code }
+    })
   }, [])
+
+  /**
+   * Add or remove one line from the "ask about these lines" set.
+   *
+   * Gutter clicks are additive: line numbers act as a picker, so two distant
+   * lines can be gathered without holding a modifier, and clicking a number
+   * that is already picked removes it. Passing `additive: false` would wipe the
+   * set and fall back to a plain single-line answer.
+   */
+  const applyLinePick = useCallback(
+    (instance: MonacoEditor.IStandaloneCodeEditor, line: number, additive: boolean) => {
+      const model = instance.getModel()
+      if (!model) return
+      const maxLine = model.getLineCount()
+      const target = Math.max(1, Math.min(line, maxLine))
+      const existing = additive ? pickedRef.current : []
+      const next = existing.includes(target)
+        ? existing.filter((item) => item !== target)
+        : [...existing, target].sort((a, b) => a - b)
+
+      pickedRef.current = next
+      if (next.length === 0) {
+        pickRef.current?.clear()
+        setPicked(null)
+        instance.setSelection({ startLineNumber: target, startColumn: 1, endLineNumber: target, endColumn: 1 })
+        instance.focus()
+        return
+      }
+
+      pickRef.current?.set(
+        next.map((item) => ({
+          range: { startLineNumber: item, startColumn: 1, endLineNumber: item, endColumn: model.getLineMaxColumn(item) },
+          options: { isWholeLine: true, className: 'pick-line' },
+        })),
+      )
+      const code = next.map((item) => model.getLineContent(item)).join('\n')
+      setSelection(null)
+      setPicked({ lines: next, code })
+      // Park the caret on the picked line without creating a text selection, so
+      // the two selection sources never disagree.
+      instance.setSelection({ startLineNumber: target, startColumn: 1, endLineNumber: target, endColumn: 1 })
+      instance.focus()
+    },
+    [],
+  )
+
+  /**
+   * Coalesce selection updates to one per animation frame.
+   *
+   * Without this every mouse move during a drag wrote React state and re-rendered
+   * the pane — cards, view zones and all — which is what made selecting feel
+   * sticky once the file had conversations.
+   */
+  const scheduleSelection = useCallback(
+    (instance: MonacoEditor.IStandaloneCodeEditor) => {
+      if (selectionFrame.current !== null) return
+      selectionFrame.current = window.requestAnimationFrame(() => {
+        selectionFrame.current = null
+        updateSelection(instance)
+      })
+    },
+    [updateSelection],
+  )
 
   const onMount = useCallback(
     (instance: MonacoEditor.IStandaloneCodeEditor) => {
@@ -104,22 +189,17 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       citationRef.current = instance.createDecorationsCollection([])
       hoverRef.current = instance.createDecorationsCollection([])
       frameRef.current = instance.createDecorationsCollection([])
+      pickRef.current = instance.createDecorationsCollection([])
       zonesRef.current = createFrameZones(instance)
       setReady(true)
 
-      const selectionListener = instance.onDidChangeCursorSelection(() => updateSelection(instance))
+      const selectionListener = instance.onDidChangeCursorSelection(() => scheduleSelection(instance))
       // Clicking a line number selects that line; dragging over the numbers sweeps
       // a range. Monaco's `selectOnLineNumbers` can only ever pick one line.
       const detachGutter = attachGutterSelection({
         editor: instance,
-        onSelectLine: (line) => {
-          instance.setSelection({
-            startLineNumber: line,
-            startColumn: 1,
-            endLineNumber: line,
-            endColumn: instance.getModel()?.getLineMaxColumn(line) ?? 1,
-          })
-          instance.focus()
+        onSelectLine: (line, additive) => {
+          applyLinePick(instance, line, additive)
         },
         // The live drag already moved the model selection; the listener above
         // turns it into the selection bar, so nothing extra is needed here.
@@ -138,7 +218,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         instance.layout()
       })
     },
-    [updateSelection],
+    [scheduleSelection],
   )
 
   // Release Monaco listeners before the instance is disposed, otherwise a
@@ -155,23 +235,37 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     [],
   )
 
-  // Reveal a cited range whenever the app asks for it (citation chip click).
+  // Paint the citation outline the app says is current.
+  //
+  // The state lives in `AppState` rather than a ref here: opening a citation from
+  // a note unmounts the reader and mounts this pane fresh, so a local ref would be
+  // empty on the second click and "click the same chip again to clear it" could
+  // never work. `null` means the user asked to drop the highlight.
   useEffect(() => {
     const instance = editorRef.current
-    if (!instance || !revealTarget || !openFile || revealTarget.path !== openFile.path) return
+    const collection = citationRef.current
+    if (!instance || !collection) return
     const model = instance.getModel()
     if (!model) return
+    if (!citationHighlight || !openFile || citationHighlight.path !== openFile.path) {
+      collection.clear()
+      return
+    }
     const maxLine = model.getLineCount()
-    const from = Math.max(1, Math.min(revealTarget.start_line, maxLine))
-    const to = Math.max(from, Math.min(revealTarget.end_line, maxLine))
-    citationRef.current?.set([
+    const from = Math.max(1, Math.min(citationHighlight.start_line, maxLine))
+    const to = Math.max(from, Math.min(citationHighlight.end_line, maxLine))
+    collection.set([
       {
         range: { startLineNumber: from, startColumn: 1, endLineNumber: to, endColumn: model.getLineMaxColumn(to) },
         options: { isWholeLine: true, className: 'citation-highlight', inlineClassName: 'citation-line-flash' },
       },
     ])
     instance.revealLineInCenter(from)
-  }, [revealTarget, openFile, file.data])
+    // `ready` is in the deps because clicking a citation from a note view mounts
+    // this pane from scratch: the target is already set by the time Monaco hands
+    // over an editor, so without `ready` the effect ran once against a null ref
+    // and never painted the highlight.
+  }, [citationHighlight, openFile, file.data, ready])
 
   // Outline every conversation range so anchored code is visible without a
   // selection. Runs on card data, file changes and editor (re)creation.
@@ -203,10 +297,13 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     citationRef.current?.clear()
     hoverRef.current?.clear()
     frameRef.current?.clear()
+    pickRef.current?.clear()
+    pickedRef.current = []
     // Zones survive a model swap, so drop the old file's strips before the new
     // cards arrive; otherwise they would sit on lines the new file may not have.
     zonesRef.current?.update([])
     setSelection(null)
+    setPicked(null)
     setHoverRange(null)
   }, [path])
 
@@ -227,14 +324,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         start: card.start_line,
         label: card.note_title ?? card.title,
         active: card.id === activeConversationId,
-        onClick: () => {
-          setActiveConversationId(card.id)
-          setSidebarTab('chats')
-        },
+        onClick: () => focusConversation(card.id),
       })
     }
     return items
-  }, [cards.data, activeConversationId, setActiveConversationId, setSidebarTab])
+  }, [cards.data, activeConversationId, focusConversation])
 
   // Reserve a title strip above every framed range. The zone belongs to the
   // view, not to the model, so it has to be refreshed whenever the cards change
@@ -279,9 +373,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const dirty = git.data?.dirty ?? false
 
   const openConversation = (conversation: Conversation) => {
-    setActiveConversationId(conversation.id)
-    // Show the sidebar's conversation list so the highlighted row is visible.
-    setSidebarTab('chats')
+    focusConversation(conversation.id)
   }
 
   /**
@@ -357,7 +449,39 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         ) : null}
       </div>
 
-      {selection ? (
+      {picked ? (
+        <div className="selection-bar">
+          <span className="lines">
+            <span className="dot" />
+            已选 {picked.lines.length} 行 · {picked.lines.join(', ')}
+          </span>
+          <span className="spacer" />
+          <button
+            className="small primary"
+            onClick={() => {
+              if (!path) return
+              const first = picked.lines[0] ?? 1
+              const last = picked.lines[picked.lines.length - 1] ?? first
+              onAskSelection({ path, start: first, end: last, code: picked.code })
+            }}
+            type="button"
+          >
+            <Icon name="message-plus" size={11} />
+            就这些行提问
+          </button>
+          <button
+            className="small ghost"
+            onClick={() => {
+              pickedRef.current = []
+              pickRef.current?.clear()
+              setPicked(null)
+            }}
+            type="button"
+          >
+            清除
+          </button>
+        </div>
+      ) : selection ? (
         <div className="selection-bar">
           <span className="lines">
             <span className="dot" />
@@ -385,6 +509,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
                 endColumn: 1,
               })
               citationRef.current?.clear()
+              clearCitation()
               setSelection(null)
             }}
             type="button"

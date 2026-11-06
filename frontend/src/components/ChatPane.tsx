@@ -33,6 +33,9 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [noteError, setNoteError] = useState<string | null>(null)
   const [wholeNoteBusy, setWholeNoteBusy] = useState(false)
+  // Off by default so a snippet answer stays on the selected lines; the user
+  // opts in per turn when the question needs the surrounding file.
+  const [useContext, setUseContext] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const chat = useChatStream(activeConversationId, () => bumpRefresh())
@@ -55,6 +58,7 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
       })
       .then((conversation) => {
         if (cancelled) return
+        draftsRef.current.add(conversation.id)
         setActiveConversationId(conversation.id)
         // Refresh so the new snippet shows up as a card in the editor right away.
         bumpRefresh()
@@ -81,6 +85,31 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
     node.scrollTop = node.scrollHeight
   }, [chat.messages.length, chat.stream?.text, chat.interrupt])
 
+  /**
+   * Drop a conversation the user opened but never typed into.
+   *
+   * "新建对话" has to create a row up front so there is something to send into,
+   * which leaves an untouched "全项目对话" behind as soon as the user clicks
+   * another conversation. Every conversation created here is marked as a draft
+   * and unmarked on its first send, so switching away from a still-empty draft
+   * removes it. The backend additionally sweeps old leftovers on startup.
+   */
+  const draftsRef = useRef<Set<string>>(new Set())
+  const activeRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const previous = activeRef.current
+    activeRef.current = activeConversationId
+    if (!previous || previous === activeConversationId) return
+    if (!draftsRef.current.delete(previous)) return
+    void api
+      .deleteConversation(previous)
+      .then(() => bumpRefresh())
+      .catch(() => {
+        /* already gone, or an approval is pending — harmless either way */
+      })
+  }, [activeConversationId, bumpRefresh])
+
   const startProjectConversation = (seed?: string) => {
     if (!project) return
     setCreating(true)
@@ -88,6 +117,7 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
     api
       .createConversation({ project_id: project.id, mode: 'project', title: '全项目对话' })
       .then((conversation) => {
+        draftsRef.current.add(conversation.id)
         setActiveConversationId(conversation.id)
         if (seed) setDraft({ text: seed, nonce: Date.now() })
       })
@@ -262,8 +292,16 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
         busy={chat.busy}
         disabled={!activeConversationId || chat.busy}
         selectionHint={snippetHint ? `片段模式 · ${snippetHint}` : null}
+        contextToggle={Boolean(snippetHint)}
+        useContext={useContext}
+        onToggleContext={setUseContext}
         draft={draft}
-        onSend={chat.send}
+        onSend={(text) => {
+          // Typing into a draft makes it a real conversation; it must not be
+          // swept away the next time the user switches to another one.
+          if (activeConversationId) draftsRef.current.delete(activeConversationId)
+          chat.send(text, { useContext: useContext && Boolean(snippetHint) })
+        }}
         onStop={chat.stop}
       />
     </div>

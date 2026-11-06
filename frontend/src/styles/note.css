@@ -93,6 +93,26 @@
   margin-left: auto;
 }
 
+/* Filing control: the library is organised in user-made folders. */
+.note-reader-folder {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 108px;
+  height: 23px;
+  margin-right: 2px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  background: var(--bg-panel);
+}
+
+@container (max-width: 560px) {
+  .note-reader-folder {
+    max-width: 76px;
+  }
+}
+
 /* Below ~560px the toolbar labels crowd the title, so the action buttons keep
    only their icons (each carries a `title` and an aria-label). */
 @container (max-width: 560px) {

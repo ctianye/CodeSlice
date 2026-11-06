@@ -26,9 +26,16 @@ SNIPPET = """当前对话聚焦在一个代码片段上。
 行范围：{start_line}-{end_line}
 {selection_block}
 
-请围绕这段代码回答。如果用户的问题明显超出这段代码，先说明你还需要看哪里，
-再用 `read_file` 或 `search_code` 去取，而不是猜。
+请围绕这段代码回答。{scope_note}
 """
+
+FOCUS_NOTE = """用户希望只讨论选中的这一段：把它讲透，不要扩展到同文件或项目里的其他代码。
+不要主动调用 `read_file` / `search_code` 去看别处；如果确实缺信息，在回答里说明还缺什么，
+让用户决定要不要打开"联系上下文"再问一次。"""
+
+CONTEXT_NOTE = """如果用户的问题需要更多背景，可以先看同文件其他片段（见下方），必要时用
+`read_file` 或 `search_code` 去取。但重点始终是选中的这段：其他代码只用来解释它，
+不要变成对整个文件的通讲。"""
 
 PROJECT = """当前对话是"项目问答"模式：用户的问题可能涉及多个文件。
 下面是根据问题检索到的相关代码片段（可能不完整，也可能与问题无关，请自行判断）：
@@ -61,7 +68,15 @@ def build_system_prompt(
     context: str,
     project_name: str,
     git_branch: str | None = None,
+    use_context: bool = False,
 ) -> str:
+    """Assemble the system prompt for one turn.
+
+    ``use_context`` is the "联系上下文" switch the UI exposes next to the send
+    button. A snippet conversation defaults to the selected code only: retrieving
+    extra chunks made the model talk about neighbouring files even when the user
+    asked about five lines.
+    """
     parts = [BASE, TOOL_NOTE]
     parts.append(f"项目：{project_name}" + (f"（分支 {git_branch}）" if git_branch else ""))
     if mode == "snippet" and file_path:
@@ -75,9 +90,10 @@ def build_system_prompt(
                 start_line=start_line or 1,
                 end_line=end_line or (start_line or 1),
                 selection_block=selection_block,
+                scope_note=(CONTEXT_NOTE if use_context else FOCUS_NOTE),
             )
         )
-        if context:
+        if use_context and context:
             parts.append("同文件内的其他相关片段：\n" + context)
     else:
         parts.append(PROJECT.format(context=context or "（没有检索到相关片段）"))

@@ -46,6 +46,9 @@ class ConversationCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1)
+    # The "联系上下文" switch next to the send button. Off by default: a snippet
+    # conversation should explain the selected lines, not the whole file.
+    use_context: bool = False
 
 
 class ResumeBody(BaseModel):
@@ -201,7 +204,7 @@ def post_message(conversation_id: str, body: MessageCreate, _: TokenDep) -> Stre
     pending = agent_graph.pending_interrupt(conversation_id)
     if pending:
         raise InvalidInput("waiting for approval on the previous step; call /resume first")
-    stream = agent_graph.start_turn(conversation_id, body.content)
+    stream = agent_graph.start_turn(conversation_id, body.content, use_context=body.use_context)
     return StreamingResponse(_wrap(stream, conversation_id), media_type="text/event-stream", headers=SSE_HEADERS)
 
 

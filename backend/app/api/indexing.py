@@ -36,6 +36,15 @@ def index_status(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
             "SELECT COUNT(*) AS n, MAX(indexed_at) AS last FROM indexed_files WHERE project_id = ?",
             (project["id"],),
         ).fetchone()
+        # Cumulative size of the project's index. The last job's stats only
+        # describe that run ("7 files changed"), which made a warm index look
+        # empty in the sidebar.
+        totals = conn.execute(
+            "SELECT COUNT(*) AS chunks,"
+            " SUM(CASE WHEN embed_model IS NOT NULL AND embed_model <> '' THEN 1 ELSE 0 END) AS vectors"
+            " FROM chunks WHERE project_id = ?",
+            (project["id"],),
+        ).fetchone()
         # Which embedding models produced the stored vectors. More than one row
         # means the index is mid-migration and only a rebuild makes it uniform.
         models = conn.execute(
@@ -47,6 +56,8 @@ def index_status(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
         "project": project,
         "last_job": job,
         "files": int(indexed["n"]) if indexed else 0,
+        "chunks": int(totals["chunks"] or 0) if totals else 0,
+        "vectors": int(totals["vectors"] or 0) if totals else 0,
         "indexed_at": indexed["last"] if indexed else None,
         "embed_models": sorted(str(m["embed_model"]) for m in models),
         "active_embed_model": embeddings.embedding_model_name(),
