@@ -1,8 +1,5 @@
 import type { editor as MonacoEditor } from 'monaco-editor'
 
-/** A drag that ends within this many pixels of its start is a click, not a select. */
-const DRAG_THRESHOLD_PX = 3
-
 export interface GutterSelectionDeps {
   editor: MonacoEditor.IStandaloneCodeEditor
   /**
@@ -21,10 +18,15 @@ export interface GutterSelectionDeps {
  * Make the line-number gutter support click, shift-click and drag selection.
  *
  * Monaco can select a line when its number is clicked (`selectOnLineNumbers`),
- * but that path only ever selects one line and it fights the editor's own drag
- * handling. This reads the gutter's own mouse events instead and drives
- * `setSelection` directly, so a press-move-release over the numbers sweeps a
- * range the same way dragging over the text does.
+ * but that path can only ever pick one line and it fights the picker in
+ * `CodePane`. This reads the gutter's own mouse events instead: a click toggles
+ * one line in the picked set, and a press-move-release that reaches another line
+ * sweeps a contiguous range the same way dragging over the text does.
+ *
+ * "Another line" is measured by line number, not by pixels. A few pixels of
+ * travel during a click is normal, and treating that as a drag would replace the
+ * whole picked set with a one-line range — which made accumulating lines look
+ * like it silently stopped working.
  *
  * The line under the cursor comes from `getTargetAtClientPoint`, not from
  * dividing pixels by a line height: padding, wrapping and scroll are already
@@ -41,7 +43,7 @@ export function attachGutterSelection({
   const gutter = node?.querySelector<HTMLElement>('.margin-view-overlays') ?? null
   if (!node || !gutter) return () => {}
 
-  let pressed: { line: number; x: number; y: number } | null = null
+  let pressed: { line: number } | null = null
   let dragging = false
   /** Pending rAF handle so a drag writes at most one selection per frame. */
   let frame: number | null = null
@@ -87,31 +89,38 @@ export function attachGutterSelection({
   const onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0 || !insideGutter(event)) return
     const line = lineAt(event)
+    // Take the press away from Monaco. Its own gutter handling moves the cursor
+    // (and, with `selectOnLineNumbers` on, sets a whole-line selection), and a
+    // selection change would wipe the picker's accumulated lines before the
+    // click is even registered.
+    event.preventDefault()
+    event.stopPropagation()
     if (event.shiftKey) {
       // Shift-click extends the existing range instead of starting over.
       const anchor = editor.getSelection()?.positionLineNumber ?? line
       select(anchor, line)
-      event.preventDefault()
       pressed = null
       return
     }
-    pressed = { line, x: event.clientX, y: event.clientY }
+    pressed = { line }
     dragging = false
   }
 
   const onMouseMove = (event: MouseEvent) => {
     if (!pressed) return
+    // A drag means the pointer reached a *different* line, not that the mouse
+    // twitched. Measuring pixels would turn a shaky click on one line into a
+    // one-line range selection, which silently replaces the picked set — the
+    // reason clicking two lines quickly could look like it never accumulated.
+    const current = lineAt(event)
     if (!dragging) {
-      const moved =
-        Math.abs(event.clientX - pressed.x) > DRAG_THRESHOLD_PX ||
-        Math.abs(event.clientY - pressed.y) > DRAG_THRESHOLD_PX
-      if (!moved) return
+      if (current === pressed.line) return
       dragging = true
     }
     // Track the drag live so the selection bar updates while sweeping, but only
     // once per frame: `setSelection` re-renders the pane, and mouse moves arrive
     // far faster than the display can show them.
-    pending = { from: pressed.line, to: lineAt(event) }
+    pending = { from: pressed.line, to: current }
     if (frame === null) {
       frame = window.requestAnimationFrame(() => {
         frame = null
@@ -132,6 +141,11 @@ export function attachGutterSelection({
     }
     if (dragging) {
       dragging = false
+      // Same line after all (the sweep came back): treat it as a click.
+      if (lineAt(event) === start.line) {
+        select(start.line, start.line, true)
+        return
+      }
       select(start.line, lineAt(event))
       return
     }

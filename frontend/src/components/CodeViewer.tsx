@@ -38,9 +38,14 @@ export const CodeViewer = memo(function CodeViewer({
         domReadOnly: true,
         lineNumbers: 'on',
         lineNumbersMinChars: 4,
-        // Clicking a gutter number selects that whole line; shift-click and
-        // dragging from the gutter then extend the selection line by line.
-        selectOnLineNumbers: true,
+        // Gutter clicks are handled by attachGutterSelection in CodePane: it
+        // turns line numbers into a picker (click adds a line, clicking it again
+        // removes it) and sweeps a range on drag. Monaco's own
+        // `selectOnLineNumbers` must stay off here, because it sets a whole-line
+        // selection on every gutter click and that selection change wipes the
+        // picked set right before the click handler runs, so lines could never
+        // accumulate.
+        selectOnLineNumbers: false,
         // Occurrence highlighting re-scans the whole buffer on every selection
         // change, which is what made dragging feel sticky on large files.
         occurrencesHighlight: 'off',
