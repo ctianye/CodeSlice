@@ -6,7 +6,10 @@ import { usePersistedState } from '../hooks/useAsync'
 export type AppTheme = 'dark' | 'light'
 
 /** Sidebar views, shared so a code card can jump to the notes panel. */
-export type SidebarTab = 'files' | 'chats' | 'notes' | 'anchors' | 'graph'
+export type SidebarTab = 'files' | 'chats' | 'notes' | 'anchors'
+
+/** Runtime list of the valid tab ids, used to validate the persisted value. */
+const SIDEBAR_TABS: SidebarTab[] = ['files', 'chats', 'notes', 'anchors']
 
 /** A request to reveal + highlight a line range in the editor. */
 export interface RevealTarget extends Citation {
@@ -121,7 +124,13 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
   const [refreshKey, setRefreshKey] = useState(0)
   const [conversationFocusNonce, setConversationFocusNonce] = useState(0)
   const [theme, setTheme] = usePersistedState<AppTheme>('codeslice.theme', 'light')
-  const [sidebarTab, setSidebarTabState] = usePersistedState<SidebarTab>('codeslice.sidebarTab', 'files')
+  const [storedSidebarTab, setSidebarTabState] = usePersistedState<SidebarTab>('codeslice.sidebarTab', 'files')
+  /**
+   * The tab id is persisted, so a build that once had a now-removed tab can
+   * leave that id in localStorage. Falling back keeps the sidebar from
+   * rendering nothing at all with no tab highlighted.
+   */
+  const sidebarTab: SidebarTab = SIDEBAR_TABS.includes(storedSidebarTab) ? storedSidebarTab : 'files'
   const [focusNoteId, setFocusNoteId] = useState<number | null>(null)
 
   useEffect(() => {

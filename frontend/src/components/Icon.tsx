@@ -53,7 +53,6 @@ export type IconName =
   | 'code'
   | 'corner-down-left'
   | 'download'
-  | 'workflow'
 
 const PATHS: Record<IconName, ReactNode> = {
   'chevron-right': <path d="m9 18 6-6-6-6" />,
@@ -247,15 +246,6 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   code: <path d="m8 7-5 5 5 5M16 7l5 5-5 5" />,
-  workflow: (
-    <>
-      <rect x="3" y="4" width="6" height="5" rx="1.5" />
-      <rect x="15" y="4" width="6" height="5" rx="1.5" />
-      <rect x="9" y="15" width="6" height="5" rx="1.5" />
-      <path d="M9 6.5h6" />
-      <path d="M6 9v3.5a1 1 0 0 0 1 1h1.5M18 9v3.5a1 1 0 0 1-1 1h-1.5" />
-    </>
-  ),
   'corner-down-left': (
     <>
       <path d="M20 5v6a4 4 0 0 1-4 4H4" />

@@ -33,7 +33,6 @@ CodeSlice 是一个跑在你机器上的 Electron 桌面程序 + 本地 Python �
 | **多标签编辑器** | 像 VS Code 那样同时开多个文件和笔记，标签可拖拽排序、中键或 × 关闭、右键「关闭其他」。点笔记里的引用会新开一个代码标签，原来的笔记不会消失。 |
 | **集成终端** | 编辑器下方可展开的终端，直接跑命令；输出逐行流式到达，可拖拽调高、↑↓ 翻历史。 |
 | **AI 可执行命令** | 对话里模型调 `run_command` 走的审批卡与终端是同一套沙箱：同一份危险命令黑名单，同一条 `command_rules` 授权规则。 |
-| **工作流面板** | 侧栏「工作流」把 LangGraph 的四个节点（准备上下文 / 模型推理 / 执行工具 / 收尾）画成流程图，每个节点可改自己的参数，保存后下一轮生效。 |
 | **可溯源的引用** | 每条回答附 `文件:行号` 引用块，点击直接跳转并用左侧色条标出范围；再点同一个引用块取消标亮。 |
 | **混合检索** | SQLite FTS5 关键词检索 + numpy 余弦相似度语义检索，结果融合排序。 |
 | **结构化索引** | Tree-sitter 解析 Python / TS / JS / Go / Rust / Java / C / C++ / JSON / Bash，按函数、类、模块切块。 |
@@ -115,7 +114,7 @@ CodeSplit/
 ├── backend/                  # 本地 Python 服务
 │   ├── app/
 │   │   ├── main.py           # FastAPI 入口 + CODESLICE_READY 握手
-│   │   ├── api/              # 路由：projects / indexing / conversations / notes / terminal / graph_api ...
+│   │   ├── api/              # 路由：projects / indexing / conversations / notes / terminal ...
 │   │   ├── agent/            # LangGraph 图、工具、prompts、checkpoint、节点配置
 │   │   ├── core/             # 配置、SQLite、错误类型
 │   │   ├── indexing/         # 语言识别、Tree-sitter 切块、索引器
@@ -129,7 +128,7 @@ CodeSplit/
 │   └── .venv/                # uv 管理的虚拟环境（Python 3.11）
 ├── frontend/                 # Vite + React 渲染进程
 │   └── src/
-│       ├── components/       # FileTree / CodeViewer / ChatPane / EditorTabs / TerminalPanel / GraphPanel ...
+│       ├── components/       # FileTree / CodeViewer / ChatPane / EditorTabs / TerminalPanel ...
 │       ├── api.ts            # HTTP 客户端
 │       └── bridge.ts         # Electron preload 桥接
 ├── desktop/                  # Electron 主进程 + 打包配置
@@ -358,9 +357,10 @@ CodeSlice 按「不信任本地服务的调用方」来设计——因为同一�
   「关闭其他」；点笔记里的引用会新开一个代码标签而不是把笔记顶掉
 - 集成终端：编辑器下方可展开，命令输出逐行流式到达（不是跑完一次性刷出），可拖拽调高、
   ↑↓ 翻历史、运行中可停止；与 AI 的 `run_command` 共用同一份危险命令黑名单
-- 工作流面板：侧栏「工作流」画出 LangGraph 的四个节点与它们之间的条件边，每个节点可改
-  自己的参数（检索段数、模型、temperature、输出上限、追加指令、工具轮数上限、是否自动
-  重拟标题），保存后下一轮对话生效，拓扑本身不可改
+- Agent 工作流可配置：LangGraph 四个节点（准备上下文 / 模型推理 / 执行工具 / 收尾）的参数
+  （检索段数、模型、temperature、输出上限、追加指令、工具轮数上限、是否自动重拟标题）
+  通过 `GET/PUT /api/agent/graph` 读写，存在 `settings` 表的 `agent.node_config` 键里，
+  改完下一轮对话生效，不用重启后端
 - 模型配置（OpenAI 兼容 / Anthropic）+ 连通性测试
 - 本地向量模型一键下载：设置页内置 `bge-m3` / `qwen3-embedding:0.6b` 两个预设，
   通过本机 Ollama 下载并自动写入 Embedding 配置（切换模型后提示重建索引）
@@ -517,15 +517,16 @@ Base URL：
   管道表格），不做完整 Markdown（无 HTML 透传）；引用以可点击的「路径:行号」小片呈现。
   围栏按「长度 ≥ 开栏」匹配闭合，因此引用自带 ``` 的 Markdown 片段不会提前截断。
 - 代码对话卡按「行范围完全相等」分组：`L12–20` 与 `L13–20` 会被算作两组，不会合并。
-- 侧栏「文件 / 对话 / 笔记 / 锚点 / 工作流」是标签页切换，不是全部堆叠展示。
+- 侧栏「文件 / 对话 / 笔记 / 锚点」是标签页切换，不是全部堆叠展示。
 - 编辑器是「一条标签栏 + 一个可见面板」：同时开多个文件/笔记时只有一个在上层，切换靠标签；
   没有 VS Code 那样的左右分屏。
 - 终端**不是 PTY**：命令一次性执行、彼此独立，所以 `cd` 不跨命令保留、`vim` 这类全屏程序
   不能用，输出按纯文本渲染（不解析 ANSI 颜色）。
 - 终端历史只在内存里（每项目 200 条），重启即清空——命令行可能带 `-H` token，不能落进
   明文 SQLite。
-- 工作流面板改的是节点参数，不是拓扑：边的走向固定（`prepare → agent ⇄ run_one → finalize`），
-  没有拖拽连线的画布；节点上的运行统计是进程内的上一轮数字，不持久化。
+- Agent 工作流改的是节点参数，不是拓扑：边的走向固定（`prepare → agent ⇄ run_one → finalize`），
+  没有前端画布也没有拖拽连线，参数通过 API 读写；节点上的运行统计是进程内的上一轮数字，
+  不持久化。
 - 引用标亮的状态放在 `AppState` 而不是编辑器组件里：从笔记点引用会卸载阅读器、重建编辑器，
   组件内的 ref 会归零，「再点一次取消」就永远失效了。
 - 行号点选是累积的，没有「单击只选这一行」的快捷方式；想从头开始选就点「清除」或直接在

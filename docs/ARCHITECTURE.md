@@ -63,7 +63,7 @@ docs/                   本文件与 API_CONTRACT.md
 9. **标题由内容决定**：会话与笔记的标题都从回答内容提炼（`notegen.title_from_answer` 不调模型，`retitle` 才调），占位标题（`新对话`、`foo.py:12-30`）在 `finalize` 里被替换并 emit `status.stage="title"`；用户手改过的标题永不覆盖。历史对话不会再走 `finalize`，所以启动时由 `backfill_conversation_titles()` 补一次（优先取该对话笔记的标题，其次取最后一条回答；改写不碰 `updated_at`，避免历史对话被顶到侧栏最上面）。
 10. **编辑器是多标签但单面板**：`AppState` 里存 `tabs: EditorTab[]` + `activeTabIndex`，`openFile` / `noteView` 降级为 `activeTab` 的 `useMemo` 派生值——这样二十多处消费者（CodePane、NoteReader、FileTree、NotesPanel…）不必知道标签的存在，行为和单文档时完全一致。点笔记里的引用会把文件**追加**成新标签而不是替换当前笔记，避免「看引用就丢掉正在读的笔记」。
 11. **终端与 Agent 共用一套命令策略**：危险命令黑名单（`services/sandbox.py` 的 `BLOCKED_FRAGMENTS`）是同一个对象，AI 的 `run_command` 和用户在终端敲的命令命中同一份名单；终端历史只放内存环形缓冲（命令可能带 `-H` token，不能进明文 SQLite）。实现是 `Popen(shell=True)` + 读线程 + `queue` 的真流式，不是 PTY，因此没有跨命令的 shell 状态。
-12. **工作流节点可配、拓扑不可改**：`agent/node_config.py` 的 `NODES` 既是默认值表也是表单 schema，`GET /api/agent/graph` 直接序列化它，节点在运行时读自己的合并配置（存在 `settings` 表的 `agent.node_config` 一个 JSON 键里），所以保存后下一轮即刻生效、无需重启；边的走向由 `graph.py` 固定，面板只做只读镜像。选这个而不是画布编辑，是因为拓扑稳定对 Agent 的可预测性更重要，而画布编辑器成本高且容易让用户连出不可用的图。
+12. **工作流节点可配、拓扑不可改，且只有后端接口**：`agent/node_config.py` 的 `NODES` 既是默认值表也是校验 schema，`GET /api/agent/graph` 直接序列化它，节点在运行时读自己的合并配置（存在 `settings` 表的 `agent.node_config` 一个 JSON 键里），所以保存后下一轮即刻生效、无需重启；边的走向由 `graph.py` 固定。这条能力**只暴露成后端 HTTP 接口**，桌面前端不再画流程图——用户要调的是 LangGraph 这一层的行为，不需要在界面上看一张只读的拓扑图。
 
 ## 分层边界
 

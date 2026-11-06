@@ -282,11 +282,14 @@ data: {"type": "error", "detail": "已拒绝执行：该命令命中内置的危
 ### POST /api/projects/{project_id}/terminal/cancel
 → `{"ok": true, "cancelled": int}`（该项目的活动子进程数，空闲时 0）。
 
-## 8. Agent 工作流节点配置
+## 8. Agent 工作流节点配置（仅后端接口）
 
 图拓扑是**固定的**（`prepare → agent ⇄ run_one → finalize`），可改的是每个节点的行为；
 配置存在 `settings` 表的 `agent.node_config` 一个 JSON 键下，每一轮节点运行时才读取，
 所以保存后**下一轮对话立即生效，不需要重启**。
+
+这一节只有 HTTP 接口，桌面前端**没有**对应的流程图界面：想改节点参数直接调下面两条路由
+（`curl` / 脚本 / 未来的设置页都行）。
 
 ### GET /api/agent/graph
 ```json
