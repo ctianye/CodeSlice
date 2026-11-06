@@ -38,13 +38,12 @@
 }
 
 /* The strip scrolls with the wheel; a visible bar would just add noise. */
-.editor-tabs-strip::-webkit-scrollbar {
-  height: 2px;
+.editor-tabs-strip {
+  scrollbar-width: none;
 }
 
-.editor-tabs-strip::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--border) 80%, transparent);
-  border-radius: 2px;
+.editor-tabs-strip::-webkit-scrollbar {
+  height: 0;
 }
 
 /* Placeholder so an empty strip still reads as a strip instead of a gap. */
