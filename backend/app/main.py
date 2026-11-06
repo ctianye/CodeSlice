@@ -30,6 +30,7 @@ from app.api import settings as settings_api
 from app.core.config import APP_NAME, VERSION, settings
 from app.core.db import init_db
 from app.core.errors import AppError
+from app.services import notegen
 from app.storage import repo
 
 log = logging.getLogger("codeslice")
@@ -70,6 +71,15 @@ async def lifespan(_: FastAPI):
             log.info("removed %d abandoned conversation(s)", removed)
     except Exception:  # cleanup must never block startup
         log.warning("empty-conversation cleanup failed", exc_info=True)
+    # Conversations from before titles came from the answer keep their placeholder
+    # forever, because only a new turn re-titles a conversation. Fixing them once
+    # here costs one pass over the table and leaves user-typed titles alone.
+    try:
+        retitled = notegen.backfill_conversation_titles()
+        if retitled:
+            log.info("retitled %d conversation(s) from their answers", retitled)
+    except Exception:  # a stale title is cosmetic, never a startup failure
+        log.warning("conversation title backfill failed", exc_info=True)
     log.info("%s %s starting, data_dir=%s", APP_NAME, VERSION, settings.data_dir)
     yield
     log.info("shutting down")

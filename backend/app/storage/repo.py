@@ -240,6 +240,16 @@ def rename_conversation(conversation_id: str, title: str) -> None:
         )
 
 
+def set_conversation_title(conversation_id: str, title: str) -> None:
+    """Rewrite a title without touching ``updated_at``.
+
+    Used by the one-off title backfill: those conversations are old, and letting
+    the rewrite bump ``updated_at`` would shuffle the whole sidebar to the top.
+    """
+    with write_conn() as conn:
+        conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
+
+
 def touch_conversation(conversation_id: str) -> None:
     with write_conn() as conn:
         conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (utcnow(), conversation_id))

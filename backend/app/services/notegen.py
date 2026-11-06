@@ -592,6 +592,18 @@ def is_auto_title(title: str | None) -> bool:
     return bool(_AUTO_TITLE_RE.match((title or "").strip()))
 
 
+# Openers that mean "this turn produced no content", never a knowledge point. The
+# graph substitutes an apology for an empty model reply, and that apology would
+# otherwise become the conversation title.
+_APOLOGY_PREFIXES = ("抱歉", "对不起", "不好意思")
+# First-person narration ("我已经把整条链路摸清楚了。") opens many answers but
+# describes the assistant's process, not the code. Titles skip those lines and
+# take the first claim that actually says something.
+_NARRATION_RE = re.compile(
+    r"^(?:好的|好，|明白|当然|没问题|让我|我先|我来|我已经|我看了|我看过|我查了|接下来|综上|总结一下|简单说)"
+)
+
+
 def title_from_answer(answer: str) -> str:
     """Cheap knowledge-point title taken from the first line of an answer.
 
@@ -603,10 +615,49 @@ def title_from_answer(answer: str) -> str:
         text = _MARKUP_RE.sub("", _HEADING_RE.sub(r"\1", line)).strip()
         if len(text) < 4:
             continue
+        if text.startswith(_APOLOGY_PREFIXES) or _NARRATION_RE.match(text):
+            continue
         title = _clean_title(text)
         if title:
             return title
     return ""
+
+
+def backfill_conversation_titles() -> int:
+    """Re-title conversations that still carry an app placeholder.
+
+    Conversations written before titles were derived from the answer never go
+    through the graph's ``finalize`` again, so their placeholder stays forever
+    ("关于 README.md 第 357-359 行"). This walks them once at startup: a note that
+    was already generated for the conversation has the best title available (the
+    model wrote it), and otherwise the first usable line of the last answer is
+    used. When the turn never produced an answer (only an apology, or the user
+    stopped typing), the question itself is the only thing that describes the
+    session, so it becomes the title. Titles the user typed are never touched.
+    Returns how many changed.
+    """
+    changed = 0
+    for conversation in repo.list_conversations():
+        if not is_auto_title(conversation.get("title")):
+            continue
+        title = ""
+        note = repo.find_note_for_conversation(conversation["id"])
+        if note is not None:
+            title = _clean_title(str(note.get("title") or ""))
+        if not title:
+            messages = repo.list_messages(conversation["id"])
+            answer = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+            if answer is not None:
+                title = title_from_answer(str(answer.get("content") or ""))
+            if not title:
+                asked = next((m for m in messages if m.get("role") == "user"), None)
+                if asked is not None:
+                    title = title_from_answer(str(asked.get("content") or ""))
+        if not title or title == conversation.get("title"):
+            continue
+        repo.set_conversation_title(conversation["id"], title)
+        changed += 1
+    return changed
 
 
 def _index_note(note: dict[str, Any]) -> bool:

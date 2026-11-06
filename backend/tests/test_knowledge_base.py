@@ -175,3 +175,78 @@ def test_the_conversation_being_typed_into_is_still_listed(tmp_path, conn_reset)
     drafted = repo.create_conversation(project["id"], "全项目对话", mode="project")
     # The sidebar has to show it, otherwise "新建对话" looks broken until send.
     assert [c["id"] for c in repo.list_conversations(project["id"])] == [drafted["id"]]
+
+
+# --------------------------------------------------------------------------- #
+# title backfill for conversations that never see another turn
+# --------------------------------------------------------------------------- #
+def test_old_placeholders_are_retitled_from_their_last_answer(tmp_path, conn_reset):
+    project = _project(tmp_path, "proj")
+    older = repo.create_conversation(
+        project["id"],
+        "关于 README.md 第 357-359 行",
+        mode="snippet",
+        file_path="README.md",
+        start_line=357,
+        end_line=359,
+    )
+    repo.add_message(older["id"], "user", "这段在讲什么")
+    repo.add_message(older["id"], "assistant", "## 中断恢复靠 checkpoint\n\n旧的一轮")
+    repo.add_message(older["id"], "user", "再说说")
+    repo.add_message(older["id"], "assistant", "恢复时从 checkpoint 重放状态")
+
+    assert notegen.backfill_conversation_titles() == 1
+    assert repo.get_conversation(older["id"])["title"] == "恢复时从 checkpoint 重放状态"
+
+
+def test_backfill_leaves_user_titles_and_untouched_conversations_alone(tmp_path, conn_reset):
+    project = _project(tmp_path, "proj")
+    named = repo.create_conversation(project["id"], "我自己的标题", mode="project")
+    repo.add_message(named["id"], "assistant", "随便聊聊")
+    blank = repo.create_conversation(project["id"], "全项目对话", mode="project")
+
+    assert notegen.backfill_conversation_titles() == 0
+    assert repo.get_conversation(named["id"])["title"] == "我自己的标题"
+    assert repo.get_conversation(blank["id"])["title"] == "全项目对话"
+
+
+def test_backfill_falls_back_to_the_question_when_no_answer_was_written(tmp_path, conn_reset):
+    project = _project(tmp_path, "proj")
+    unanswered = repo.create_conversation(project["id"], "全项目对话", mode="project")
+    repo.add_message(unanswered["id"], "user", "解释一下 Agent 的审批流程是怎么实现的")
+
+    # A turn that never produced an answer still says what the session is about.
+    assert notegen.backfill_conversation_titles() == 1
+    assert repo.get_conversation(unanswered["id"])["title"] == "解释一下 Agent 的审批流程是怎么实现的"
+
+
+def test_backfill_ignores_the_apology_the_graph_saves_on_empty_output(tmp_path, conn_reset):
+    project = _project(tmp_path, "proj")
+    empty = repo.create_conversation(project["id"], "全项目对话", mode="project")
+    repo.add_message(empty["id"], "assistant", "抱歉，这一轮没有生成有效内容，请重试")
+
+    assert notegen.backfill_conversation_titles() == 0
+    assert repo.get_conversation(empty["id"])["title"] == "全项目对话"
+
+
+def test_backfill_skips_first_person_narration_and_reads_on(tmp_path, conn_reset):
+    project = _project(tmp_path, "proj")
+    conversation = repo.create_conversation(project["id"], "全项目对话", mode="project")
+    repo.add_message(
+        conversation["id"],
+        "assistant",
+        "我已经把笔记的完整链路摸清楚了。现在可以给你一个准确的回答\n\n## 笔记落库靠 code_anchors 关联\n",
+    )
+
+    assert notegen.backfill_conversation_titles() == 1
+    assert repo.get_conversation(conversation["id"])["title"] == "笔记落库靠 code_anchors 关联"
+
+
+def test_backfill_prefers_the_title_of_a_note_saved_from_the_conversation(tmp_path, conn_reset):
+    project = _project(tmp_path, "proj")
+    conversation = repo.create_conversation(project["id"], "关于 README.md 第 357-359 行", mode="project")
+    repo.add_message(conversation["id"], "assistant", "随便一句临时回答")
+    repo.create_note(project["id"], "中断后在 checkpoint 上恢复", "# 中断后在 checkpoint 上恢复\n", conversation["id"])
+
+    assert notegen.backfill_conversation_titles() == 1
+    assert repo.get_conversation(conversation["id"])["title"] == "中断后在 checkpoint 上恢复"
