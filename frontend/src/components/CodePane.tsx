@@ -194,8 +194,10 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       setReady(true)
 
       const selectionListener = instance.onDidChangeCursorSelection(() => scheduleSelection(instance))
-      // Clicking a line number selects that line; dragging over the numbers sweeps
-      // a range. Monaco's `selectOnLineNumbers` can only ever pick one line.
+      // Line numbers are a picker: each click adds a line to the set, clicking it
+      // again removes it, and dragging over the numbers sweeps a range. Monaco's
+      // own `selectOnLineNumbers` is off (see CodeViewer) because it would set a
+      // whole-line selection on every press and that would clear the set.
       const detachGutter = attachGutterSelection({
         editor: instance,
         onSelectLine: (line, additive) => {
