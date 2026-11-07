@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from app.indexing import indexer
@@ -45,6 +46,71 @@ def test_keyword_search_finds_symbol(project: dict):
     assert hits
     assert any("sample.py" in h["path"] for h in hits)
     assert all({"path", "start_line", "end_line", "content", "score"} <= set(h) for h in hits)
+
+
+def test_vector_search_ignores_vectors_from_a_different_embedding_model(project: dict, monkeypatch):
+    from app.core.db import get_conn, write_conn
+    from app.models import embeddings
+
+    indexer.index_project(project["id"])
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id, path FROM chunks WHERE project_id = ? ORDER BY id", (project["id"],)).fetchall()
+    active_id, stale_id = int(rows[0]["id"]), int(rows[1]["id"])
+    with write_conn() as conn:
+        conn.execute(
+            "UPDATE chunks SET embed_model = ?, vector = ? WHERE id = ?",
+            ("active-model", embeddings.pack([1.0, 0.0]), active_id),
+        )
+        conn.execute(
+            "UPDATE chunks SET embed_model = ?, vector = ? WHERE id = ?",
+            ("old-model", embeddings.pack([0.0, 1.0]), stale_id),
+        )
+    monkeypatch.setattr(embeddings, "embedding_model_name", lambda: "active-model")
+    monkeypatch.setattr(embeddings, "embed_query", lambda _: [1.0, 0.0])
+
+    hits = hybrid.vector_search(project["id"], "query", limit=10)
+
+    assert [hit["chunk_id"] for hit in hits] == [active_id]
+
+
+def test_index_jobs_are_deduplicated_per_project(project: dict, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_index(project_id: int, job_id=None, force=False):
+        entered.set()
+        release.wait(timeout=5)
+        return {}
+
+    monkeypatch.setattr(indexer, "index_project", slow_index)
+    first = indexer.start_index_job(project["id"])
+    assert entered.wait(timeout=1)
+    second = indexer.start_index_job(project["id"], queue_after_current=True)
+    assert second == first
+    release.set()
+
+
+def test_project_watcher_schedules_a_background_incremental_job(project: dict, monkeypatch):
+    watching = threading.Event()
+    changed = threading.Event()
+    queued: list[int] = []
+
+    def fake_watch(*args, **kwargs):
+        watching.set()
+        changed.wait(timeout=2)
+        yield set()
+
+    monkeypatch.setattr(indexer, "watch", fake_watch)
+    monkeypatch.setattr(indexer, "start_index_job", lambda project_id, **_: queued.append(project_id) or 1)
+    indexer.watch_project(project["id"])
+    assert watching.wait(timeout=1)
+    changed.set()
+    for _ in range(50):
+        if queued:
+            break
+        threading.Event().wait(0.02)
+    indexer.stop_project_watcher(project["id"])
+    assert queued == [project["id"]]
 
 
 def test_search_without_index_returns_empty(project: dict):

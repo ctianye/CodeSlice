@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from '../api'
-import type { EmbeddingConfig, IndexStatus, ModelSettings, OllamaPreset, OllamaStatus } from '../types'
+import type { EmbeddingConfig, ModelSettings, OllamaPreset, OllamaPullStatus, OllamaStatus } from '../types'
 import { openExternal } from '../bridge'
-import { useApp } from '../state/AppState'
 import { ErrorNote, Loading } from './Feedback'
 import { Icon } from './Icon'
 
@@ -27,7 +26,6 @@ interface VectorModelsPanelProps {
  * downloads), so "使用此模型" is the single place a switch happens.
  */
 export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelProps): ReactNode {
-  const { project, bumpRefresh } = useApp()
   const [status, setStatus] = useState<OllamaStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -39,8 +37,6 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
   const [applying, setApplying] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [rebuildNeeded, setRebuildNeeded] = useState(false)
-  const [rebuilding, setRebuilding] = useState(false)
 
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [advModel, setAdvModel] = useState(embedding?.model ?? '')
@@ -49,6 +45,7 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
   const [savingAdvanced, setSavingAdvanced] = useState(false)
 
   const pullController = useRef<AbortController | null>(null)
+  const completedPullRef = useRef<string | null>(null)
 
   const loadStatus = useCallback(() => {
     setLoading(true)
@@ -69,6 +66,44 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
     loadStatus()
   }, [loadStatus])
 
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | null = null
+
+    const syncPull = async () => {
+      let current: OllamaPullStatus
+      try {
+        current = await api.getOllamaPullStatus()
+      } catch {
+        return
+      }
+      if (cancelled) return
+      if (current.state === 'running' && current.model) {
+        setPulling(current.model)
+        setProgress({ percent: current.percent, detail: current.detail })
+        timer = window.setTimeout(() => void syncPull(), 900)
+        return
+      }
+
+      setPulling(null)
+      setProgress(EMPTY_PROGRESS)
+      if (current.state === 'error') setPullError(current.error ?? current.detail ?? '下载失败')
+      if (current.state === 'done' && current.model) {
+        setMessage(`${current.model} 已下载完成，点击「使用此模型」启用。`)
+        if (completedPullRef.current !== current.model) {
+          completedPullRef.current = current.model
+          loadStatus()
+        }
+      }
+    }
+
+    void syncPull()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [loadStatus])
+
   useEffect(
     () => () => {
       pullController.current?.abort()
@@ -79,28 +114,6 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
   const applyPreset = async (preset: OllamaPreset) => {
     const baseUrl = status?.openai_base_url ?? 'http://127.0.0.1:11434/v1'
 
-    // Switching models makes the stored vectors incomparable with new query
-    // vectors, so a rebuild is required — warn before the user loses nothing
-    // silently and gets keyword-only retrieval back.
-    //
-    // The authority here is the *index*, not `project.indexed_at`: that field is
-    // a snapshot taken when the project was loaded, so it is still null right
-    // after the user indexed the project in this same session. Ask the server
-    // which models the chunks actually carry.
-    if (project) {
-      try {
-        const info: IndexStatus = await api.getIndexStatus(project.id)
-        const stale = info.embed_models.filter((name) => name !== preset.model)
-        if (stale.length > 0) {
-          const proceed = window.confirm('切换向量模型后需重建索引才能生效，是否继续？')
-          if (!proceed) return
-          setRebuildNeeded(true)
-        }
-      } catch {
-        /* the confirmation is advisory: never block a switch on a probe failure */
-      }
-    }
-
     setApplying(preset.model)
     setActionError(null)
     setMessage(null)
@@ -109,7 +122,7 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
         embedding: { model: preset.model, base_url: baseUrl, api_key: 'ollama' },
       })
       onChanged(next)
-      setMessage(`已切换到 ${preset.label}，新索引将使用该模型生成向量。`)
+      setMessage(`已切换到 ${preset.label}，现有项目会在后台自动更新向量。`)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -124,11 +137,13 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
     pullController.current = controller
 
     setPulling(preset.model)
+    completedPullRef.current = null
     setPullError(null)
     setMessage(null)
     setProgress(EMPTY_PROGRESS)
 
     try {
+      let failed = false
       for await (const event of api.pullOllamaModel(preset.model, controller.signal)) {
         if (controller.signal.aborted) return
         if (event.type === 'progress') {
@@ -137,12 +152,15 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
             detail: event.detail ?? event.status ?? '',
           })
         } else if (event.type === 'error') {
+          failed = true
           setPullError(event.detail ?? '下载失败')
         } else {
           break
         }
       }
-      setMessage(`${preset.label} 已下载完成，点击「使用此模型」启用。`)
+      if (!failed && !controller.signal.aborted) {
+        setMessage(`${preset.label} 已下载完成，点击「使用此模型」启用。`)
+      }
     } catch (err) {
       if (!controller.signal.aborted) {
         setPullError(err instanceof Error ? err.message : String(err))
@@ -153,22 +171,6 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
         setProgress(EMPTY_PROGRESS)
         loadStatus()
       }
-    }
-  }
-
-  const rebuild = async () => {
-    if (!project) return
-    setRebuilding(true)
-    setActionError(null)
-    try {
-      await api.startIndex(project.id)
-      bumpRefresh()
-      setRebuildNeeded(false)
-      setMessage('已开始重建索引，可在左侧文件面板查看进度。')
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRebuilding(false)
     }
   }
 
@@ -185,7 +187,7 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
       const next = await api.updateModelSettings({ embedding: body })
       onChanged(next)
       setAdvApiKey('')
-      setMessage('已保存手动配置的向量模型。')
+      setMessage('已保存向量模型配置，现有项目会在后台自动更新向量。')
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -324,17 +326,6 @@ export function VectorModelsPanel({ embedding, onChanged }: VectorModelsPanelPro
 
       {pullError ? <ErrorNote message={pullError} /> : null}
       {actionError ? <ErrorNote message={actionError} /> : null}
-
-      {rebuildNeeded && project ? (
-        <div className="test-result err">
-          <Icon name="alert" size={12} />
-          <span className="grow">当前项目的向量还是用旧模型生成的，检索前需要重建索引。</span>
-          <button className="small" onClick={() => void rebuild()} disabled={rebuilding} type="button">
-            <Icon name="refresh" size={11} />
-            {rebuilding ? '正在启动…' : '重建索引'}
-          </button>
-        </div>
-      ) : null}
 
       {message ? (
         <div className="test-result ok">

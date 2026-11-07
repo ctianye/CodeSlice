@@ -52,11 +52,13 @@ def _unique_path(target: Path) -> Path:
 def render(note: dict[str, Any], project: dict[str, Any] | None) -> str:
     title = str(note.get("title") or "未命名笔记").strip()
     body = str(note.get("content_md") or "").strip()
+    heading = title
     # ``content_md`` already starts with its own ``# 标题`` (the note body is
     # imported into other tools as-is), so drop it here to avoid a duplicate H1.
     if body.startswith("# "):
+        heading = body.split("\n", 1)[0][2:].strip() or title
         body = body.split("\n", 1)[1].lstrip("\n") if "\n" in body else ""
-    lines = [f"# {title}", ""]
+    lines = [f"# {heading}", ""]
     if project is not None:
         lines.append(f"> 项目：{project.get('name')}（{project.get('path')}）")
     lines.append(f"> 导出时间：{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
@@ -83,7 +85,9 @@ def export_note(note_id: int) -> dict[str, Any]:
     except OSError as exc:
         raise InvalidInput(f"cannot create export directory: {exc}") from None
 
-    target = _unique_path(directory / f"{_safe_stem(note.get('title') or '笔记')}.md")
+    target = _unique_path(
+        directory / f"{_safe_stem(note.get('file_name') or note.get('title') or '笔记')}.md"
+    )
     try:
         target.write_text(render(note, project), encoding="utf-8")
     except OSError as exc:

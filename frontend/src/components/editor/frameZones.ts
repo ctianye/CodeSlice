@@ -40,7 +40,12 @@ export function createFrameZones(editor: MonacoEditor.IStandaloneCodeEditor): {
     label.className = 'range-flag'
     label.textContent = item.label
     label.title = item.label
-    label.addEventListener('click', () => current.get(key)?.onClick())
+    label.setAttribute('aria-label', `跳转到对话：${item.label}`)
+    label.addEventListener('mousedown', (event) => event.stopPropagation())
+    label.addEventListener('click', (event) => {
+      event.stopPropagation()
+      current.get(key)?.onClick()
+    })
     node.append(label)
     return { node, label }
   }
@@ -69,7 +74,7 @@ export function createFrameZones(editor: MonacoEditor.IStandaloneCodeEditor): {
           afterLineNumber: Math.max(0, item.start - 1),
           heightInPx: ZONE_HEIGHT,
           domNode: node,
-          suppressMouseDown: false,
+          suppressMouseDown: true,
         })
       })
       zones.set(item.key, { id, node, label })

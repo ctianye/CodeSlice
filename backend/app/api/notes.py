@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 class NoteCreate(BaseModel):
     project_id: int
     title: str = Field(min_length=1)
+    file_name: str | None = None
     content_md: str = ""
     conversation_id: str | None = None
     folder_id: int | None = None
@@ -27,6 +28,7 @@ class NoteCreate(BaseModel):
 
 class NoteUpdate(BaseModel):
     title: str | None = None
+    file_name: str | None = None
     content_md: str | None = None
     folder_id: int | None = None
     move_folder: bool = False
@@ -64,7 +66,7 @@ def _with_index_state(notes: list[dict[str, Any]], project_id: int | None = None
 def _index_note(note: dict[str, Any]) -> dict[str, Any]:
     """Keep the retrieval row in step with the saved note; never fail the write."""
     try:
-        notes_index.sync_note(note)
+        notes_index.sync_note_background(note)
         indexed = True
     except Exception:
         log.warning("note index sync failed for %s", note.get("id"), exc_info=True)
@@ -124,6 +126,7 @@ def create_note(body: NoteCreate, _: TokenDep) -> dict[str, Any]:
         body.content_md,
         body.conversation_id,
         folder_id=body.folder_id,
+        file_name=body.file_name,
     )
     if note is None:  # pragma: no cover - defensive
         raise NotFound("note not found")
@@ -138,6 +141,7 @@ def update_note(note_id: int, body: NoteUpdate, _: TokenDep) -> dict[str, Any]:
         body.content_md,
         folder_id=body.folder_id,
         move_folder=body.move_folder,
+        file_name=body.file_name,
     )
     if note is None:
         raise NotFound("note not found")

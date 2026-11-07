@@ -19,6 +19,7 @@ router = APIRouter(tags=["index"])
 
 @router.post("/projects/{project_id}/index")
 def start_index(project: ProjectDep, _: TokenDep, force: bool = Query(default=False)) -> dict[str, int]:
+    """Compatibility endpoint; normal indexing starts from project lifecycle events."""
     job_id = start_index_job(project["id"], force=force)
     return {"job_id": job_id}
 
@@ -39,11 +40,12 @@ def index_status(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
         # Cumulative size of the project's index. The last job's stats only
         # describe that run ("7 files changed"), which made a warm index look
         # empty in the sidebar.
+        active_model = embeddings.embedding_model_name()
         totals = conn.execute(
             "SELECT COUNT(*) AS chunks,"
-            " SUM(CASE WHEN embed_model IS NOT NULL AND embed_model <> '' THEN 1 ELSE 0 END) AS vectors"
+            " SUM(CASE WHEN embed_model = ? AND vector IS NOT NULL THEN 1 ELSE 0 END) AS vectors"
             " FROM chunks WHERE project_id = ?",
-            (project["id"],),
+            (active_model, project["id"]),
         ).fetchone()
         # Which embedding models produced the stored vectors. More than one row
         # means the index is mid-migration and only a rebuild makes it uniform.

@@ -58,9 +58,10 @@ docs/                   本文件与 API_CONTRACT.md
 4. **代码与对话解耦但可追溯**：`code_anchors` 记录文件路径、commit、符号名、行范围、代码摘要与 hash；代码被改动后锚点状态标为 `modified/moved/deleted`，历史对话保留，用户可手动重新关联。
 5. **检查点进 SQLite**：LangGraph `SqliteSaver`，授权暂停后可恢复；`jobs` 表给索引进度的轮询。
 6. **向量索引可替换**：`retrieval/vector_store.py` 定义 `VectorStore` 协议，V1 用 SQLite BLOB + numpy 实现，避免 Chroma 打包体积/兼容风险。
+7. **索引由后端维护**：项目打开和 `watchfiles` 检测到源码变化时自动排队增量扫描，任务按项目去重；笔记先同步关键词索引，再异步生成向量。切换 embedding 模型会自动补建向量，检索只使用当前模型的向量，renderer 只显示状态。
 7. **上下文默认锁在选区**：片段对话默认只把选中的代码交给模型，不主动检索（`use_context=false`），需要周边实现时由用户显式打开「联系上下文」。早期版本无条件跑 `hybrid.search` 并把全部命中塞进 citation，导致「问一段代码、答整份文件」。
 8. **知识库跨项目、索引不跨项目**：`notes` 仍归属创建它的项目（检索与 `note://` 片段按项目走），阅读与归档由一个全局面板承担；`note_folders` 用 `parent_id` 自引用成树。移动必须显式 `move_folder`，否则 `null` 无法与「不改」区分。
-9. **标题由内容决定**：会话与笔记的标题都从回答内容提炼（`notegen.title_from_answer` 不调模型，`retitle` 才调），占位标题（`新对话`、`foo.py:12-30`）在 `finalize` 里被替换并 emit `status.stage="title"`；用户手改过的标题永不覆盖。历史对话不会再走 `finalize`，所以启动时由 `backfill_conversation_titles()` 补一次（优先取该对话笔记的标题，其次取最后一条回答；改写不碰 `updated_at`，避免历史对话被顶到侧栏最上面）。
+9. **会话标题与笔记标题独立生成**：占位会话标题在 `finalize` 里根据整段问答和助手结论生成，笔记标题由笔记整理提示词单独提炼知识点；历史会话回填只读最后一条可用回答，不借用笔记标题。用户手改过的会话标题永不覆盖，回填也不碰 `updated_at`。
 10. **编辑器是多标签但单面板**：`AppState` 里存 `tabs: EditorTab[]` + `activeTabIndex`，`openFile` / `noteView` 降级为 `activeTab` 的 `useMemo` 派生值——这样二十多处消费者（CodePane、NoteReader、FileTree、NotesPanel…）不必知道标签的存在，行为和单文档时完全一致。点笔记里的引用会把文件**追加**成新标签而不是替换当前笔记，避免「看引用就丢掉正在读的笔记」。
 11. **终端与 Agent 共用一套命令策略**：危险命令黑名单（`services/sandbox.py` 的 `BLOCKED_FRAGMENTS`）是同一个对象，AI 的 `run_command` 和用户在终端敲的命令命中同一份名单；终端历史只放内存环形缓冲（命令可能带 `-H` token，不能进明文 SQLite）。实现是 `Popen(shell=True)` + 读线程 + `queue` 的真流式，不是 PTY，因此没有跨命令的 shell 状态。
 12. **工作流节点可配、拓扑不可改，且只有后端接口**：`agent/node_config.py` 的 `NODES` 既是默认值表也是校验 schema，`GET /api/agent/graph` 直接序列化它，节点在运行时读自己的合并配置（存在 `settings` 表的 `agent.node_config` 一个 JSON 键里），所以保存后下一轮即刻生效、无需重启；边的走向由 `graph.py` 固定。这条能力**只暴露成后端 HTTP 接口**，桌面前端不再画流程图——用户要调的是 LangGraph 这一层的行为，不需要在界面上看一张只读的拓扑图。

@@ -1,5 +1,5 @@
 import type { editor as MonacoEditor } from 'monaco-editor'
-import { Selection } from 'monaco-editor'
+import { editor as monacoEditor, Selection } from 'monaco-editor'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
@@ -78,6 +78,8 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const detachRef = useRef<(() => void) | null>(null)
   /** Pending rAF handle for selection updates; null when nothing is scheduled. */
   const selectionFrame = useRef<number | null>(null)
+  /** Keep React layout updates out of the native mouse-drag selection loop. */
+  const mouseSelectingRef = useRef(false)
   /** Lines toggled by clicking the gutter — survives until a text drag or a reset. */
   const pickedRef = useRef<number[]>([])
   // Flipped once Monaco is mounted; the decoration effects depend on it because
@@ -177,6 +179,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       if (selectionFrame.current !== null) return
       selectionFrame.current = window.requestAnimationFrame(() => {
         selectionFrame.current = null
+        if (mouseSelectingRef.current || editorRef.current !== instance) return
         updateSelection(instance)
       })
     },
@@ -193,7 +196,32 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       zonesRef.current = createFrameZones(instance)
       setReady(true)
 
-      const selectionListener = instance.onDidChangeCursorSelection(() => scheduleSelection(instance))
+      const selectionListener = instance.onDidChangeCursorSelection(() => {
+        if (!mouseSelectingRef.current) scheduleSelection(instance)
+      })
+      const editorNode = instance.getDomNode()
+      const onMouseDownCapture = (event: MouseEvent) => {
+        if (event.button !== 0) return
+        const target = instance.getTargetAtClientPoint(event.clientX, event.clientY)?.type
+        mouseSelectingRef.current =
+          target === monacoEditor.MouseTargetType.CONTENT_TEXT ||
+          target === monacoEditor.MouseTargetType.CONTENT_EMPTY ||
+          target === monacoEditor.MouseTargetType.GUTTER_LINE_NUMBERS ||
+          target === monacoEditor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+          target === monacoEditor.MouseTargetType.GUTTER_LINE_DECORATIONS
+        if (mouseSelectingRef.current && selectionFrame.current !== null) {
+          window.cancelAnimationFrame(selectionFrame.current)
+          selectionFrame.current = null
+        }
+      }
+      const onMouseUpCapture = () => {
+        if (!mouseSelectingRef.current) return
+        mouseSelectingRef.current = false
+        scheduleSelection(instance)
+      }
+      editorNode?.addEventListener('mousedown', onMouseDownCapture, true)
+      window.addEventListener('mouseup', onMouseUpCapture, true)
+      window.addEventListener('blur', onMouseUpCapture)
       // Line numbers are a picker: each click adds a line to the set, clicking it
       // again removes it, and dragging over the numbers sweeps a range. Monaco's
       // own `selectOnLineNumbers` is off (see CodeViewer) because it would set a
@@ -209,6 +237,14 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       })
       detachRef.current = () => {
         selectionListener.dispose()
+        editorNode?.removeEventListener('mousedown', onMouseDownCapture, true)
+        window.removeEventListener('mouseup', onMouseUpCapture, true)
+        window.removeEventListener('blur', onMouseUpCapture)
+        mouseSelectingRef.current = false
+        if (selectionFrame.current !== null) {
+          window.cancelAnimationFrame(selectionFrame.current)
+          selectionFrame.current = null
+        }
         detachGutter()
       }
 

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
+import time
 from typing import Any
 
 from app.core.db import get_conn, utcnow, write_conn
@@ -22,6 +24,9 @@ from app.retrieval import tokenize
 from app.storage import repo
 
 log = logging.getLogger(__name__)
+_EMBED_LOCK = threading.Lock()
+_EMBED_PENDING: dict[int, dict[str, Any]] = {}
+_EMBED_RUNNING: set[int] = set()
 
 NOTE_PATH_PREFIX = "note://"
 
@@ -58,14 +63,18 @@ def _embed(text: str) -> tuple[str | None, bytes | None]:
     model = emb.embedding_model_name()
     if not model:
         return None, None
-    try:
-        vector = emb.embed_query(text)
-    except Exception as exc:  # a broken embedding endpoint must not block saving
-        log.warning("note embedding failed: %s", exc)
-        return None, None
-    if not vector:
-        return None, None
-    return model, emb.pack(vector)
+    for attempt in range(3):
+        try:
+            vectors = emb.embed_texts([text])
+            if vectors:
+                return model, emb.pack(vectors[0])
+            return None, None
+        except Exception as exc:  # saving and keyword search must survive model outages
+            if attempt == 2:
+                log.warning("note embedding failed after retries: %s", exc)
+                return None, None
+            time.sleep(1 + attempt * 2)
+    return None, None
 
 
 def _delete_chunk_rows(conn: Any, paths: list[str]) -> None:
@@ -82,8 +91,8 @@ def remove_note_chunk(note_id: int) -> None:
         _delete_chunk_rows(conn, [note_path(note_id)])
 
 
-def sync_note(note: dict[str, Any]) -> int | None:
-    """Insert or refresh the chunk behind one note. Returns the chunk id."""
+def sync_note(note: dict[str, Any], embed: bool = True) -> int | None:
+    """Synchronize keyword content and, when requested, its semantic vector."""
     note_id = int(note["id"])
     project_id = int(note["project_id"])
     path = note_path(note_id)
@@ -91,7 +100,15 @@ def sync_note(note: dict[str, Any]) -> int | None:
     title = str(note.get("title") or "未命名笔记")
     digest = hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
     tokens = max(1, len(text) // 4)
-    model, vector = _embed(text)
+    active_model = emb.embedding_model_name() if emb.is_configured() else None
+    with get_conn() as conn:
+        current = conn.execute("SELECT id, hash, embed_model, vector FROM chunks WHERE path = ?", (path,)).fetchone()
+    if current and current["hash"] == digest and (
+        not embed or not active_model or (current["embed_model"] == active_model and current["vector"])
+    ):
+        return int(current["id"])
+
+    model, vector = _embed(text) if embed else (None, None)
 
     with write_conn() as conn:
         _delete_chunk_rows(conn, [path])
@@ -127,6 +144,49 @@ def sync_note(note: dict[str, Any]) -> int | None:
                 tokenize.index_text(title),
             ),
         )
+    return chunk_id
+
+
+def sync_note_background(note: dict[str, Any]) -> int | None:
+    """Make the note keyword-searchable immediately and embed it off-request."""
+    chunk_id = sync_note(note, embed=False)
+    note_id = int(note["id"])
+    with _EMBED_LOCK:
+        _EMBED_PENDING[note_id] = dict(note)
+        if note_id in _EMBED_RUNNING:
+            return chunk_id
+        _EMBED_RUNNING.add(note_id)
+
+    def _run() -> None:
+        try:
+            while True:
+                with _EMBED_LOCK:
+                    current_note = _EMBED_PENDING.pop(note_id, None)
+                if current_note is None:
+                    return
+                text = note_text(current_note)
+                digest = hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+                model, vector = _embed(text)
+                if model and vector:
+                    with write_conn() as conn:
+                        conn.execute(
+                            "UPDATE chunks SET vector = ?, embed_model = ? WHERE path = ? AND hash = ?",
+                            (vector, model, note_path(note_id), digest),
+                        )
+                latest = repo.get_note(note_id)
+                if latest is not None and note_text(latest) != text:
+                    with _EMBED_LOCK:
+                        _EMBED_PENDING[note_id] = latest
+        except Exception:
+            log.warning("background note embedding failed for %s", note_id, exc_info=True)
+        finally:
+            with _EMBED_LOCK:
+                _EMBED_RUNNING.discard(note_id)
+                pending = _EMBED_PENDING.get(note_id)
+            if pending is not None:
+                sync_note_background(pending)
+
+    threading.Thread(target=_run, name=f"note-embed-{note_id}", daemon=True).start()
     return chunk_id
 
 

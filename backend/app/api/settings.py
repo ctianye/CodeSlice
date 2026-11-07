@@ -11,8 +11,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import TokenDep
+from app.indexing.indexer import start_index_job
 from app.models import config as model_config
+from app.models import embeddings
 from app.services import ollama
+from app.storage import repo
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -51,12 +54,20 @@ def get_model_settings(_: TokenDep) -> dict[str, Any]:
 
 @router.put("/model")
 def put_model_settings(body: SettingsBody, _: TokenDep) -> dict[str, Any]:
+    old_embedding = model_config.load_settings().embedding
     payload: dict[str, Any] = {}
     if body.chat is not None:
         payload["chat"] = {k: v for k, v in body.chat.model_dump().items() if v is not None}
     if body.embedding is not None:
         payload["embedding"] = {k: v for k, v in body.embedding.model_dump().items() if v is not None}
     model_config.update_settings(payload)
+    new_embedding = model_config.load_settings().embedding
+    if body.embedding is not None and new_embedding is not None and embeddings.is_configured():
+        old_identity = (old_embedding.model, old_embedding.base_url, old_embedding.dims) if old_embedding else None
+        new_identity = (new_embedding.model, new_embedding.base_url, new_embedding.dims)
+        if old_identity != new_identity or body.embedding.api_key:
+            for project in repo.list_projects():
+                start_index_job(int(project["id"]), queue_after_current=True)
     return model_config.public_settings()
 
 
@@ -87,18 +98,21 @@ def ollama_status(_: TokenDep) -> dict[str, Any]:
     return ollama.status()
 
 
+@router.get("/ollama/pull")
+def ollama_pull_status(_: TokenDep) -> dict[str, Any]:
+    """Current background pull state, used when the settings panel is reopened."""
+    return ollama.pull_status()
+
+
 @router.post("/ollama/pull")
 def ollama_pull(body: OllamaPullBody, _: TokenDep) -> StreamingResponse:
-    """Download one preset model, streaming Ollama's progress as SSE."""
+    """Start one background download and stream its progress as SSE."""
     if body.model not in ollama.PRESET_MODELS:
         raise HTTPException(status_code=400, detail=f"unsupported model: {body.model}")
+    try:
+        ollama.start_pull(body.model)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
-    def stream() -> Iterator[str]:
-        try:
-            for event in ollama.pull(body.model):
-                yield _sse(event)
-        except Exception as exc:  # defensive: the generator should not raise
-            yield _sse({"type": "error", "model": body.model, "detail": f"{type(exc).__name__}: {exc}"[:300]})
-            yield _sse({"type": "done", "model": body.model})
-
-    return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+    stream: Iterator[str] = (_sse(event) for event in ollama.stream_pull_status(body.model))
+    return StreamingResponse(stream, media_type="text/event-stream", headers=SSE_HEADERS)

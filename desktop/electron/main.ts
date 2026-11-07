@@ -236,6 +236,11 @@ async function createWindow(): Promise<void> {
     show: false,
     backgroundColor: '#f4f6f8',
     title: 'CodeSlice',
+    icon: join(
+      isDev ? app.getAppPath() : process.resourcesPath,
+      isDev ? 'build-assets' : '',
+      'icon.png',
+    ),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),

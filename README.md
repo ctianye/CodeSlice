@@ -1,5 +1,104 @@
 # CodeSlice
 
+> Read any codebase. Ask questions as you go. Get answers you can verify.
+
+CodeSlice 是一款本地优先的 AI 代码阅读桌面应用。添加代码仓库后，打开文件、选中代码并开始提问。回答附有可点击的文件与行号引用；AI 需要写文件或运行命令时，先由你审核授权。
+
+**CodeSlice** is a local-first AI code-reading desktop app for developers. Drop
+in a repository, open a source file, select the code you want to understand, and
+start a conversation. Answers include clickable file-and-line citations; changes
+and shell commands require your approval before they run.
+
+**[Download CodeSlice for Windows](https://github.com/ctianye/CodeSlice/releases/latest)** ·
+[Browse all releases](https://github.com/ctianye/CodeSlice/releases) ·
+[MIT license](LICENSE)
+
+![CodeSlice project picker and local project list](docs/screenshots/welcome.png)
+
+## See CodeSlice in action
+
+### Read a repository while asking questions about it
+
+Open a project, browse its file tree, and read the source in the integrated
+editor. Ask a question in the conversation pane or select a few lines to focus
+the conversation on that code.
+
+![Browse and read source code in the CodeSlice desktop app](docs/screenshots/workspace.png)
+
+### Follow answers back to the source
+
+CodeSlice returns citations with its answers. Select a file-and-line reference
+to navigate directly to the relevant source code.
+
+![An AI answer with clickable source-code citations](docs/screenshots/citations.png)
+
+### Stay in control of changes and commands
+
+When an agent requests a file write or command, inspect the request and approve
+or reject it. Approval is required before the operation runs.
+
+![Review and approve an AI-requested file change](docs/screenshots/approval.png)
+
+### Keep reading notes close to the code
+
+Save useful explanations as searchable notes. Code references in a note take
+you back to the original source.
+
+![Browse saved CodeSlice knowledge-base notes](docs/screenshots/knowledge-base.png)
+
+## Getting started
+
+1. Download `CodeSlice-0.1.0-Setup.exe` from the [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest) and install it on Windows 10 or 11.
+2. Start CodeSlice and add a local repository by selecting its folder.
+3. Open a source file, select the code you want to understand, and ask a question in the conversation pane.
+4. Open **Settings → Model** to configure a compatible model provider and API key. The key is stored in Windows Credential Manager.
+5. Save useful answers as notes. Review and explicitly approve each proposed file write or shell command.
+
+The application, repository index, and saved conversations run and stay on your
+computer. When you ask a model a question, CodeSlice sends the relevant question
+and code context to the model provider configured by you; that provider's data
+handling policies apply. API keys are saved in Windows Credential Manager.
+
+## What it does
+
+- Reads local repositories in a three-pane file tree, source editor, and chat.
+- Splits supported languages into structural chunks using Tree-sitter and
+  searches with local FTS5 and vector similarity retrieval.
+- Adds navigable file-and-line citations to answers.
+- Requires per-action approval before writing a file or running a command.
+- Turns conversations into indexed, searchable notes that can be reused across
+  projects.
+- Saves conversations, indexes, and application data locally.
+
+## Requirements
+
+- Windows 10 (version 1809 or later) or Windows 11.
+- A compatible model provider and your own API key for AI answers. Local model
+  providers are supported where configured.
+
+The installer includes the desktop app and local Python backend. End users do
+not need to install Python, Node.js, or developer tools.
+
+## Known limitations
+
+- Windows is the packaged desktop platform for the first release.
+- Model responses require a configured provider; API charges and provider
+  retention policies depend on your provider and plan.
+- Tree-sitter structural indexing is currently configured for Python,
+  TypeScript, JavaScript, Go, Rust, Java, C, C++, JSON, and Bash. Other files
+  remain available for the application’s supported text-based workflows.
+
+## For contributors
+
+See [local development](#本地开发), [architecture](docs/ARCHITECTURE.md), and
+[packaging](packaging/README.md). The backend tests run with `uv run pytest` from
+`backend/`. Build a release installer with
+`pwsh -File packaging/build_backend.ps1` followed by
+`pwsh -File packaging/build_desktop.ps1` on a configured Windows build machine.
+
+Contributions and issue reports are welcome. For changes to the application,
+please explain the problem, reproduction steps, and expected behavior.
+
 > 本地优先的「代码阅读」智能体桌面应用。把任意一个代码仓库拖进来，边读边问，
 > 每个回答都带可点击的文件/行号引用；需要动文件或跑命令时，逐条向你申请授权。
 

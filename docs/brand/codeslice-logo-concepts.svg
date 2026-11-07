@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="900" height="1200" viewBox="0 0 900 1200" role="img" aria-labelledby="title description">
+  <title id="title">CodeSlice · 六款品牌标志设计提案</title>
+  <desc id="description">本地优先的代码阅读 AI 智能体。六种设计手法分别为极简线条、CS 首字母、负空间、几何秩序、几何切割、字体与图形组合。白色背景，三列两行，无卡片背景、边框或阴影。</desc>
+  <defs>
+    <style>
+      text { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+      .overline { font-family: Consolas, monospace; font-size: 11px; letter-spacing: 1.8px; fill: #87929f; }
+      .name { font-size: 19px; font-weight: 600; fill: #172733; }
+      .method { font-size: 12px; fill: #667380; }
+      .note { font-size: 12px; fill: #89939d; }
+      .wordmark { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
+    </style>
+    <!-- 01: restrained code brackets split by a distinct, offset slice. -->
+    <symbol id="slice" viewBox="0 0 128 128">
+      <g fill="none" stroke="#16343c" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter">
+        <path d="M39 31 12 64 39 97"/>
+        <path d="m89 31 27 33-27 33"/>
+      </g>
+      <path fill="#148477" d="M71 13h14L69 59H55zM59 69h14l-16 46H43z"/>
+    </symbol>
+    <!-- 02: interlocking C/S with deliberate knockout at the crossing. -->
+    <symbol id="monogram" viewBox="0 0 128 128">
+      <path d="M86 29a44 44 0 1 0 0 70" fill="none" stroke="#3558df" stroke-width="21" stroke-linecap="butt"/>
+      <path d="M108 36H83c-29 0-29 28-3 28h9c26 0 26 28-3 28H61" fill="none" stroke="#ffffff" stroke-width="29"/>
+      <path d="M108 36H83c-29 0-29 28-3 28h9c26 0 26 28-3 28H61" fill="none" stroke="#3558df" stroke-width="17"/>
+    </symbol>
+    <!-- 03: code is carved out of the local source-file silhouette. -->
+    <symbol id="source" viewBox="0 0 128 128">
+      <path fill="#6e49b8" fill-rule="evenodd" d="M32 9h46l26 26v72a12 12 0 0 1-12 12H32a12 12 0 0 1-12-12V21A12 12 0 0 1 32 9Zm8 42L25 68l15 17 7-6-10-11 10-11Zm48 0-7 6 10 11-10 11 7 6 15-17ZM66 47 53 89h10l13-42Z"/>
+      <path fill="#ffffff" d="M78 9v18a8 8 0 0 0 8 8h18Z"/>
+      <path fill="#b5a0df" d="M78 9v18a8 8 0 0 0 8 8h18Z"/>
+    </symbol>
+    <!-- 04: aligned code chunks, with one retrieved slice emerging. -->
+    <symbol id="index" viewBox="0 0 128 128">
+      <g fill="#0b6868">
+        <path d="M17 20h36v22H17zM63 20h48v22H63zM17 53h23v22H17zM17 86h36v22H17zM63 86h48v22H63z"/>
+      </g>
+      <path fill="#d87532" d="M52 53h59v22H52z"/>
+      <path d="m93 59 7 5-7 5" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="miter"/>
+    </symbol>
+    <!-- 05: a substantial local shield, opened only by explicit permission. -->
+    <symbol id="guard" viewBox="0 0 128 128">
+      <path fill="#253543" d="M64 7 111 25v37c0 26-20 46-47 59C37 108 17 88 17 62V25Z"/>
+      <path fill="#e3a043" d="m64 7 47 18v37c0 26-20 46-47 59v-17c19-11 32-25 32-42V35L64 23Z"/>
+      <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="square" stroke-linejoin="miter">
+        <path d="m48 46-13 15 13 15m32-30 13 15-13 15"/>
+      </g>
+      <path fill="#e3a043" d="m66 40 8 3-13 39-8-3Z"/>
+    </symbol>
+    <!-- 06: one highlighted source line resolves to a clickable citation. -->
+    <symbol id="trace" viewBox="0 0 128 128">
+      <g fill="none" stroke="#2449bd" stroke-width="9" stroke-linecap="square">
+        <path d="M24 24h71M24 49h46M24 74h54"/>
+        <path d="M24 99h45"/>
+        <path d="M101 51v43a5 5 0 0 1-5 5H79m11-12L78 99l12 12" stroke-linejoin="miter"/>
+      </g>
+      <path fill="#2449bd" d="M7 65h7v18H7z"/>
+      <circle cx="101" cy="49" r="8" fill="#2449bd"/>
+    </symbol>
+  </defs>
+
+  <path fill="#ffffff" d="M0 0h900v1200H0z"/>
+
+  <g id="heading">
+    <text x="58" y="76" font-size="32" font-weight="700" letter-spacing="-1.2" fill="#172733">CodeSlice<tspan fill="#148477">.</tspan></text>
+    <text x="842" y="65" text-anchor="end" class="overline">BRAND EXPLORATIONS</text>
+    <text x="842" y="85" text-anchor="end" class="overline" style="font-size:10px;letter-spacing:1px">SIX DIRECTIONS / 2026</text>
+    <text x="59" y="112" font-size="13" fill="#6b7883">读懂代码，每个答案都有出处。</text>
+    <path d="M58 148H842" stroke="#e8edf0"/>
+  </g>
+
+  <g id="concept-01" text-anchor="middle">
+    <text x="170" y="210" class="overline">01 / SLICE</text>
+    <use xlink:href="#slice" x="108" y="260" width="124" height="124"/>
+    <text x="170" y="434" class="wordmark" fill="#16343c">Code<tspan fill="#148477">Slice</tspan></text>
+    <text x="170" y="496" class="name">代码切片</text>
+    <text x="170" y="527" class="method">极简线条型 · 代码括号与切口</text>
+    <text x="170" y="554" class="note">切开复杂代码，读懂关键片段</text>
+  </g>
+
+  <g id="concept-02" text-anchor="middle">
+    <text x="450" y="210" class="overline">02 / MONOGRAM</text>
+    <use xlink:href="#monogram" x="388" y="260" width="124" height="124"/>
+    <text x="450" y="434" class="wordmark" fill="#3558df" style="letter-spacing:-1.4px">CodeSlice</text>
+    <text x="450" y="496" class="name">双字相扣</text>
+    <text x="450" y="527" class="method">首字母型 · C / S 几何连字</text>
+    <text x="450" y="554" class="note">代码与理解，在此紧密相扣</text>
+  </g>
+
+  <g id="concept-03" text-anchor="middle">
+    <text x="730" y="210" class="overline">03 / NEGATIVE SPACE</text>
+    <use xlink:href="#source" x="668" y="260" width="124" height="124"/>
+    <text x="730" y="434" class="wordmark" fill="#6e49b8" style="font-weight:600">CodeSlice</text>
+    <text x="730" y="496" class="name">源码留白</text>
+    <text x="730" y="527" class="method">负空间型 · 文件中镂空代码</text>
+    <text x="730" y="554" class="note">答案有据可查，理解回到源码</text>
+  </g>
+
+  <g id="concept-04" text-anchor="middle">
+    <text x="170" y="660" class="overline">04 / STRUCTURE</text>
+    <use xlink:href="#index" x="108" y="710" width="124" height="124"/>
+    <text x="170" y="884" class="wordmark" fill="#0b6868" style="font-family:Consolas,monospace;font-size:27px;letter-spacing:-1.6px">CodeSlice</text>
+    <text x="170" y="946" class="name">有序索引</text>
+    <text x="170" y="977" class="method">几何秩序型 · 结构化切块矩阵</text>
+    <text x="170" y="1004" class="note">从仓库万千片段，定位关键一块</text>
+  </g>
+
+  <g id="concept-05" text-anchor="middle">
+    <text x="450" y="660" class="overline">05 / LOCAL TRUST</text>
+    <use xlink:href="#guard" x="388" y="710" width="124" height="124"/>
+    <text x="450" y="884" class="wordmark" fill="#253543" style="letter-spacing:.1px;font-size:27px">CodeSlice</text>
+    <text x="450" y="946" class="name">本地守卫</text>
+    <text x="450" y="977" class="method">几何切割型 · 盾牌与代码符号</text>
+    <text x="450" y="1004" class="note">本地掌控，每次操作由你授权</text>
+  </g>
+
+  <g id="concept-06" text-anchor="middle">
+    <text x="730" y="660" class="overline">06 / SOURCE TRACE</text>
+    <use xlink:href="#trace" x="668" y="710" width="124" height="124"/>
+    <text x="722" y="884" class="wordmark" fill="#2449bd" style="font-weight:600;font-size:27px">CodeSlice</text>
+    <text x="800" y="870" font-family="Consolas,monospace" font-size="11" font-weight="700" fill="#2449bd">:42</text>
+    <text x="730" y="946" class="name">行号溯源</text>
+    <text x="730" y="977" class="method">字体＋图形型 · 代码行与引用锚点</text>
+    <text x="730" y="1004" class="note">循着行号，让每个答案落到实处</text>
+  </g>
+
+  <g id="footer">
+    <path d="M58 1095H842" stroke="#e8edf0"/>
+    <text x="58" y="1129" font-size="12" fill="#6b7883">本地优先　/　逐条授权　/　引用可溯源</text>
+    <text x="842" y="1129" text-anchor="end" class="overline" style="font-size:10px;letter-spacing:1px">LOCAL. LEGIBLE. TRACEABLE.</text>
+    <text x="58" y="1161" font-size="10" fill="#9aa3ac">品牌标志概念提案 · 六种设计语言</text>
+    <text x="842" y="1161" text-anchor="end" font-size="10" fill="#9aa3ac">900 × 1200 / SVG</text>
+  </g>
+</svg>

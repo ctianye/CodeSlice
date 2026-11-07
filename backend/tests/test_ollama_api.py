@@ -68,6 +68,23 @@ def test_ollama_pull_rejects_an_empty_model(client) -> None:
     assert response.status_code == 422
 
 
+def test_ollama_pull_status_is_authenticated_and_returns_reconnect_state(client, monkeypatch) -> None:
+    state = {
+        "state": "running",
+        "model": "bge-m3",
+        "percent": 42.5,
+        "detail": "downloading",
+        "total": 100,
+        "completed": 42,
+        "error": None,
+    }
+    monkeypatch.setattr(ollama, "pull_status", lambda: state)
+
+    assert client.get("/api/settings/ollama/pull").json() == state
+    denied = client.get("/api/settings/ollama/pull", headers={"X-Session-Token": "wrong"})
+    assert denied.status_code == 401
+
+
 def test_ollama_pull_streams_sse_frames(client, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_pull(model: str):
         yield {"type": "progress", "model": model, "status": "downloading", "percent": 40.0}
@@ -133,3 +150,29 @@ def test_using_a_preset_updates_the_embedding_config(client, monkeypatch: pytest
 
     status_response = client.get("/api/settings/model")
     assert status_response.json()["embedding"]["model"] == "bge-m3"
+
+
+def test_switching_embedding_model_queues_background_reindex(client, project, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api import settings as settings_api
+
+    queued: list[tuple[int, bool]] = []
+    monkeypatch.setattr(settings_api.embeddings, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        settings_api,
+        "start_index_job",
+        lambda project_id, queue_after_current=False: queued.append((project_id, queue_after_current)) or 1,
+    )
+
+    response = client.put(
+        "/api/settings/model",
+        json={
+            "embedding": {
+                "model": "auto-reindex-test-model",
+                "base_url": "http://127.0.0.1:9/v1",
+                "api_key": "test-key",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert queued == [(project["id"], True)]

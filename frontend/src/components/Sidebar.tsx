@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { useApp } from '../state/AppState'
 import type { SidebarTab } from '../state/AppState'
-import { AnchorsPanel } from './AnchorsPanel'
 import { ConversationList } from './ConversationList'
 import { FilePanel } from './FilePanel'
 import { Icon } from './Icon'
@@ -12,7 +11,6 @@ const TABS: Array<{ id: SidebarTab; label: string; icon: IconName; hint: string 
   { id: 'files', label: '文件', icon: 'folder', hint: '文件树与项目搜索' },
   { id: 'chats', label: '对话', icon: 'message', hint: '本项目与其他项目的对话' },
   { id: 'notes', label: '笔记', icon: 'notes', hint: '阅读笔记' },
-  { id: 'anchors', label: '锚点', icon: 'anchor', hint: '代码锚点状态' },
 ]
 
 interface SidebarProps {
@@ -20,7 +18,7 @@ interface SidebarProps {
 }
 
 /**
- * Left pane: file tree / conversations / notes / anchors behind a tab rail.
+ * Left pane: file tree / conversations / notes behind a tab rail.
  *
  * Each panel owns its own `.sidebar-section` (toolbar + scroll region) so the
  * toolbar of one tab never scrolls away with another tab's content.
@@ -53,7 +51,6 @@ export function Sidebar({ onNewConversation }: SidebarProps): ReactNode {
       {sidebarTab === 'files' ? <FilePanel /> : null}
       {sidebarTab === 'chats' ? <ConversationList onNewConversation={onNewConversation} /> : null}
       {sidebarTab === 'notes' ? <NotesPanel /> : null}
-      {sidebarTab === 'anchors' ? <AnchorsPanel /> : null}
     </div>
   )
 }

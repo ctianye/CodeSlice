@@ -21,6 +21,17 @@
   margin-bottom: 30px;
 }
 
+.welcome-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: fit-content;
+  margin-bottom: 20px;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+}
+
 .welcome-eyebrow {
   display: inline-flex;
   align-items: center;

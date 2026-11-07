@@ -27,11 +27,16 @@ class SqliteVectorStore:
 
     def __init__(self, project_id: int) -> None:
         self.project_id = project_id
+        model_name = emb.embedding_model_name()
         with get_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, vector FROM chunks WHERE project_id = ? AND vector IS NOT NULL",
-                (project_id,),
-            ).fetchall()
+            if model_name:
+                rows = conn.execute(
+                    "SELECT id, vector FROM chunks "
+                    "WHERE project_id = ? AND vector IS NOT NULL AND embed_model = ?",
+                    (project_id, model_name),
+                ).fetchall()
+            else:
+                rows = []
         self._vectors = [(r["id"], emb.unpack(r["vector"])) for r in rows]
 
     def search(self, query_vector: list[float], limit: int = 20) -> list[tuple[int, float]]:

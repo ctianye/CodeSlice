@@ -456,13 +456,15 @@ def create_note(
     content_md: str,
     conversation_id: str | None = None,
     folder_id: int | None = None,
+    file_name: str | None = None,
 ) -> dict[str, Any]:
     now = utcnow()
     with write_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO notes (project_id, conversation_id, folder_id, title, content_md, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (project_id, conversation_id, folder_id, title, content_md, now, now),
+            "INSERT INTO notes (project_id, conversation_id, folder_id, title, file_name, content_md, created_at, "
+            "updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (project_id, conversation_id, folder_id, title, file_name or title, content_md, now, now),
         )
         note_id = int(cur.lastrowid or 0)
     return get_note(note_id)  # type: ignore[return-value]
@@ -474,6 +476,7 @@ def update_note(
     content_md: str | None,
     folder_id: int | None = None,
     move_folder: bool = False,
+    file_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Update a note; ``move_folder`` is how a caller clears ``folder_id``.
 
@@ -485,9 +488,10 @@ def update_note(
         return None
     with write_conn() as conn:
         conn.execute(
-            "UPDATE notes SET title = ?, content_md = ?, folder_id = ?, updated_at = ? WHERE id = ?",
+            "UPDATE notes SET title = ?, file_name = ?, content_md = ?, folder_id = ?, updated_at = ? WHERE id = ?",
             (
                 title if title is not None else note["title"],
+                file_name if file_name is not None else (note.get("file_name") or note["title"]),
                 content_md if content_md is not None else note["content_md"],
                 folder_id if move_folder else note.get("folder_id"),
                 utcnow(),

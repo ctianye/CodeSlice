@@ -18,6 +18,8 @@ files:
 # The packaged Python backend lands next to the app resources; main.ts spawns
 # <resources>/backend/codeslice-backend.exe.
 extraResources:
+  - from: build-assets/icon.png
+    to: icon.png
   - from: ../packaging/dist-backend
     to: backend
     filter:

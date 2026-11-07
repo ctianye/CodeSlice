@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -184,4 +185,18 @@ def test_pull_reports_an_unreachable_daemon(monkeypatch: pytest.MonkeyPatch) -> 
     events = list(ollama.pull("bge-m3"))
     assert events[0]["type"] == "error"
     assert "Ollama" in events[0]["detail"]
+    assert events[-1]["type"] == "done"
+
+
+def test_background_pull_keeps_progress_available_after_stream_reconnect(fake_ollama: type[_Handler]) -> None:
+    ollama.start_pull("bge-m3")
+    deadline = time.monotonic() + 3
+    while ollama.pull_status()["state"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    status = ollama.pull_status()
+    assert status["state"] == "done"
+    assert status["percent"] == 100.0
+    events = list(ollama.stream_pull_status("bge-m3"))
+    assert any(event.get("percent") == 50.0 for event in events)
     assert events[-1]["type"] == "done"

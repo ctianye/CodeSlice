@@ -30,6 +30,7 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [draft, setDraft] = useState<{ text: string; nonce: number } | null>(null)
+  const [pendingSendVersion, setPendingSendVersion] = useState(0)
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [noteError, setNoteError] = useState<string | null>(null)
   const [wholeNoteBusy, setWholeNoteBusy] = useState(false)
@@ -37,6 +38,8 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
   // opts in per turn when the question needs the surrounding file.
   const [useContext, setUseContext] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const creatingConversationRef = useRef<Promise<string> | null>(null)
+  const pendingSendRef = useRef<{ conversationId: string; text: string } | null>(null)
 
   const chat = useChatStream(activeConversationId, () => bumpRefresh())
 
@@ -110,19 +113,65 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
       })
   }, [activeConversationId, bumpRefresh])
 
-  const startProjectConversation = (seed?: string) => {
-    if (!project) return
+  const createProjectConversation = (): Promise<string> => {
+    if (!project) return Promise.reject(new Error('请先选择一个项目'))
+
     setCreating(true)
     setCreateError(null)
-    api
+    const request = api
       .createConversation({ project_id: project.id, mode: 'project', title: '全项目对话' })
       .then((conversation) => {
         draftsRef.current.add(conversation.id)
         setActiveConversationId(conversation.id)
+        return conversation.id
+      })
+      .catch((err: unknown) => {
+        setCreateError(err instanceof Error ? err.message : String(err))
+        throw err
+      })
+      .finally(() => {
+        creatingConversationRef.current = null
+        setCreating(false)
+      })
+    creatingConversationRef.current = request
+    return request
+  }
+
+  const ensureProjectConversation = (): Promise<string> => {
+    if (activeConversationId) return Promise.resolve(activeConversationId)
+    if (creatingConversationRef.current) return creatingConversationRef.current
+    return createProjectConversation()
+  }
+
+  const startProjectConversation = (seed?: string) => {
+    void createProjectConversation()
+      .then(() => {
         if (seed) setDraft({ text: seed, nonce: Date.now() })
       })
-      .catch((err: unknown) => setCreateError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setCreating(false))
+      .catch(() => undefined)
+  }
+
+  useEffect(() => {
+    const pending = pendingSendRef.current
+    if (!pending || chat.conversation?.id !== pending.conversationId) return
+    pendingSendRef.current = null
+    draftsRef.current.delete(pending.conversationId)
+    chat.send(pending.text)
+  }, [activeConversationId, chat.conversation, chat.send, pendingSendVersion])
+
+  const sendMessage = (text: string) => {
+    if (activeConversationId) {
+      draftsRef.current.delete(activeConversationId)
+      chat.send(text, { useContext: useContext && Boolean(snippetHint) })
+      return
+    }
+
+    void ensureProjectConversation()
+      .then((conversationId) => {
+        pendingSendRef.current = { conversationId, text }
+        setPendingSendVersion((version) => version + 1)
+      })
+      .catch(() => undefined)
   }
 
   /**
@@ -290,18 +339,13 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
 
       <Composer
         busy={chat.busy}
-        disabled={!activeConversationId || chat.busy}
+        disabled={chat.busy || creating}
         selectionHint={snippetHint ? `片段模式 · ${snippetHint}` : null}
         contextToggle={Boolean(snippetHint)}
         useContext={useContext}
         onToggleContext={setUseContext}
         draft={draft}
-        onSend={(text) => {
-          // Typing into a draft makes it a real conversation; it must not be
-          // swept away the next time the user switches to another one.
-          if (activeConversationId) draftsRef.current.delete(activeConversationId)
-          chat.send(text, { useContext: useContext && Boolean(snippetHint) })
-        }}
+        onSend={sendMessage}
         onStop={chat.stop}
       />
     </div>

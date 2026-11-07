@@ -63,6 +63,20 @@ def test_chunk_ranges_are_inside_the_file():
             assert text == lines[chunk["start_line"] - 1 + offset]
 
 
+def test_module_chunks_keep_their_actual_contiguous_line_ranges():
+    text = '"""A module docstring long enough to be indexed as module context."""\n\n'
+    text += "def run():\n    return 1\n\n"
+    text += 'DESCRIPTION = "A module level description long enough to be indexed too."\n'
+    chunks = chunker.chunk_file("pkg/sample.py", "python", text)
+    module_chunks = [chunk for chunk in chunks if chunk["kind"] == "module"]
+
+    assert len(module_chunks) == 2
+    lines = text.splitlines()
+    for chunk in module_chunks:
+        assert chunk["end_line"] - chunk["start_line"] + 1 <= chunker.FALLBACK_LINES
+        assert chunk["content"] == "\n".join(lines[chunk["start_line"] - 1 : chunk["end_line"]]).strip()
+
+
 def test_unsupported_language_falls_back_to_text_bands():
     text = "\n".join(f"line {i}" for i in range(150))
     chunks = chunker.chunk_file("notes.weird", None, text)

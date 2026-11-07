@@ -50,7 +50,10 @@ body `{"path": "D:\\repo", "name": "repo"}`（name 可省略，取目录名）
 ## 3. 索引 / 检索
 
 ### POST /api/projects/{project_id}/index
-→ `{"job_id": int}`（后台线程执行，立即返回）
+→ `{"job_id": int}`（兼容性接口，后台线程执行，立即返回）
+
+正常流程由 `POST /api/projects/{project_id}/open` 在后端启动增量索引，并持续监听项目文件变化；
+embedding 配置变更后也会为已登记项目自动排队重建。renderer 只读取任务状态，不负责创建或重建索引。
 
 ### GET /api/jobs/{job_id}
 → `{"id": int, "kind": str, "status": "pending|running|done|error", "progress": int,
@@ -60,12 +63,11 @@ body `{"path": "D:\\repo", "name": "repo"}`（name 可省略，取目录名）
 → `{"project": Project, "last_job": Job | null, "files": int, "chunks": int, "vectors": int,
     "indexed_at": str | null, "embed_models": [str], "active_embed_model": str | null,
     "embedding_configured": bool}`
-`files` / `chunks` / `vectors` 是**当前索引里的累计值**（不是最近一次任务增量）。前端工具栏据此
-显示「309 文件 · 1508 片段」，避免增量任务只扫了 7 个文件就让用户以为索引是空的。未配置
-embedding 时 `vectors` 恒为 0，检索只走关键词，这是正常状态。
+`files` / `chunks` / `vectors` 是**当前索引里的累计值**（不是最近一次任务增量）。`vectors` 只统计
+当前配置模型的向量；切换模型后旧向量不会参与检索，后台更新完成前继续用关键词结果兜底。未配置
+embedding 时 `vectors` 为 0，检索只走关键词，这是正常状态。
 `embed_models` 是当前索引里出现过的向量模型名（去重）；`active_embed_model` 是**已配置**的模型；
-`embedding_configured` 为 `false` 时检索只走关键词。前端用 `embed_models` 里出现与
-`active_embed_model` 不同的值来判断「切换模型后需要重建索引」。
+`embedding_configured` 为 `false` 时检索只走关键词。embedding 模型切换后的向量补建由后端自动完成。
 
 ### GET /api/projects/{project_id}/search?q=&top_k=8
 → `[RetrievedChunk]`
@@ -140,7 +142,7 @@ body `{"project_id": int, "title": str | null, "file_path": str | null,
 `## 关联代码` 由该消息的 citations 从磁盘读取原文渲染。
 **模型失败不再报 400**：仍然保存降级正文（原始回答 + 来源位置），置 `summary_failed=true`
 并在 `summary_error` 写明原因。`refs` 是关联代码段数，`indexed` 表示是否已写入检索索引。
-**标题描述知识点，不复用会话标题**：模型在 `## 标题` 一节给出 6–18 字的知识点概括，
+**标题描述知识点，不复用会话标题**：模型在 `## 标题` 一节给出独立于来源对话的 8–22 字知识点概括，
 `_clean_title` 会剔除 `foo.py:12-30`、`第 N-M 行` 这类位置、markdown 标记与「关于」开头；
 清洗后为空则退回知识点首句，再退回 `<项目名> · 阅读笔记`。
 

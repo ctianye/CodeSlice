@@ -352,6 +352,8 @@
    it takes part in the layout and scrolls with the text instead of covering a
    code line. Height must match `ZONE_HEIGHT` in editor/frameZones.ts. */
 .range-zone {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   height: 19px;

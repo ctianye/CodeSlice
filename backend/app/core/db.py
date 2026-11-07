@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS notes (
     conversation_id TEXT,
     folder_id       INTEGER REFERENCES note_folders(id) ON DELETE SET NULL,
     title           TEXT NOT NULL,
+    file_name       TEXT,
     content_md      TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -232,6 +233,9 @@ def init_db(db_path: Path | None = None) -> None:
             conn.execute(
                 "ALTER TABLE notes ADD COLUMN folder_id INTEGER REFERENCES note_folders(id) ON DELETE SET NULL"
             )
+        if "file_name" not in note_cols:
+            conn.execute("ALTER TABLE notes ADD COLUMN file_name TEXT")
+        conn.execute("UPDATE notes SET file_name = title WHERE file_name IS NULL OR file_name = ''")
         # The index used to live next to the CREATE TABLE, which fails on an
         # existing database: the column only appears in the ALTER above. Creating
         # it here covers both fresh databases and migrated ones.

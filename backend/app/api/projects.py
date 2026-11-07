@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import ProjectDep, TokenDep
 from app.core.config import settings
 from app.core.errors import InvalidInput, NotFound
-from app.indexing.indexer import clear_index
+from app.indexing.indexer import clear_index, start_index_job, stop_project_watcher, watch_project
 from app.indexing.languages import detect_language
 from app.services import git_service, paths
 from app.storage import repo
@@ -47,6 +47,7 @@ def get_project(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
 
 @router.delete("/{project_id}")
 def delete_project(project: ProjectDep, _: TokenDep) -> dict[str, bool]:
+    stop_project_watcher(project["id"])
     clear_index(project["id"])
     repo.delete_project(project["id"])
     return {"ok": True}
@@ -143,4 +144,6 @@ def git_diff(project: ProjectDep, _: TokenDep, path: str = Query(default="")) ->
 @router.post("/{project_id}/open")
 def open_project(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
     repo.touch_project(project["id"])
+    watch_project(project["id"])
+    start_index_job(project["id"])
     return repo.get_project(project["id"]) or project

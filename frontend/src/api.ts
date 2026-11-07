@@ -4,8 +4,6 @@ import {
 } from './bridge'
 import type {
   AgentStreamEvent,
-  Anchor,
-  AnchorRefreshResult,
   CommandRule,
   CommandRuleCreateBody,
   Conversation,
@@ -27,6 +25,7 @@ import type {
   NoteFolder,
   NoteUpdateBody,
   OllamaPullEvent,
+  OllamaPullStatus,
   OllamaStatus,
   Project,
   ResumeBody,
@@ -126,6 +125,9 @@ export const createProject = (body: { path: string; name?: string | null }): Pro
 export const getProject = (projectId: number): Promise<Project> =>
   request<Project>(`/api/projects/${projectId}`)
 
+export const openProject = (projectId: number): Promise<Project> =>
+  request<Project>(`/api/projects/${projectId}/open`, { method: 'POST' })
+
 export const deleteProject = (projectId: number): Promise<{ ok: boolean }> =>
   request<{ ok: boolean }>(`/api/projects/${projectId}`, { method: 'DELETE' })
 
@@ -196,6 +198,9 @@ export const clearModelKey = (slot: 'chat' | 'embedding' = 'chat'): Promise<{ ok
 /* ---------------------------------- ollama --------------------------------- */
 
 export const getOllamaStatus = (): Promise<OllamaStatus> => request<OllamaStatus>('/api/settings/ollama/status')
+
+export const getOllamaPullStatus = (): Promise<OllamaPullStatus> =>
+  request<OllamaPullStatus>('/api/settings/ollama/pull')
 
 /**
  * Streams download progress for one preset model.
@@ -464,14 +469,6 @@ export const retitleNote = (noteId: number): Promise<Note & { retitle_failed?: b
 /** Writes the note to a `.md` file under the app data dir; resolves with its path. */
 export const exportNote = (noteId: number): Promise<NoteExport> =>
   request<NoteExport>(`/api/notes/${noteId}/export`, { method: 'POST' })
-
-/* ---------------------------------- anchors -------------------------------- */
-
-export const listAnchors = (projectId: number, signal?: AbortSignal): Promise<Anchor[]> =>
-  request<Anchor[]>(`/api/projects/${projectId}/anchors`, { signal })
-
-export const refreshAnchors = (projectId: number): Promise<AnchorRefreshResult> =>
-  request<AnchorRefreshResult>(`/api/projects/${projectId}/anchors/refresh`, { method: 'POST' })
 
 /* ------------------------------ command rules ------------------------------ */
 

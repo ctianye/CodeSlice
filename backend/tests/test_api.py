@@ -90,6 +90,51 @@ def test_index_job_lifecycle(client, project):
     assert status["last_job"]["id"] == job_id
 
 
+def test_opening_project_starts_backend_indexing(client, project):
+    opened = client.post(f"/api/projects/{project['id']}/open")
+    assert opened.status_code == 200
+    assert opened.json()["id"] == project["id"]
+
+    for _ in range(100):
+        status = client.get(f"/api/projects/{project['id']}/index").json()
+        job = status["last_job"]
+        if job and job["status"] in ("done", "error"):
+            break
+        time.sleep(0.1)
+    assert job["status"] == "done", job
+    assert status["files"] > 0
+
+
+def test_opened_project_reindexes_files_changed_on_disk(client, project):
+    from pathlib import Path
+
+    from app.storage import repo
+
+    client.post(f"/api/projects/{project['id']}/open")
+    for _ in range(100):
+        first = client.get(f"/api/projects/{project['id']}/index").json()["last_job"]
+        if first and first["status"] == "done":
+            break
+        time.sleep(0.1)
+    assert first and first["status"] == "done"
+
+    (Path(project["path"]) / "watched.py").write_text("def watched():\n    return 42\n", encoding="utf-8")
+    for _ in range(150):
+        status = client.get(f"/api/projects/{project['id']}/index").json()
+        latest = status["last_job"]
+        if latest and latest["id"] != first["id"] and latest["status"] == "done":
+            break
+        time.sleep(0.1)
+
+    assert latest and latest["id"] != first["id"]
+    assert latest["status"] == "done", latest
+    with repo.get_conn() as conn:
+        assert conn.execute(
+            "SELECT id FROM indexed_files WHERE project_id = ? AND path = ?",
+            (project["id"], "watched.py"),
+        ).fetchone()
+
+
 def test_search_requires_index(client, project):
     resp = client.get(f"/api/projects/{project['id']}/search", params={"q": "bar"})
     assert resp.status_code == 200

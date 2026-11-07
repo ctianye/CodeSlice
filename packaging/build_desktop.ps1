@@ -232,20 +232,20 @@ if ($builderConfigs.Count -eq 0) {
 else {
     foreach ($cfg in $builderConfigs) {
         $text = Get-Content -LiteralPath $cfg.FullName -Raw
-        # Match the `from:`/`to:` pair of the backend mapping, ignoring comments.
-        if ($text -match '(?m)^\s*-\s*from:\s*(?<from>[^\r\n#]+)[\r\n]+(?:\s*#.*[\r\n]+)*\s*to:\s*(?<to>[^\r\n#]+)') {
+        # Inspect the backend mapping only; icon.png and frontend/ are also
+        # extraResources entries but do not contain the Python executable.
+        if ($text -match '(?ms)^\s*-\s*from:\s*(?<from>[^\r\n#]+)[\r\n]+(?:\s*#.*[\r\n]+)*\s*to:\s*backend\s*(?:\r?\n|$)') {
             $fromVal = $Matches['from'].Trim()
-            $toVal = $Matches['to'].Trim()
-            Write-Host "    $($cfg.Name): from=$fromVal to=$toVal" -ForegroundColor DarkGray
+            Write-Host "    $($cfg.Name): backend from=$fromVal" -ForegroundColor DarkGray
 
             # Flat layout requires `from` to point at the directory that DIRECTLY
             # contains codeslice-backend.exe.
             $resolvedFrom = Join-Path $DesktopDir $fromVal
             $flatOk = Test-Path -LiteralPath (Join-Path $resolvedFrom 'codeslice-backend.exe')
             if (-not $flatOk) {
-                Write-Err ("extraResources 'from: $fromVal' does not directly contain codeslice-backend.exe - " +
-                    "the packaged app would look for resources\$toVal\codeslice-backend.exe and fail.")
-                Write-Host ("         Fix in desktop/electron-builder.yml: from: ../packaging/dist-backend/codeslice-backend, to: $toVal") -ForegroundColor DarkGray
+                Write-Err ("extraResources 'from: $fromVal' mapped to backend does not directly contain codeslice-backend.exe - " +
+                    "the packaged app would look for resources\backend\codeslice-backend.exe and fail.")
+                Write-Host '         Fix the backend mapping in desktop/electron-builder.yml so `from:` points at the flat bundle.' -ForegroundColor DarkGray
                 Write-Host '         (desktop/ is owned by another workstream - this script does not edit it.)' -ForegroundColor DarkGray
             }
             else {

@@ -7,7 +7,7 @@ import { useAsync } from '../hooks/useAsync'
 import { formatRelative, shortenPath } from '../lib/format'
 import { useApp } from '../state/AppState'
 import { ErrorNote, Loading } from './Feedback'
-import { Icon } from './Icon'
+import { Icon, Logo } from './Icon'
 
 /**
  * First-run / project-picker screen. Picks a folder through the Electron dialog
@@ -19,14 +19,24 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
 
   const [path, setPath] = useState('')
   const [adding, setAdding] = useState(false)
+  const [openingId, setOpeningId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [token, setToken] = useState('')
 
   const known = projects.length > 0 ? projects : (list.data ?? [])
 
-  const open = (project: Project) => {
-    setProject(project)
-    onProjectOpened()
+  const open = async (project: Project) => {
+    setOpeningId(project.id)
+    setError(null)
+    try {
+      const opened = await api.openProject(project.id)
+      setProject(opened)
+      onProjectOpened()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOpeningId(null)
+    }
   }
 
   const choose = async () => {
@@ -47,7 +57,7 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
       const next = await api.listProjects()
       setProjects(next)
       setPath('')
-      open(project)
+      await open(project)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -59,16 +69,20 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
     <div className="welcome">
       <div className="welcome-inner">
         <div className="welcome-hero">
+          <div className="welcome-brand" aria-label="CodeSlice">
+            <Logo size={38} />
+            <span>CodeSlice</span>
+          </div>
           <span className="welcome-eyebrow">
             <Icon name="shield" size={11} />
             本地优先 · 数据不出本机
           </span>
           <h1>
-            把代码读成<span className="grad">一段一段</span>的样子
+            选中代码，<span className="grad">读懂并沉淀</span>为笔记
           </h1>
           <p className="lede">
-            CodeSlice 把项目按函数与类切成可读的小段，每段配一个独立对话。选中几行就能单独追问，
-            回答里带可点击的代码引用。用自己的 API Key，索引与对话都留在本机。
+            自由选择任意代码段发起对话；理解之后，一键生成知识笔记，整理归档到自己的知识库。代码引用可直接回到源码，
+            索引与对话保存在本机。
           </p>
         </div>
 
@@ -163,7 +177,8 @@ export function WelcomePage({ onProjectOpened }: { onProjectOpened: () => void }
             <button
               className="project-card"
               key={project.id}
-              onClick={() => open(project)}
+              onClick={() => void open(project)}
+              disabled={openingId !== null}
               title={project.path}
               type="button"
             >

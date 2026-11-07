@@ -187,6 +187,16 @@ export interface OllamaPullEvent {
   percent?: number
 }
 
+export interface OllamaPullStatus {
+  state: 'idle' | 'running' | 'done' | 'error'
+  model: string | null
+  percent: number
+  detail: string
+  total: number
+  completed: number
+  error: string | null
+}
+
 /* -------------------------------- conversations ----------------------------- */
 
 export type ConversationMode = 'snippet' | 'project'
@@ -356,6 +366,7 @@ export interface Note {
   project_id: number
   conversation_id: string | null
   title: string
+  file_name: string
   content_md: string
   created_at: string
   updated_at: string
@@ -398,6 +409,7 @@ export interface NoteExport {
 export interface NoteCreateBody {
   project_id: number
   title: string
+  file_name?: string
   content_md: string
   conversation_id?: string | null
   folder_id?: number | null
@@ -405,36 +417,11 @@ export interface NoteCreateBody {
 
 export interface NoteUpdateBody {
   title?: string
+  file_name?: string
   content_md?: string
   folder_id?: number | null
   /** Set to true to actually move the note; without it folder_id is ignored. */
   move_folder?: boolean
-}
-
-/* ---------------------------------- anchors -------------------------------- */
-
-export type AnchorStatus = 'unchanged' | 'modified' | 'moved' | 'deleted'
-
-export interface Anchor {
-  id: number
-  conversation_id: string
-  file_path: string
-  commit_sha: string | null
-  symbol: string | null
-  start_line: number
-  end_line: number
-  snippet: string | null
-  code_hash: string | null
-  status: AnchorStatus
-  checked_at: string | null
-}
-
-export interface AnchorRefreshResult {
-  updated: number
-  deleted: number
-  moved: number
-  /** Not in the contract; the backend also reports how many are still fine. */
-  unchanged?: number
 }
 
 /* ------------------------------ command rules ------------------------------ */

@@ -289,20 +289,12 @@ export function Icon({ name, size = 14, filled = false, ...rest }: IconProps): R
   )
 }
 
-/** Small brand mark: a sliced code block. */
+/** CodeSlice mark: code brackets cut by a green slice. */
 export function Logo({ size = 18 }: { size?: number }): ReactNode {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="3" y="3" width="18" height="18" rx="5" fill="url(#cs-logo-a)" />
-      <path d="M7.6 8.8 5.9 12l1.7 3.2" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.9" />
-      <path d="M16.4 8.8 18.1 12l-1.7 3.2" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.9" />
-      <path d="M13.6 8.2 10.4 15.8" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" opacity="0.55" />
-      <defs>
-        <linearGradient id="cs-logo-a" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#4c8dff" />
-          <stop offset="1" stopColor="#2f6fd0" />
-        </linearGradient>
-      </defs>
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+      <path d="m10 6-8 10 8 10m12-20 8 10-8 10" fill="none" stroke="#16343c" strokeWidth="3" strokeLinecap="square" />
+      <path d="M17 2h4l-5 13h-4Zm-3 15h4l-5 13H9Z" fill="#148477" />
     </svg>
   )
 }

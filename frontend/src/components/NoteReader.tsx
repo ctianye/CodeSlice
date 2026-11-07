@@ -19,7 +19,7 @@ import { Markdown } from './Markdown'
  */
 export function NoteReader(): ReactNode {
   const { noteView, openNoteView, bumpRefresh, setActiveConversationId, refreshKey } = useApp()
-  const [draft, setDraft] = useState<{ title: string; content: string } | null>(null)
+  const [draft, setDraft] = useState<{ title: string; fileName: string; content: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<'retitle' | 'export' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -53,12 +53,12 @@ export function NoteReader(): ReactNode {
 
   const editing = draft !== null
   const canSave =
-    editing && draft.title.trim() !== '' && draft.content.trim() !== '' && !saving
+    editing && draft.title.trim() !== '' && draft.fileName.trim() !== '' && draft.content.trim() !== '' && !saving
 
   const startEdit = () => {
     setError(null)
     setNotice(null)
-    setDraft({ title: note.title, content: note.content_md })
+    setDraft({ title: note.title, fileName: note.file_name || note.title, content: note.content_md })
   }
 
   const save = async () => {
@@ -68,6 +68,7 @@ export function NoteReader(): ReactNode {
     try {
       const updated = await api.updateNote(note.id, {
         title: draft.title.trim(),
+        file_name: draft.fileName.trim(),
         content_md: draft.content,
       })
       openNoteView(updated)
@@ -242,9 +243,16 @@ export function NoteReader(): ReactNode {
         <div className="note-reader-edit">
           <input
             className="note-reader-input"
+            value={draft.fileName}
+            aria-label="导出文件名"
+            placeholder="导出文件名"
+            onChange={(event) => setDraft({ ...draft, fileName: event.target.value })}
+          />
+          <input
+            className="note-reader-input"
             value={draft.title}
             aria-label="笔记标题"
-            placeholder="知识点标题"
+            placeholder="知识点标题（知识库显示名）"
             onChange={(event) => setDraft({ ...draft, title: event.target.value })}
             autoFocus
           />

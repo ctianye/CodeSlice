@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -60,6 +62,19 @@ PRESETS: tuple[dict[str, Any], ...] = (
 )
 
 PRESET_MODELS: frozenset[str] = frozenset(item["model"] for item in PRESETS)
+
+_PULL_LOCK = threading.Lock()
+_PULL_STATE: dict[str, Any] = {
+    "state": "idle",
+    "model": None,
+    "percent": 0.0,
+    "detail": "",
+    "total": 0,
+    "completed": 0,
+    "error": None,
+    "sequence": 0,
+}
+_PULL_EVENTS: list[dict[str, Any]] = []
 
 
 def base_url() -> str:
@@ -129,6 +144,88 @@ def is_installed(model: str, models: list[str]) -> bool:
     if model in models:
         return True
     return any(name == f"{model}:latest" for name in models)
+
+
+def pull_status() -> dict[str, Any]:
+    """Return the process-wide pull state so the UI can reconnect after remount."""
+    with _PULL_LOCK:
+        return {key: value for key, value in _PULL_STATE.items() if key != "sequence"}
+
+
+def start_pull(model: str) -> None:
+    """Start one background pull; disconnecting an SSE client does not stop it."""
+    global _PULL_EVENTS
+    if model not in PRESET_MODELS:
+        raise ValueError(f"unsupported model: {model}")
+    with _PULL_LOCK:
+        if _PULL_STATE["state"] == "running":
+            if _PULL_STATE["model"] == model:
+                return
+            raise RuntimeError(f"another model is downloading: {_PULL_STATE['model']}")
+        _PULL_STATE.update(
+            state="running",
+            model=model,
+            percent=0.0,
+            detail="正在连接 Ollama…",
+            total=0,
+            completed=0,
+            error=None,
+            sequence=0,
+        )
+        _PULL_EVENTS = []
+
+    def run() -> None:
+        try:
+            for event in pull(model):
+                with _PULL_LOCK:
+                    if event["type"] == "progress":
+                        _PULL_STATE.update(
+                            state="running",
+                            percent=float(event.get("percent") or 0),
+                            detail=str(event.get("detail") or event.get("status") or ""),
+                            total=int(event.get("total") or 0),
+                            completed=int(event.get("completed") or 0),
+                        )
+                    elif event["type"] == "error":
+                        _PULL_STATE.update(state="error", error=str(event.get("detail") or "下载失败"))
+                        _PULL_STATE["detail"] = _PULL_STATE["error"]
+                    elif _PULL_STATE["state"] != "error":
+                        _PULL_STATE.update(state="done", percent=100.0, detail="下载完成")
+                    _PULL_STATE["sequence"] = int(_PULL_STATE["sequence"]) + 1
+                    _PULL_EVENTS.append(dict(event))
+        except Exception as exc:  # a worker failure must remain visible to a reconnecting UI
+            with _PULL_LOCK:
+                _PULL_STATE.update(
+                    state="error",
+                    error=f"{type(exc).__name__}: {exc}"[:300],
+                    detail=f"{type(exc).__name__}: {exc}"[:300],
+                )
+                _PULL_STATE["sequence"] = int(_PULL_STATE["sequence"]) + 1
+                _PULL_EVENTS.append(
+                    {"type": "error", "model": model, "detail": _PULL_STATE["error"]}
+                )
+
+    threading.Thread(target=run, name=f"ollama-pull-{model}", daemon=True).start()
+
+
+def stream_pull_status(model: str) -> Iterator[dict[str, Any]]:
+    """Stream snapshots from the background worker until it reaches a terminal state."""
+    last_sequence = 0
+    while True:
+        with _PULL_LOCK:
+            snapshot = dict(_PULL_STATE)
+            events = list(_PULL_EVENTS[last_sequence:])
+            last_sequence += len(events)
+        if snapshot.get("model") != model:
+            yield {"type": "error", "model": model, "detail": "下载任务已被替换"}
+            yield {"type": "done", "model": model}
+            return
+        yield from events
+        if snapshot["state"] in {"done", "error"} and last_sequence >= int(snapshot["sequence"]):
+            if not events or events[-1].get("type") != "done":
+                yield {"type": "done", "model": model}
+            return
+        time.sleep(0.25)
 
 
 def pull(model: str) -> Iterator[dict[str, Any]]:

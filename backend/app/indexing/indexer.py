@@ -12,8 +12,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any
+
+from watchfiles import DefaultFilter, watch
 
 from app.core.db import get_conn, utcnow, write_conn
 from app.indexing.chunker import chunk_file
@@ -26,6 +29,30 @@ from app.storage import repo
 log = logging.getLogger(__name__)
 
 MAX_FILE_BYTES = 1_500_000
+CHUNK_FORMAT_VERSION = 2
+_JOB_LOCK = threading.Lock()
+_ACTIVE_JOBS: dict[int, int] = {}
+_RERUN_REQUESTED: set[int] = set()
+_WATCH_LOCK = threading.Lock()
+_PROJECT_WATCHERS: dict[int, tuple[threading.Event, threading.Thread]] = {}
+
+
+class _ProjectWatchFilter(DefaultFilter):
+    def __init__(self, root: Path) -> None:
+        super().__init__()
+        self.root = root
+
+    def __call__(self, change: Any, path: str) -> bool:
+        if not super().__call__(change, path):
+            return False
+        target = Path(path)
+        try:
+            relative = target.relative_to(self.root)
+        except ValueError:
+            return False
+        if any(part in paths.DEFAULT_IGNORES for part in relative.parts):
+            return False
+        return not paths.skip_file(target.name) and target.suffix.lower() not in paths.BINARY_SUFFIXES
 
 
 def _iter_files(root: Path):
@@ -109,7 +136,13 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
         rel = path.relative_to(root).as_posix()
         seen_paths.add(rel)
         old = existing.get(rel)
-        if old and not force and int(old[2]) == stat.st_size and abs(float(old[1]) - stat.st_mtime) < 1e-3:
+        if (
+            old
+            and str(old[3] or "").startswith(f"chunk-v{CHUNK_FORMAT_VERSION}:")
+            and not force
+            and int(old[2]) == stat.st_size
+            and abs(float(old[1]) - stat.st_mtime) < 1e-3
+        ):
             stats["skipped"] += 1
             if idx % 50 == 0:
                 progress(int(idx / total * 90), f"跳过未变化文件 {idx}/{total}", stats)
@@ -119,7 +152,7 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
         if text is None:
             continue
         language = detect_language(rel, text)
-        digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+        digest = f"chunk-v{CHUNK_FORMAT_VERSION}:" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
         with write_conn() as conn:
             conn.execute(
@@ -220,21 +253,26 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
 
     if pending_vectors and model_name:
         progress(92, f"生成向量 {len(pending_vectors)} 段…", stats)
-        try:
-            items = list(pending_vectors.items())
-            texts = [content for _, content in items]
-            vectors = emb.embed_texts(texts)
-            if vectors:
-                with write_conn() as conn:
-                    for (chunk_id, _), vector in zip(items, vectors, strict=False):
-                        conn.execute(
-                            "UPDATE chunks SET vector = ?, embed_model = ? WHERE id = ?",
-                            (emb.pack(vector), model_name, chunk_id),
-                        )
-                stats["vectors"] = len(vectors)
-        except Exception as exc:  # embedding failures must not fail the index job
-            log.warning("embedding failed: %s", exc)
-            stats["embedding_error"] = f"{type(exc).__name__}: {exc}"[:300]
+        items = list(pending_vectors.items())
+        texts = [content for _, content in items]
+        for attempt in range(3):
+            try:
+                vectors = emb.embed_texts(texts)
+                if vectors:
+                    with write_conn() as conn:
+                        for (chunk_id, _), vector in zip(items, vectors, strict=False):
+                            conn.execute(
+                                "UPDATE chunks SET vector = ?, embed_model = ? WHERE id = ?",
+                                (emb.pack(vector), model_name, chunk_id),
+                            )
+                    stats["vectors"] = len(vectors)
+                break
+            except Exception as exc:  # keyword search remains available while vectors retry
+                if attempt == 2:
+                    log.warning("embedding failed after retries: %s", exc)
+                    stats["embedding_error"] = f"{type(exc).__name__}: {exc}"[:300]
+                else:
+                    time.sleep(1 + attempt * 2)
 
     # Notes are chunks too (path = note://<id>), so a rebuild must put them back:
     # the file scan above only knows about files on disk, and clear_index wipes
@@ -250,9 +288,18 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
     return stats
 
 
-def start_index_job(project_id: int, force: bool = False) -> int:
-    job_id = repo.create_job("index", project_id)
-    repo.update_job(job_id, status="pending", progress=0, message="排队中")
+def start_index_job(project_id: int, force: bool = False, queue_after_current: bool = False) -> int:
+    with _JOB_LOCK:
+        active_id = _ACTIVE_JOBS.get(project_id)
+        active_job = repo.get_job(active_id) if active_id is not None else None
+        if active_job and active_job.get("status") in {"pending", "running"}:
+            if queue_after_current:
+                _RERUN_REQUESTED.add(project_id)
+            return active_id
+
+        job_id = repo.create_job("index", project_id)
+        _ACTIVE_JOBS[project_id] = job_id
+        repo.update_job(job_id, status="pending", progress=0, message="排队中")
 
     def _run() -> None:
         try:
@@ -260,7 +307,68 @@ def start_index_job(project_id: int, force: bool = False) -> int:
         except Exception as exc:  # pragma: no cover - job error path
             log.exception("index job failed")
             repo.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}", message="索引失败")
+        finally:
+            rerun = False
+            with _JOB_LOCK:
+                if _ACTIVE_JOBS.get(project_id) == job_id:
+                    _ACTIVE_JOBS.pop(project_id, None)
+                    rerun = project_id in _RERUN_REQUESTED
+                    _RERUN_REQUESTED.discard(project_id)
+            if rerun:
+                start_index_job(project_id)
 
     thread = threading.Thread(target=_run, name=f"index-{project_id}", daemon=True)
     thread.start()
     return job_id
+
+
+def watch_project(project_id: int) -> None:
+    """Watch an opened project and coalesce source changes into background scans."""
+    project = repo.get_project(project_id)
+    if project is None:
+        return
+    root = paths.resolve_root(project["path"])
+    with _WATCH_LOCK:
+        current = _PROJECT_WATCHERS.get(project_id)
+        if current and current[1].is_alive():
+            return
+        stop = threading.Event()
+
+        def _run() -> None:
+            try:
+                for _ in watch(
+                    root,
+                    watch_filter=_ProjectWatchFilter(root),
+                    stop_event=stop,
+                    debounce=1200,
+                    step=300,
+                ):
+                    if stop.is_set():
+                        break
+                    start_index_job(project_id, queue_after_current=True)
+            except Exception:
+                if not stop.is_set():
+                    log.warning("project file watcher stopped for %s", project_id, exc_info=True)
+            finally:
+                with _WATCH_LOCK:
+                    if _PROJECT_WATCHERS.get(project_id, (None, None))[0] is stop:
+                        _PROJECT_WATCHERS.pop(project_id, None)
+
+        thread = threading.Thread(target=_run, name=f"watch-{project_id}", daemon=True)
+        _PROJECT_WATCHERS[project_id] = (stop, thread)
+        thread.start()
+
+
+def stop_project_watcher(project_id: int) -> None:
+    with _WATCH_LOCK:
+        watcher = _PROJECT_WATCHERS.pop(project_id, None)
+    if watcher:
+        watcher[0].set()
+
+
+def stop_project_watchers() -> None:
+    with _WATCH_LOCK:
+        watchers = list(_PROJECT_WATCHERS.values())
+        _PROJECT_WATCHERS.clear()
+    for stop, _ in watchers:
+        stop.set()

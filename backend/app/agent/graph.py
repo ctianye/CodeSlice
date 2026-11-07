@@ -294,7 +294,9 @@ def prepare(state: AgentState) -> dict[str, Any]:
         else:
             chunks = hybrid.search(int(state["project_id"]), query, top_k=top_k)
 
-    citations = [_citation_from_chunk(c) for c in chunks][:8]
+    # Keep the prompt context broad enough to answer, while showing only its
+    # strongest source locations in the chat UI.
+    citations = [_citation_from_chunk(c) for c in chunks][:4]
     for citation in citations:
         _emit({"type": "citation", **citation})
 
@@ -564,7 +566,7 @@ def _retitle_placeholder(conversation_id: str, answer: str) -> bool:
         conversation = repo.get_conversation(conversation_id)
         if conversation is None or not notegen.is_auto_title(conversation.get("title")):
             return False
-        title = notegen.title_from_answer(answer)
+        title = notegen.title_for_conversation(conversation_id, answer)
         if not title:
             return False
         repo.rename_conversation(conversation_id, title)

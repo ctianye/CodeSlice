@@ -142,7 +142,13 @@ def _make_chunk(
     }
 
 
-def _text_chunks(path: str, language: str, text: str, kind: str = "block") -> list[dict]:
+def _text_chunks(
+    path: str,
+    language: str,
+    text: str,
+    kind: str = "block",
+    start_line: int = 1,
+) -> list[dict]:
     lines = _lines(text)
     chunks: list[dict] = []
     if not lines:
@@ -153,7 +159,18 @@ def _text_chunks(path: str, language: str, text: str, kind: str = "block") -> li
         content = "\n".join(lines[start:end])
         if not content.strip():
             continue
-        chunks.append(_make_chunk(path, language, kind, None, None, start + 1, end, content[:MAX_CHUNK_CHARS]))
+        chunks.append(
+            _make_chunk(
+                path,
+                language,
+                kind,
+                None,
+                None,
+                start_line + start,
+                start_line + end - 1,
+                content[:MAX_CHUNK_CHARS],
+            )
+        )
     return chunks
 
 
@@ -283,31 +300,33 @@ def chunk_code(path: str, language: str, text: str) -> list[dict]:
     if not chunks:
         return _text_chunks(path, language, text)
 
-    # Emit module-level leftovers (imports, constants) as one module chunk.
+    # Keep each module-level gap separate so citations point at the actual lines.
     covered.sort()
-    module_lines: list[str] = []
     cursor = 1
+    module_chunks: list[dict] = []
+
+    def add_module_gap(first: int, last: int) -> None:
+        while first <= last and not lines[first - 1].strip():
+            first += 1
+        while last >= first and not lines[last - 1].strip():
+            last -= 1
+        if first > last:
+            return
+        body = _slice(lines, first, last)
+        if len(body) <= 40:
+            return
+        module_chunks.extend(
+            _text_chunks(path, language, body, kind="module", start_line=first)
+        )
+
     for start, end in covered:
         if start > cursor:
-            module_lines.extend(lines[cursor - 1 : start - 1])
+            add_module_gap(cursor, start - 1)
         cursor = max(cursor, end + 1)
     if cursor <= len(lines):
-        module_lines.extend(lines[cursor - 1 :])
-    module_text = "\n".join(module_lines).strip()
-    if len(module_text) > 40:
-        chunks.insert(
-            0,
-            _make_chunk(
-                path,
-                language,
-                "module",
-                "<module>",
-                None,
-                1,
-                len(lines),
-                module_text[:MAX_CHUNK_CHARS],
-            ),
-        )
+        add_module_gap(cursor, len(lines))
+    chunks.extend(module_chunks)
+    chunks.sort(key=lambda chunk: (chunk["start_line"], chunk["end_line"], chunk["kind"] != "module"))
 
     # Guard against single huge symbols.
     out: list[dict] = []

@@ -30,6 +30,7 @@ from app.api import settings as settings_api
 from app.core.config import APP_NAME, VERSION, settings
 from app.core.db import init_db
 from app.core.errors import AppError
+from app.indexing.indexer import stop_project_watchers
 from app.services import notegen
 from app.storage import repo
 
@@ -82,6 +83,7 @@ async def lifespan(_: FastAPI):
         log.warning("conversation title backfill failed", exc_info=True)
     log.info("%s %s starting, data_dir=%s", APP_NAME, VERSION, settings.data_dir)
     yield
+    stop_project_watchers()
     log.info("shutting down")
 
 

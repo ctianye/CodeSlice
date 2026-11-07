@@ -20,8 +20,8 @@
 .editor-tabs {
   display: flex;
   align-items: stretch;
-  height: 34px;
-  flex: 0 0 34px;
+  height: 42px;
+  flex: 0 0 42px;
   background: color-mix(in srgb, var(--bg-panel) 80%, var(--bg) 20%);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -37,13 +37,26 @@
   scrollbar-width: thin;
 }
 
-/* The strip scrolls with the wheel; a visible bar would just add noise. */
 .editor-tabs-strip {
-  scrollbar-width: none;
+  scrollbar-color: var(--border-strong) var(--bg-panel);
 }
 
 .editor-tabs-strip::-webkit-scrollbar {
-  height: 0;
+  height: 8px;
+}
+
+.editor-tabs-strip::-webkit-scrollbar-track {
+  background: var(--bg-panel);
+}
+
+.editor-tabs-strip::-webkit-scrollbar-thumb {
+  border: 1px solid var(--bg-panel);
+  border-radius: 4px;
+  background: var(--border-strong);
+}
+
+.editor-tabs-strip::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
 }
 
 /* Placeholder so an empty strip still reads as a strip instead of a gap. */

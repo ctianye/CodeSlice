@@ -14,7 +14,7 @@ import { Icon } from './Icon'
 export function FilePanel(): ReactNode {
   const { project, reveal, refreshKey, focusNote, bumpRefresh } = useApp()
   const projectId = project?.id ?? null
-  const index = useIndexJob(projectId, { onSettled: () => bumpRefresh() })
+  const index = useIndexJob(projectId, () => bumpRefresh())
 
   const tree = useAsync(
     (signal) =>
@@ -74,22 +74,11 @@ export function FilePanel(): ReactNode {
 
   const dirtyPaths = new Set(git.data ? [...git.data.modified, ...git.data.untracked] : [])
   const job = index.job
-  const jobBusy = job !== null && (job.status === 'running' || job.status === 'pending')
   const totals = index.totals
 
   return (
     <div className="sidebar-section">
       <div className="sidebar-toolbar">
-        <button
-          type="button"
-          className="small"
-          onClick={index.start}
-          disabled={index.starting || jobBusy}
-          title="索引在后台自动维护；代码改动没有被发现时可以手动重跑一次"
-        >
-          <Icon name="database" size={12} />
-          {index.starting ? '提交中…' : jobBusy ? '索引中…' : '更新索引'}
-        </button>
         {totals && totals.files > 0 ? (
           <span className="badge mute" title="当前索引里已有的文件 / 片段 / 向量数">
             {totals.files} 文件 · {totals.chunks} 片段
@@ -119,24 +108,7 @@ export function FilePanel(): ReactNode {
       </div>
 
       {index.error ? <ErrorNote message={index.error} /> : null}
-      {job ? <IndexCard job={job} totals={totals} onDismiss={index.dismiss} /> : null}
-      {index.firstRun && !job ? (
-        <div className="first-index">
-          <div className="first-index-head">
-            <Icon name="database" size={12} />
-            正在建立索引
-          </div>
-          <p>首次打开项目会自动建立索引，完成后检索、引用和对话就能定位到具体代码。</p>
-          <button
-            type="button"
-            className="small"
-            onClick={index.start}
-            disabled={index.starting || index.checking}
-          >
-            {index.starting ? '提交中…' : '重新开始'}
-          </button>
-        </div>
-      ) : null}
+      {job ? <IndexCard job={job} totals={totals} /> : null}
 
       <div className="sidebar-toolbar">
         <div className="search-field">
@@ -226,7 +198,6 @@ const JOB_BADGE: Record<JobStatus, string> = {
 interface IndexCardProps {
   job: Job
   totals: IndexTotals | null
-  onDismiss: () => void
 }
 
 /**
@@ -236,7 +207,7 @@ interface IndexCardProps {
  * the card falls back to the cumulative index size, because "文件 0 片段 0" after
  * a no-op incremental run is true-but-useless.
  */
-function IndexCard({ job, totals, onDismiss }: IndexCardProps): ReactNode {
+function IndexCard({ job, totals }: IndexCardProps): ReactNode {
   const percent = Math.max(0, Math.min(100, job.progress))
   const busy = job.status === 'running' || job.status === 'pending'
   const shown = busy || !totals ? job.stats : totals
@@ -247,15 +218,6 @@ function IndexCard({ job, totals, onDismiss }: IndexCardProps): ReactNode {
         <span className="truncate" style={{ flex: 1 }} title={job.message}>
           {job.message || `索引任务 #${job.id}`}
         </span>
-        <button
-          type="button"
-          className="icon"
-          onClick={onDismiss}
-          title="收起索引进度"
-          aria-label="收起索引进度"
-        >
-          <Icon name="x" size={12} />
-        </button>
       </div>
 
       <div className="progress-track">
@@ -295,7 +257,7 @@ function SearchResults({ results, onOpen, onBack }: SearchResultsProps): ReactNo
             文件树
           </button>
         </div>
-        <div className="list-empty">没有检索到相关代码，请先建立索引。</div>
+        <div className="list-empty">没有检索到相关代码，请尝试调整关键词。</div>
       </>
     )
   }

@@ -7,7 +7,7 @@ import { useApp } from '../state/AppState'
 import type { AppTheme } from '../state/AppState'
 import { CommandRulesPanel } from './CommandRulesPanel'
 import { ErrorNote, Loading } from './Feedback'
-import { Icon } from './Icon'
+import { Icon, Logo } from './Icon'
 import type { IconName } from './Icon'
 import { VectorModelsPanel } from './VectorModelsPanel'
 
@@ -390,6 +390,10 @@ function AboutPanel(): ReactNode {
 
   return (
     <div>
+      <div className="about-brand" style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12, fontWeight: 650 }}>
+        <Logo size={26} />
+        <span>CodeSlice</span>
+      </div>
       <div className="section-label">关于 CodeSlice</div>
       <p className="lede" style={{ fontSize: 11.5, marginBottom: 14 }}>
         本地优先的代码阅读助手。所有代码与对话数据都保存在本机，模型请求直接由你配置的服务商处理。

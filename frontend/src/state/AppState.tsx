@@ -6,10 +6,10 @@ import { usePersistedState } from '../hooks/useAsync'
 export type AppTheme = 'dark' | 'light'
 
 /** Sidebar views, shared so a code card can jump to the notes panel. */
-export type SidebarTab = 'files' | 'chats' | 'notes' | 'anchors'
+export type SidebarTab = 'files' | 'chats' | 'notes'
 
 /** Runtime list of the valid tab ids, used to validate the persisted value. */
-const SIDEBAR_TABS: SidebarTab[] = ['files', 'chats', 'notes', 'anchors']
+const SIDEBAR_TABS: SidebarTab[] = ['files', 'chats', 'notes']
 
 /** A request to reveal + highlight a line range in the editor. */
 export interface RevealTarget extends Citation {
