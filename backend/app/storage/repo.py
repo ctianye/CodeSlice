@@ -562,6 +562,40 @@ def delete_note(note_id: int) -> None:
         conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
 
+def list_annotations(project_id: int, file_path: str) -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM code_annotations WHERE project_id = ? AND file_path = ? ORDER BY start_line, id",
+            (project_id, file_path),
+        )
+        return [dict(row) for row in rows]
+
+
+def create_annotation(
+    project_id: int,
+    file_path: str,
+    start_line: int,
+    end_line: int,
+    selected_code: str,
+    body: str,
+) -> dict[str, Any]:
+    now = utcnow()
+    with write_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO code_annotations "
+            "(project_id,file_path,start_line,end_line,selected_code,body,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (project_id, file_path, start_line, end_line, selected_code, body, now, now),
+        )
+        row = conn.execute("SELECT * FROM code_annotations WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+
+def delete_annotation(annotation_id: int) -> None:
+    with write_conn() as conn:
+        conn.execute("DELETE FROM code_annotations WHERE id = ?", (annotation_id,))
+
+
 # --------------------------------------------------------------------------- #
 # command rules
 # --------------------------------------------------------------------------- #

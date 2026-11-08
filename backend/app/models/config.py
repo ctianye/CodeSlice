@@ -32,7 +32,8 @@ class ModelConfig:
     model: str = ""
     base_url: str | None = None
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 32768
+    system_prompt: str = ""
 
     def public(self, key_configured: bool) -> dict[str, Any]:
         data = asdict(self)
@@ -144,7 +145,8 @@ def load_settings() -> ModelSettings:
         model=chat_raw.get("model", ""),
         base_url=chat_raw.get("base_url") or None,
         temperature=float(chat_raw.get("temperature", 0.2)),
-        max_tokens=int(chat_raw.get("max_tokens", 4096)),
+        max_tokens=int(chat_raw.get("max_tokens", 32768)),
+        system_prompt=str(chat_raw.get("system_prompt", "")),
     )
     emb_raw = raw.get("embedding")
     embedding = None
@@ -177,6 +179,7 @@ def update_settings(payload: dict[str, Any]) -> ModelSettings:
             base_url=chat_payload.get("base_url", current.chat.base_url) or None,
             temperature=float(chat_payload.get("temperature", current.chat.temperature)),
             max_tokens=int(chat_payload.get("max_tokens", current.chat.max_tokens)),
+            system_prompt=str(chat_payload.get("system_prompt", current.chat.system_prompt)),
         )
         key = chat_payload.get("api_key")
         if key:
@@ -204,8 +207,11 @@ def update_settings(payload: dict[str, Any]) -> ModelSettings:
 
 def public_settings() -> dict[str, Any]:
     ms = load_settings()
+    from app.agent.prompts import BASE
+
     return {
         "chat": ms.chat.public(has_api_key("chat")),
+        "default_system_prompt": BASE,
         "embedding": ms.embedding.public(has_api_key("embedding")) if ms.embedding else None,
     }
 

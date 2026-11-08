@@ -3,7 +3,7 @@ import { editor as monacoEditor, Selection } from 'monaco-editor'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
-import type { Conversation, FileContent, GitStatus } from '../types'
+import type { CodeAnnotation, Conversation, FileContent, GitStatus } from '../types'
 import { useAsync } from '../hooks/useAsync'
 import { baseName } from '../lib/citations'
 import { formatBytes, languageFromPath } from '../lib/format'
@@ -69,11 +69,17 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     [projectId, path, refreshKey],
     { enabled: projectId !== null && path !== null },
   )
+  const annotations = useAsync(
+    (signal) => projectId !== null && path !== null ? api.listAnnotations(projectId, path, signal) : Promise.resolve<CodeAnnotation[]>([]),
+    [projectId, path, refreshKey],
+    { enabled: projectId !== null && path !== null },
+  )
 
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
   const citationRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const hoverRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const frameRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const annotationRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const pickRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const zonesRef = useRef<{ update: (items: FrameZoneItem[]) => void; dispose: () => void } | null>(null)
   const detachRef = useRef<(() => void) | null>(null)
@@ -92,6 +98,12 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const [hoverRange, setHoverRange] = useState<{ start: number; end: number } | null>(null)
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [cardError, setCardError] = useState<string | null>(null)
+  const [annotationDraft, setAnnotationDraft] = useState<{ projectId: number; path: string; start: number; end: number; code: string } | null>(null)
+  const [annotationText, setAnnotationText] = useState('')
+  const [annotationSaving, setAnnotationSaving] = useState(false)
+  const [expandedAnnotations, setExpandedAnnotations] = useState<Record<number, boolean>>({})
+  const annotationTargetRef = useRef('')
+  annotationTargetRef.current = `${projectId}:${path}`
   /**
    * Markdown documents open rendered, not as source. `docDraft` is null while
    * the buffer still matches the file; once the user types it holds the unsaved
@@ -211,6 +223,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       citationRef.current = instance.createDecorationsCollection([])
       hoverRef.current = instance.createDecorationsCollection([])
       frameRef.current = instance.createDecorationsCollection([])
+      annotationRef.current = instance.createDecorationsCollection([])
       pickRef.current = instance.createDecorationsCollection([])
       zonesRef.current = createFrameZones(instance)
       setReady(true)
@@ -339,6 +352,12 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     collection.set(frameDecorations(model, spans))
   }, [cards.data, file.data, ready])
 
+  useEffect(() => {
+    const model = editorRef.current?.getModel()
+    if (!model || !annotationRef.current) return
+    annotationRef.current.set(frameDecorations(model, (annotations.data ?? []).filter((item) => item.project_id === projectId && item.file_path === path).map((item) => ({ start: item.start_line, end: item.end_line })), 'annotation-frame'))
+  }, [annotations.data, file.data, ready, projectId, path])
+
   // Tint the lines a hovered code card covers, without touching the citation
   // highlight collection.
   useEffect(() => {
@@ -354,6 +373,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     citationRef.current?.clear()
     hoverRef.current?.clear()
     frameRef.current?.clear()
+    annotationRef.current?.clear()
     pickRef.current?.clear()
     pickedRef.current = []
     // Zones survive a model swap, so drop the old file's strips before the new
@@ -362,13 +382,16 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     setSelection(null)
     setPicked(null)
     setHoverRange(null)
+    setAnnotationDraft(null)
+    setAnnotationText('')
+    setExpandedAnnotations({})
     // The document buffer belongs to the previous path; leaving it would offer to
     // save one file's text into another.
     setDocEditing(false)
     setDocDraft(null)
     setDocNotice(null)
     setDocError(null)
-  }, [path])
+  }, [path, projectId])
 
   // Restore an unsaved document buffer when the tab comes back.
   useEffect(() => {
@@ -399,8 +422,24 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         onClick: () => focusConversation(card.id),
       })
     }
+    for (const annotation of annotations.data ?? []) {
+      if (annotation.project_id !== projectId || annotation.file_path !== path) continue
+      items.push({
+        key: `annotation-${annotation.id}`,
+        start: annotation.start_line,
+        label: `${expandedAnnotations[annotation.id] ? '▾' : '▸'} 批注 · ${annotation.body.slice(0, 42)}`,
+        active: false,
+        onClick: () => undefined,
+        annotation: annotation.body,
+        expanded: Boolean(expandedAnnotations[annotation.id]),
+        onToggle: () => setExpandedAnnotations((prev) => ({ ...prev, [annotation.id]: !prev[annotation.id] })),
+        onDelete: () => {
+          void api.deleteAnnotation(annotation.id).then(() => annotations.reload()).catch((error: unknown) => setCardError(error instanceof Error ? error.message : String(error)))
+        },
+      })
+    }
     return items
-  }, [cards.data, activeConversationId, focusConversation])
+  }, [cards.data, annotations.data, annotations.reload, activeConversationId, focusConversation, expandedAnnotations, projectId, path])
 
   // Reserve a title strip above every framed range. The zone belongs to the
   // view, not to the model, so it has to be refreshed whenever the cards change
@@ -415,6 +454,24 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const isDoc = content?.language === 'markdown'
   const docText = docDraft ?? content?.content ?? ''
   const docDirty = isDoc && docDraft !== null && docDraft !== content?.content
+
+  const saveAnnotation = async () => {
+    if (!annotationDraft || !annotationText.trim() || annotationSaving) return
+    const target = annotationDraft
+    setAnnotationSaving(true)
+    try {
+      await api.createAnnotation(target.projectId, { file_path: target.path, start_line: target.start, end_line: target.end, selected_code: target.code, body: annotationText.trim() })
+      if (annotationTargetRef.current === `${target.projectId}:${target.path}`) {
+        setAnnotationDraft(null)
+        setAnnotationText('')
+      }
+      annotations.reload()
+    } catch (error) {
+      setCardError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAnnotationSaving(false)
+    }
+  }
 
   // Hooks below run before the placeholder returns: the pane keeps its hook order
   // when a project is closed and reopened, and React throws on a mismatch.
@@ -655,6 +712,9 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <Icon name="message-plus" size={11} />
             就这些行提问
           </button>
+          <button className="small annotation-action" type="button" onClick={() => { if (projectId === null || path === null) return; const start = picked.lines[0] ?? 1; const end = picked.lines[picked.lines.length - 1] ?? start; setAnnotationText(''); setAnnotationDraft({ projectId, path, start, end, code: picked.code }) }}>
+            <Icon name="pencil" size={11} />就这段批注
+          </button>
           <button
             className="small ghost"
             onClick={() => {
@@ -685,6 +745,9 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <Icon name="message-plus" size={11} />
             就这段提问
           </button>
+          <button className="small annotation-action" type="button" onClick={() => { if (projectId === null || path === null) return; setAnnotationText(''); setAnnotationDraft({ projectId, path, start: selection.start, end: selection.end, code: selection.code }) }}>
+            <Icon name="pencil" size={11} />就这段批注
+          </button>
           <button
             className="small ghost"
             onClick={() => {
@@ -704,6 +767,13 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           </button>
         </div>
       ) : null}
+
+      {annotationDraft ? <div className="annotation-editor">
+        <span>批注 · 第 {annotationDraft.start}-{annotationDraft.end} 行</span>
+        <textarea autoFocus rows={2} maxLength={10000} value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} placeholder="写下这段代码的批注…" />
+        <button className="small ghost" type="button" onClick={() => setAnnotationDraft(null)}>取消</button>
+        <button className="small primary" type="button" disabled={!annotationText.trim() || annotationSaving} onClick={() => void saveAnnotation()}><Icon name="check" size={11} />{annotationSaving ? '保存中…' : '保存批注'}</button>
+      </div> : null}
 
       {cardError ? <ErrorNote message={cardError} /> : null}
 

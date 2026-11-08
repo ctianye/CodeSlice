@@ -153,7 +153,8 @@ def test_node_payload_matches_the_http_contract():
     node = node_config.get_node("agent")
     assert node["id"] == "agent"
     assert node["kind"] == "llm"
-    assert node["editable"]["max_tokens"] == {"type": "int", "min": 256, "max": 32768}
+    assert node["editable"]["max_tokens"] == {"type": "int", "min": 1024, "max": 262144}
+    assert node["defaults"]["max_tokens"] == 32768
     assert set(node["config"]) == set(node["defaults"])
     assert isinstance(node["stats"], dict)
 
@@ -166,7 +167,7 @@ def test_payload_lists_nodes_in_graph_order():
 
 def test_editable_payload_is_a_copy():
     node_config.get_node("agent")["editable"]["max_tokens"]["max"] = 1
-    assert node_config.NODES["agent"]["editable"]["max_tokens"]["max"] == 32768
+    assert node_config.NODES["agent"]["editable"]["max_tokens"]["max"] == 262144
 
 
 # --------------------------------------------------------------------------- #

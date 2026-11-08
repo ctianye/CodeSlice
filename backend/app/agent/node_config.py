@@ -44,14 +44,14 @@ NODES: dict[str, dict[str, Any]] = {
         "editable": {
             "model": {"type": "string"},
             "temperature": {"type": "float", "min": 0, "max": 2},
-            "max_tokens": {"type": "int", "min": 256, "max": 32768},
+            "max_tokens": {"type": "int", "min": 1024, "max": 262144},
             "extra_prompt": {"type": "text"},
             "max_tool_rounds": {"type": "int", "min": 1, "max": 30},
         },
         "defaults": {
             "model": "",
             "temperature": 0.2,
-            "max_tokens": 4096,
+            "max_tokens": 32768,
             "extra_prompt": "",
             "max_tool_rounds": 10,
         },

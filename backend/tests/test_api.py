@@ -253,6 +253,35 @@ def test_settings_roundtrip_never_returns_key(client):
     assert client.get("/api/settings/model").json()["chat"]["api_key_configured"] is False
 
 
+def test_annotations_roundtrip(client, project):
+    created = client.post(
+        f"/api/projects/{project['id']}/annotations",
+        json={
+            "file_path": "pkg/sample.py",
+            "start_line": 2,
+            "end_line": 4,
+            "selected_code": "def sample():",
+            "body": "注释内容",
+        },
+    )
+    assert created.status_code == 200
+    annotation = created.json()
+    assert annotation["body"] == "注释内容"
+    listed = client.get(f"/api/projects/{project['id']}/annotations", params={"file_path": "pkg/sample.py"})
+    assert [item["id"] for item in listed.json()] == [annotation["id"]]
+    assert client.delete(f"/api/annotations/{annotation['id']}").json() == {"ok": True}
+    assert client.get(f"/api/projects/{project['id']}/annotations", params={"file_path": "pkg/sample.py"}).json() == []
+
+
+def test_chat_settings_support_32k_and_custom_prompt(client):
+    initial = client.get("/api/settings/model").json()
+    assert initial["chat"]["max_tokens"] == 32768
+    response = client.put("/api/settings/model", json={"chat": {"max_tokens": 32768, "system_prompt": "回答保持简洁"}})
+    assert response.status_code == 200
+    assert response.json()["chat"]["system_prompt"] == "回答保持简洁"
+    assert response.json()["default_system_prompt"]
+
+
 def test_tests_never_touch_the_production_credential_store():
     """Guard rail: a test that forgets the sandbox would wipe a user's real key.
 

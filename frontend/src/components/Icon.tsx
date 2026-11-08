@@ -53,6 +53,10 @@ export type IconName =
   | 'code'
   | 'corner-down-left'
   | 'download'
+  | 'github'
+  | 'network'
+  | 'pause'
+  | 'play'
 
 const PATHS: Record<IconName, ReactNode> = {
   'chevron-right': <path d="m9 18 6-6-6-6" />,
@@ -259,6 +263,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M5 19.5h14" />
     </>
   ),
+  github: (
+    <>
+      <path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 6v-3.9a3.4 3.4 0 0 0-.9-2.7c3-.3 6.1-1.5 6.1-6.7a5.2 5.2 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6s-1.2-.4-3.8 1.4a13 13 0 0 0-6.9 0C5.4 1.1 4.2 1.5 4.2 1.5a4.8 4.8 0 0 0-.1 3.6 5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.1 6.4 6.1 6.7a3.4 3.4 0 0 0-.9 2.7V22" />
+    </>
+  ),
+  network: <><circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" /><path d="m10.8 7.3-4.5 8.4m6.9-8.4 4.5 8.4M7.5 18h9" /></>,
+  pause: <><path d="M8 5h3v14H8z" /><path d="M15 5h3v14h-3z" /></>,
+  play: <path d="m8 5 12 7-12 7z" />,
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

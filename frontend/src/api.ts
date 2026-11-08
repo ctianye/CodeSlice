@@ -5,6 +5,7 @@ import {
 import type {
   AgentStreamEvent,
   CommandRule,
+  CodeAnnotation,
   CommandRuleCreateBody,
   Conversation,
   ConversationDetail,
@@ -113,7 +114,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 /** GET /api/health — the only unauthenticated endpoint. */
-export const getHealth = (): Promise<Health> => request<Health>('/api/health')
+export const getHealth = (signal?: AbortSignal): Promise<Health> => request<Health>('/api/health', { signal })
 
 /* -------------------------------- projects --------------------------------- */
 
@@ -424,6 +425,15 @@ export function streamResume(
 }
 
 /* ----------------------------------- notes --------------------------------- */
+
+export const listAnnotations = (projectId: number, filePath: string, signal?: AbortSignal): Promise<CodeAnnotation[]> =>
+  request<CodeAnnotation[]>(`/api/projects/${projectId}/annotations?${new URLSearchParams({ file_path: filePath })}`, { signal })
+
+export const createAnnotation = (projectId: number, body: Pick<CodeAnnotation, 'file_path' | 'start_line' | 'end_line' | 'selected_code' | 'body'>): Promise<CodeAnnotation> =>
+  request<CodeAnnotation>(`/api/projects/${projectId}/annotations`, { method: 'POST', body })
+
+export const deleteAnnotation = (id: number): Promise<{ ok: boolean }> =>
+  request<{ ok: boolean }>(`/api/annotations/${id}`, { method: 'DELETE' })
 
 /**
  * Lists notes for the knowledge base.

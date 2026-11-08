@@ -31,7 +31,8 @@ class ChatBody(BaseModel):
     model: str | None = None
     base_url: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
-    max_tokens: int | None = Field(default=None, ge=256, le=32000)
+    max_tokens: int | None = Field(default=None, ge=1024, le=262144)
+    system_prompt: str | None = Field(default=None, max_length=20000)
     api_key: str | None = None
 
 
@@ -61,6 +62,11 @@ def put_model_settings(body: SettingsBody, _: TokenDep) -> dict[str, Any]:
     if body.embedding is not None:
         payload["embedding"] = {k: v for k, v in body.embedding.model_dump().items() if v is not None}
     model_config.update_settings(payload)
+    if body.chat is not None and body.chat.max_tokens is not None:
+        # The runtime agent's node budget must match the visible model setting.
+        from app.agent import node_config
+
+        node_config.save_node("agent", {"max_tokens": body.chat.max_tokens})
     new_embedding = model_config.load_settings().embedding
     if body.embedding is not None and new_embedding is not None and embeddings.is_configured():
         old_identity = (old_embedding.model, old_embedding.base_url, old_embedding.dims) if old_embedding else None

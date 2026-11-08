@@ -136,6 +136,19 @@ CREATE TABLE IF NOT EXISTS notes (
     updated_at      TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS code_annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    selected_code TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_project_file ON code_annotations(project_id, file_path);
+
 CREATE TABLE IF NOT EXISTS command_rules (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -46,6 +46,17 @@ you back to the original source.
 
 ![Browse saved CodeSlice knowledge-base notes](docs/screenshots/knowledge-base.png)
 
+### Explore saved knowledge in 3D
+
+Open the knowledge graph to explore saved notes as a rotatable 3D network.
+Category colors, search, filters, and a note details panel make a large library
+easy to browse. Links show shared folders or code-file references, not inferred
+semantic facts; select a node to read or open its note.
+
+![Explore related saved notes in the CodeSlice knowledge graph](docs/screenshots/knowledge-graph.png)
+
+知识库可切换到 3D 图谱，按分类着色并支持旋转、搜索和筛选；节点关系来自共同文件夹或代码文件引用，点击后可查看并打开笔记。
+
 ## Getting started
 
 1. Download `CodeSlice-0.1.0-Setup.exe` from the [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest) and install it on Windows 10 or 11.
@@ -65,10 +76,20 @@ handling policies apply. API keys are saved in Windows Credential Manager.
 - Splits supported languages into structural chunks using Tree-sitter and
   searches with local FTS5 and vector similarity retrieval.
 - Adds navigable file-and-line citations to answers.
+- Adds persistent, collapsible annotations to selected code ranges.
 - Requires per-action approval before writing a file or running a command.
 - Turns conversations into indexed, searchable notes that can be reused across
   projects.
+- Visualizes saved notes in a rotatable, searchable 3D knowledge graph with
+  category filters and note details.
 - Saves conversations, indexes, and application data locally.
+
+Application updates install over the existing app. Notes, annotations,
+conversations, settings, and indexes live in the user data directory outside the
+installation folder, so a normal upgrade preserves them. Uninstalling or
+manually deleting the user data directory removes that local data.
+
+应用更新会覆盖安装程序文件；笔记、批注、对话、设置和索引保存在安装目录之外的本机数据目录，正常更新会保留这些数据。卸载或手动删除用户数据目录会将其移除。
 
 ## Requirements
 
@@ -399,6 +420,7 @@ backend\.venv\Scripts\python.exe backend\scripts\check_packaged_notes.py --base 
 | `chunks_fts` | FTS5 全文索引（中文按重叠二元组存词、英文小写词，关键词检索按覆盖率排序） |
 | `conversations` / `messages` | 对话与消息（含引用、工具调用元数据） |
 | `code_anchors` | 绑定到代码位置的锚点，状态 `unchanged` / `modified` / `moved` / `deleted` |
+| `code_annotations` | 用户添加的代码批注，绑定到项目、文件和行号 |
 | `notes` | 阅读笔记；`folder_id` 指向知识库文件夹（可空 = 未分类） |
 | `note_folders` | 知识库文件夹，`parent_id` 自引用成任意层级的树 |
 | `command_rules` | 命令授权规则（`once` / `session` / `always`） |

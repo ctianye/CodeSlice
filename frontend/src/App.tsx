@@ -8,6 +8,9 @@ import type { SnippetSelection } from './components/CodePane'
 import { EditorTabs } from './components/EditorTabs'
 import { NoteReader } from './components/NoteReader'
 import { SettingsModal } from './components/SettingsModal'
+import { ReleaseNotice } from './components/ReleaseNotice'
+import { checkForRelease } from './lib/releases'
+import type { AppRelease } from './lib/releases'
 import { Sidebar } from './components/Sidebar'
 import { Splitter } from './components/Splitter'
 import { TerminalPanel } from './components/TerminalPanel'
@@ -27,12 +30,21 @@ export function App(): ReactNode {
   const { project, setProjects, setProject, setActiveConversationId, noteView } = useApp()
   const [showWelcome, setShowWelcome] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [newRelease, setNewRelease] = useState<AppRelease | null>(null)
   const [snippet, setSnippet] = useState<SnippetSelection | null>(null)
   const [sidebarEpoch, setSidebarEpoch] = useState(0)
   const [terminalOpen, setTerminalOpen] = usePersistedState('codeslice.terminalOpen', false)
 
   const [sidebarWidth, setSidebarWidth] = usePersistedState('codeslice.sidebarWidth', 268)
   const [chatWidth, setChatWidth] = usePersistedState('codeslice.chatWidth', 430)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void checkForRelease(controller.signal).then(({ release }) => {
+      if (!controller.signal.aborted) setNewRelease(release)
+    }).catch(() => { /* Automatic checks stay quiet offline; About offers retry. */ })
+    return () => controller.abort()
+  }, [])
 
   // Load the project list once so a restart can restore the last project.
   useEffect(() => {
@@ -91,6 +103,7 @@ export function App(): ReactNode {
         ) : null}
         <WelcomePage onProjectOpened={() => setShowWelcome(false)} />
         {settingsOpen ? <SettingsModal onClose={() => setSettingsOpen(false)} /> : null}
+        {newRelease ? <ReleaseNotice release={newRelease} onClose={() => setNewRelease(null)} /> : null}
       </div>
     )
   }
@@ -141,6 +154,7 @@ export function App(): ReactNode {
       </div>
 
       {settingsOpen ? <SettingsModal onClose={() => setSettingsOpen(false)} /> : null}
+      {newRelease ? <ReleaseNotice release={newRelease} onClose={() => setNewRelease(null)} /> : null}
     </div>
   )
 }

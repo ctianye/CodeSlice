@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import * as api from '../api'
+import { openExternal } from '../bridge'
 import type { ModelConfig, ModelProtocol, ModelSettings, ModelTestResult } from '../types'
 import { usePersistedState } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
@@ -10,6 +11,9 @@ import { ErrorNote, Loading } from './Feedback'
 import { Icon, Logo } from './Icon'
 import type { IconName } from './Icon'
 import { VectorModelsPanel } from './VectorModelsPanel'
+import { ReleaseDetails } from './ReleaseNotice'
+import { checkForRelease, REPOSITORY_URL } from '../lib/releases'
+import type { AppRelease } from '../lib/releases'
 
 type Tab = 'model' | 'rules' | 'appearance' | 'about'
 
@@ -50,6 +54,7 @@ export function SettingsModal({ onClose }: SettingsModalProps): ReactNode {
             <Icon name="settings" size={14} />
           </span>
           <h2>设置</h2>
+          <button className="ghost icon" type="button" title="在默认浏览器打开 GitHub 仓库" aria-label="GitHub 仓库" onClick={() => openExternal(REPOSITORY_URL)}><Icon name="github" size={15} /></button>
           <button className="ghost icon" onClick={onClose} title="关闭（Esc）" aria-label="关闭" type="button">
             <Icon name="x" size={14} />
           </button>
@@ -133,7 +138,7 @@ function ModelSettingsForm(): ReactNode {
       .getModelSettings()
       .then((next) => {
         if (cancelled) return
-        setSettings(next)
+        setSettings({ ...next, chat: { ...next.chat, system_prompt: next.chat.system_prompt || next.default_system_prompt } })
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -171,6 +176,7 @@ function ModelSettingsForm(): ReactNode {
           base_url: chat.base_url,
           temperature: chat.temperature,
           max_tokens: chat.max_tokens,
+          system_prompt: chat.system_prompt,
           ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         },
       }
@@ -267,17 +273,17 @@ function ModelSettingsForm(): ReactNode {
         </div>
 
         <div className="field">
-          <label htmlFor="max-tokens">最大输出长度</label>
+          <label htmlFor="max-tokens">最大输出长度（K）</label>
           <input
             id="max-tokens"
             type="number"
-            min={256}
-            max={32000}
-            step={256}
-            value={chat.max_tokens}
-            onChange={(event) => patchChat({ max_tokens: Number(event.target.value) })}
+            min={1}
+            max={256}
+            step={1}
+            value={chat.max_tokens / 1024}
+            onChange={(event) => patchChat({ max_tokens: Math.max(1, Math.min(256, Number(event.target.value) || 1)) * 1024 })}
           />
-          <span className="hint">单次回答允许生成的最大 token 数。</span>
+          <span className="hint">默认 32K，可设置 1K–256K。</span>
         </div>
 
         <div className="field full">
@@ -314,6 +320,22 @@ function ModelSettingsForm(): ReactNode {
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className="field full prompt-field">
+        <label htmlFor="system-prompt">系统提示词</label>
+        <textarea
+          id="system-prompt"
+          rows={9}
+          maxLength={20000}
+          value={chat.system_prompt}
+          onChange={(event) => patchChat({ system_prompt: event.target.value })}
+          spellCheck={false}
+        />
+        <span className="hint">默认提示词已填入，可按需编辑；工具调用和授权规则仍由应用管理。</span>
+        <button className="ghost small prompt-reset" type="button" onClick={() => patchChat({ system_prompt: settings.default_system_prompt })}>
+          恢复默认提示词
+        </button>
       </div>
 
       {actionError ? <ErrorNote message={actionError} /> : null}
@@ -371,6 +393,10 @@ function ModelSettingsForm(): ReactNode {
 function AboutPanel(): ReactNode {
   const [health, setHealth] = useState<{ version: string; data_dir: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [release, setRelease] = useState<AppRelease | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [releaseError, setReleaseError] = useState<string | null>(null)
+  const [releaseStatus, setReleaseStatus] = useState<string | null>(null)
   const { project } = useApp()
 
   useEffect(() => {
@@ -387,6 +413,22 @@ function AboutPanel(): ReactNode {
       cancelled = true
     }
   }, [])
+
+  const checkRelease = async () => {
+    setChecking(true)
+    setReleaseError(null)
+    setReleaseStatus(null)
+    setRelease(null)
+    try {
+      const result = await checkForRelease()
+      setRelease(result.release)
+      if (!result.release) setReleaseStatus(`当前版本 v${result.currentVersion}，暂无更新的正式版本。`)
+    } catch (err) {
+      setReleaseError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setChecking(false)
+    }
+  }
 
   return (
     <div>
@@ -410,6 +452,22 @@ function AboutPanel(): ReactNode {
           <dd>{project ? `${project.name}（${project.path}）` : '未选择'}</dd>
         </dl>
       ) : null}
+
+      <div className="about-release">
+        <div className="section-label">版本更新</div>
+        <div className="release-actions">
+          <button className="ghost small" type="button" onClick={() => openExternal(REPOSITORY_URL)}>
+            <Icon name="github" size={13} /> GitHub 仓库
+          </button>
+          <button className="small" type="button" disabled={checking} onClick={() => void checkRelease()}>
+            <Icon name="refresh" size={12} />{checking ? '检查中…' : '检查更新'}
+          </button>
+        </div>
+        {releaseError ? <ErrorNote message={`检查 Release 失败：${releaseError}`} /> : null}
+        {releaseStatus ? <p className="hint" role="status">{releaseStatus}</p> : null}
+        <p className="hint">启动时自动检查正式 Release，有新版本时弹窗提醒。</p>
+        {release ? <ReleaseDetails release={release} /> : null}
+      </div>
 
       <div className="section-label">交互提示</div>
       <div className="shortcut-list">

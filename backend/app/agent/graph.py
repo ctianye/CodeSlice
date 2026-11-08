@@ -324,6 +324,7 @@ def prepare(state: AgentState) -> dict[str, Any]:
         git_branch=branch,
         use_context=use_context,
         extra_prompt=_extra_prompt(),
+        custom_system_prompt=model_config.load_settings().chat.system_prompt,
     )
     node_config.record_run("prepare", last_chunks=len(chunks), last_top_k=top_k)
     return {

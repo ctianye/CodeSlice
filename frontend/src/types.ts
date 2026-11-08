@@ -116,6 +116,7 @@ export interface ModelConfig {
   temperature: number
   /** Extra output tokens. Returned by the backend but absent from the contract. */
   max_tokens: number
+  system_prompt: string
   api_key_configured: boolean
 }
 
@@ -131,6 +132,7 @@ export interface EmbeddingConfig {
 
 export interface ModelSettings {
   chat: ModelConfig
+  default_system_prompt: string
   embedding: EmbeddingConfig | null
 }
 
@@ -379,6 +381,18 @@ export interface Note {
    * spans every project, so the panel needs to say where a note came from.
    */
   project_name?: string | null
+}
+
+export interface CodeAnnotation {
+  id: number
+  project_id: number
+  file_path: string
+  start_line: number
+  end_line: number
+  selected_code: string
+  body: string
+  created_at: string
+  updated_at: string
 }
 
 /** A user-made folder in the knowledge base tree. */

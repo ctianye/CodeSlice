@@ -344,7 +344,7 @@ body `{"config": {<部分字段>}}` → 单节点（形状同上）。只提交�
 | prepare | `retrieval_top_k` (1..20) | 检索片段数，默认 6 |
 | prepare | `include_git_branch` (bool) | 是否把当前分支写进 system prompt |
 | agent | `model` (str) | 留空沿用设置里的模型；填写则覆盖本节点使用的模型名 |
-| agent | `temperature` (0..2) / `max_tokens` (256..32768) | 覆盖设置里的采样参数 |
+| agent | `temperature` (0..2) / `max_tokens` (1024..262144) | 覆盖设置里的采样参数 |
 | agent | `extra_prompt` (text) | 追加在 system prompt 末尾的额外要求 |
 | agent | `max_tool_rounds` (1..30) | 工具调用轮数上限 |
 | run_one | `max_tool_rounds` / `auto_approve_readonly_tools` | 只读工具是否免确认（当前只读工具本就不打断） |

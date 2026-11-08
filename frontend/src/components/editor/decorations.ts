@@ -19,6 +19,7 @@ export interface RangeSpan {
 export function frameDecorations(
   model: MonacoEditor.ITextModel,
   spans: RangeSpan[],
+  frameClass = 'range-frame',
 ): MonacoEditor.IModelDeltaDecoration[] {
   const maxLine = model.getLineCount()
   const decorations: MonacoEditor.IModelDeltaDecoration[] = []
@@ -46,7 +47,7 @@ export function frameDecorations(
   const lines = [...covered].sort((a, b) => a - b)
   for (const line of lines) {
     const edge = edges.get(line)
-    const classes = ['range-frame']
+    const classes = [frameClass]
     if (edge?.top) classes.push('range-frame-top')
     if (edge?.bottom) classes.push('range-frame-bottom')
     decorations.push({

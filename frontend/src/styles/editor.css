@@ -161,6 +161,14 @@
   animation: slide-up var(--dur) var(--ease);
 }
 
+.annotation-action { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok); }
+.annotation-editor { display:flex; align-items:center; gap:8px; padding:8px 12px; border-top:1px solid color-mix(in srgb, var(--ok) 36%, var(--border)); background:color-mix(in srgb, var(--ok) 8%, var(--bg-panel)); }
+.annotation-editor span { flex:0 0 auto; font-size:10px; color:var(--ok); }
+.annotation-editor textarea { flex:1; min-width:120px; resize:vertical; font-size:11px; }
+.annotation-zone { background:color-mix(in srgb, var(--ok) 9%, var(--bg-panel)); border-left:2px solid var(--ok); }
+.annotation-zone .range-flag { color:var(--ok); }
+.annotation-zone-body { padding:0 8px 5px 24px; color:var(--text-dim); font-size:11px; line-height:1.4; overflow:hidden; }
+
 .selection-bar .lines {
   display: flex;
   align-items: center;
@@ -371,6 +379,10 @@
   border-bottom-right-radius: 3px;
 }
 
+.annotation-frame { background:color-mix(in srgb, var(--ok) 7%, transparent); border-left:2px solid color-mix(in srgb, var(--ok) 65%, transparent); border-right:1px solid color-mix(in srgb, var(--ok) 25%, transparent); }
+.annotation-frame.range-frame-top { border-top:2px solid var(--ok); border-top-left-radius:3px; border-top-right-radius:3px; }
+.annotation-frame.range-frame-bottom { border-bottom:2px solid var(--ok); border-bottom-left-radius:3px; border-bottom-right-radius:3px; }
+
 /* Title strip above each framed range. A Monaco view zone reserves the band, so
    it takes part in the layout and scrolls with the text instead of covering a
    code line. Height must match `ZONE_HEIGHT` in editor/frameZones.ts. */
@@ -383,6 +395,11 @@
   padding-left: 6px;
   box-sizing: border-box;
 }
+
+.range-zone.annotation-zone { height:100%; min-height:19px; align-items:flex-start; flex-wrap:wrap; padding:1px 6px; background:var(--bg-panel); border-left:2px solid var(--ok); }
+.annotation-zone-body { flex-basis:100%; padding:2px 8px 5px 8px; color:var(--text-dim); font-size:11px; line-height:1.4; white-space:pre-wrap; overflow:auto; max-height:124px; user-select:text; }
+.annotation-delete { height:16px; padding:0 5px; margin-left:5px; border:0; font-size:10px; color:var(--text-faint); }
+.annotation-zone .range-flag { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 50%, var(--border)); }
 
 .range-flag {
   display: inline-flex;

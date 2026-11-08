@@ -32,6 +32,9 @@
   width: min(520px, 100%);
 }
 
+.release-backdrop { z-index: calc(var(--z-modal) + 1); }
+.release-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+
 .modal-head {
   display: flex;
   align-items: center;
@@ -171,6 +174,54 @@
 .field input,
 .field select {
   height: 32px;
+}
+
+.field textarea { min-height: 150px; resize: vertical; font: 11px/1.55 var(--mono); }
+.prompt-field { margin-top: 16px; }
+.prompt-reset { align-self: flex-start; }
+.about-release { margin: 18px 0; padding-top: 14px; border-top: 1px solid var(--border); }
+.release-actions { display: flex; gap: 8px; }
+.release-notice { margin-top: 10px; padding: 10px; border-left: 3px solid var(--accent); background: var(--bg-elevated); font-size: 11px; }
+.release-notice p { max-height: 120px; overflow: auto; white-space: pre-wrap; color: var(--text-dim); }
+
+.field textarea {
+  min-height: 150px;
+  resize: vertical;
+  font: 11px/1.55 var(--mono);
+}
+
+.prompt-field {
+  margin-top: 16px;
+}
+
+.prompt-reset {
+  align-self: flex-start;
+}
+
+.about-release {
+  margin: 18px 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.release-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.release-notice {
+  margin-top: 10px;
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-elevated);
+  font-size: 11px;
+}
+
+.release-notice p {
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text-dim);
 }
 
 .form-actions {

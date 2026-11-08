@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import ProjectDep, TokenDep
 from app.core.errors import NotFound
@@ -32,6 +32,43 @@ class NoteUpdate(BaseModel):
     content_md: str | None = None
     folder_id: int | None = None
     move_folder: bool = False
+
+
+class AnnotationCreate(BaseModel):
+    file_path: str = Field(min_length=1, max_length=2000)
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    selected_code: str = Field(default="", max_length=100000)
+    body: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("body")
+    @classmethod
+    def nonempty_body(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("annotation must contain text")
+        return value.strip()
+
+
+@router.get("/projects/{project_id}/annotations")
+def list_annotations(project: ProjectDep, _: TokenDep, file_path: str) -> list[dict[str, Any]]:
+    return repo.list_annotations(int(project["id"]), file_path)
+
+
+@router.post("/projects/{project_id}/annotations")
+def create_annotation(project: ProjectDep, body: AnnotationCreate, _: TokenDep) -> dict[str, Any]:
+    if body.end_line < body.start_line:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail="end_line must be greater than or equal to start_line")
+    return repo.create_annotation(
+        int(project["id"]), body.file_path, body.start_line, body.end_line, body.selected_code, body.body.strip()
+    )
+
+
+@router.delete("/annotations/{annotation_id}")
+def delete_annotation(annotation_id: int, _: TokenDep) -> dict[str, bool]:
+    repo.delete_annotation(annotation_id)
+    return {"ok": True}
 
 
 class FolderCreate(BaseModel):

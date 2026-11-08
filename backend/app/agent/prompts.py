@@ -70,6 +70,7 @@ def build_system_prompt(
     git_branch: str | None = None,
     use_context: bool = False,
     extra_prompt: str | None = None,
+    custom_system_prompt: str | None = None,
 ) -> str:
     """Assemble the system prompt for one turn.
 
@@ -82,7 +83,7 @@ def build_system_prompt(
     node config). It goes last so it reads as the final, most specific instruction
     and never displaces the built-in rules above it.
     """
-    parts = [BASE, TOOL_NOTE]
+    parts = [(custom_system_prompt or "").strip() or BASE, TOOL_NOTE]
     parts.append(f"项目：{project_name}" + (f"（分支 {git_branch}）" if git_branch else ""))
     if mode == "snippet" and file_path:
         if selected_code:
