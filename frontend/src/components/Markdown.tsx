@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { Fragment, memo, useMemo, useState } from 'react'
+import { createContext, Fragment, memo, useContext, useMemo, useState } from 'react'
 import { useApp } from '../state/AppState'
 import { Icon } from './Icon'
 
@@ -18,17 +18,50 @@ import { Icon } from './Icon'
  * It deliberately does NOT support raw HTML (nothing is dangerouslySetInnerHTML)
  * or nested block structures — a chat bubble does not need them and every added
  * rule is a way to mangle a diff pasted by the model.
+ *
+ * Images are supported behind an optional `resolveImage` hook. A chat answer has
+ * no file to resolve `![](docs/x.png)` against, so without the hook the syntax
+ * degrades to its alt text; the document reader passes a resolver that turns a
+ * repo-relative path into an `/asset` URL.
  */
-export const Markdown = memo(function Markdown({ text }: { text: string }): ReactNode {
+export interface MarkdownProps {
+  text: string
+  /** Maps an image `src` from the source to a loadable URL, or null to skip it. */
+  resolveImage?: (src: string) => string | null
+  /** Text shown under an image that could not be resolved. */
+  imageFallback?: (src: string) => string
+}
+
+export const Markdown = memo(function Markdown({
+  text,
+  resolveImage,
+  imageFallback,
+}: MarkdownProps): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text])
   return (
-    <div className="md">
-      {blocks.map((block, index) => (
-        <Block key={index} block={block} />
-      ))}
-    </div>
+    <ImageResolver.Provider value={resolveImage ?? null}>
+      <div className="md">
+        {blocks.map((block, index) => (
+          <Block
+            key={index}
+            block={block}
+            resolveImage={resolveImage}
+            imageFallback={imageFallback}
+          />
+        ))}
+      </div>
+    </ImageResolver.Provider>
   )
 })
+
+/**
+ * Carries the image resolver down to inline tokens.
+ *
+ * Block-level images get it as a prop, but an image inside a list item or a
+ * paragraph goes through `Inline` → `TokenNode`, two levels that would otherwise
+ * need the prop threaded through every call site.
+ */
+const ImageResolver = createContext<((src: string) => string | null) | null>(null)
 
 /* --------------------------------- parsing -------------------------------- */
 
@@ -41,6 +74,7 @@ type Block =
   | { kind: 'hr' }
   | { kind: 'code'; lang: string; code: string }
   | { kind: 'table'; head: string[]; align: Align[]; rows: string[][] }
+  | { kind: 'img'; alt: string; src: string }
 
 type Align = 'left' | 'center' | 'right' | null
 
@@ -55,6 +89,8 @@ const QUOTE = /^\s*>\s?(.*)$/
 const HR = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/
 /** A table delimiter row: |---|:---:|---:| */
 const TABLE_SEP = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/
+/** A standalone image on its own line: `![alt](src)` or `![alt](src "title")`. */
+const IMAGE = /^\s*!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)\s*$/
 
 function splitRow(line: string): string[] {
   let trimmed = line.trim()
@@ -161,6 +197,16 @@ function parseBlocks(source: string): Block[] {
       continue
     }
 
+    // A screenshot line in a README. Only whole-line images become blocks; an
+    // image mixed into prose (a badge row, usually) is handled inline below.
+    const image = IMAGE.exec(line)
+    if (image) {
+      flushParagraph(paragraph)
+      blocks.push({ kind: 'img', alt: image[1] ?? '', src: image[2] ?? '' })
+      i += 1
+      continue
+    }
+
     if (isTableStart(line, lines[i + 1])) {
       flushParagraph(paragraph)
       const head = splitRow(line)
@@ -226,7 +272,15 @@ function parseBlocks(source: string): Block[] {
 
 /* -------------------------------- rendering ------------------------------- */
 
-function Block({ block }: { block: Block }): ReactNode {
+function Block({
+  block,
+  resolveImage,
+  imageFallback,
+}: {
+  block: Block
+  resolveImage?: (src: string) => string | null
+  imageFallback?: (src: string) => string
+}): ReactNode {
   switch (block.kind) {
     case 'h': {
       const content = <Inline text={block.text} />
@@ -291,6 +345,8 @@ function Block({ block }: { block: Block }): ReactNode {
       )
     case 'code':
       return <CodeBlock lang={block.lang} code={block.code} />
+    case 'img':
+      return <MarkdownImage alt={block.alt} src={block.src} resolve={resolveImage} fallback={imageFallback} />
     default:
       return (
         <p className="md-p">
@@ -302,6 +358,38 @@ function Block({ block }: { block: Block }): ReactNode {
 
 function alignStyle(align: Align | undefined): CSSProperties | undefined {
   return align ? { textAlign: align } : undefined
+}
+
+/**
+ * One image block.
+ *
+ * Document previews resolve the source through `resolveImage`; a chat answer
+ * passes nothing, so the alt text is shown instead of a broken-image icon.
+ * A resolver that returns `null` (unknown scheme, escaping path, missing file)
+ * falls back to the same alt text — silently dropping an image would hide a
+ * missing screenshot.
+ */
+function MarkdownImage({
+  alt,
+  src,
+  resolve,
+  fallback,
+}: {
+  alt: string
+  src: string
+  resolve?: (src: string) => string | null
+  fallback?: (src: string) => string
+}): ReactNode {
+  const url = resolve ? resolve(src) : null
+  if (!url) {
+    return <span className="md-img-missing">{fallback ? fallback(src) : alt || src}</span>
+  }
+  return (
+    <span className="md-img">
+      <img src={url} alt={alt} loading="lazy" />
+      {alt ? <span className="md-img-alt">{alt}</span> : null}
+    </span>
+  )
 }
 
 function CodeBlock({ lang, code }: { lang: string; code: string }): ReactNode {
@@ -339,7 +427,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }): ReactNode {
 const CITE = /(^|[\s(（[`"'])([\w@./\\-]+\.[A-Za-z0-9]{1,8}):L?(\d+)(?:[-–](\d+))?(?=$|[\s),.;:，。；）\]`"'])/g
 
 interface Token {
-  type: 'text' | 'code' | 'bold' | 'italic' | 'link' | 'cite'
+  type: 'text' | 'code' | 'bold' | 'italic' | 'link' | 'cite' | 'img'
   text: string
   href?: string
   path?: string
@@ -349,9 +437,10 @@ interface Token {
 
 function tokenize(text: string): Token[] {
   const tokens: Token[] = []
-  // order matters: code first (its contents are literal), then links, bold, italic
+  // order matters: code first (its contents are literal), then images (before
+  // links, because `![a](b)` also matches the link pattern from `[`), bold, italic
   const pattern =
-    /(`[^`\n]+`)|(\[[^\]\n]+\]\([^)\s]+\))|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)/g
+    /(`[^`\n]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\[[^\]\n]+\]\([^)\s]+\))|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)/g
   let last = 0
   let match: RegExpExecArray | null
 
@@ -360,6 +449,9 @@ function tokenize(text: string): Token[] {
     const raw = match[0]
     if (raw.startsWith('`')) {
       tokens.push({ type: 'code', text: raw.slice(1, -1) })
+    } else if (raw.startsWith('![')) {
+      const cut = raw.indexOf('](')
+      tokens.push({ type: 'img', text: raw.slice(2, cut), href: raw.slice(cut + 2, -1) })
     } else if (raw.startsWith('[')) {
       const cut = raw.indexOf('](')
       tokens.push({ type: 'link', text: raw.slice(1, cut), href: raw.slice(cut + 2, -1) })
@@ -406,10 +498,18 @@ function Inline({ text }: { text: string }): ReactNode {
 
 function TokenNode({ token }: { token: Token }): ReactNode {
   const { reveal } = useApp()
+  const resolveImage = useContext(ImageResolver)
 
   switch (token.type) {
     case 'code':
       return <code className="md-inline-code">{token.text}</code>
+    case 'img': {
+      // A badge row (`![](shield.svg)` repeated inline) must not break the
+      // paragraph, so an unresolvable inline image collapses to its alt text.
+      const url = resolveImage ? resolveImage(token.href ?? '') : null
+      if (!url) return <>{token.text}</>
+      return <img className="md-inline-img" src={url} alt={token.text} loading="lazy" />
+    }
     case 'bold':
       return <strong>{token.text}</strong>
     case 'italic':

@@ -12,11 +12,20 @@ interface CodeViewerProps {
   value: string
   language: string
   onMountEditor?: (instance: MonacoEditor.IStandaloneCodeEditor) => void
+  /**
+   * Editable mode. When true the editor becomes writable and `value` is fed in
+   * as the initial buffer only: `@monaco-editor/react` writes a changed `value`
+   * through `executeEdits` while the editor is writable, which would fight the
+   * caret on every keystroke. Typing is reported through `onChange` instead, and
+   * the owner keeps the draft.
+   */
+  readOnly?: boolean
+  onChange?: (value: string) => void
 }
 
 /**
- * Read-only Monaco wrapper. Highlighting and selection bookkeeping live in
- * CodePane so this component stays a thin, memoised mount point.
+ * Monaco wrapper. Highlighting and selection bookkeeping live in CodePane so
+ * this component stays a thin, memoised mount point.
  *
  * Theme colours mirror the CSS tokens in styles/base.css; Monaco cannot read
  * CSS variables, so the two hex sets are kept in sync by hand.
@@ -25,17 +34,23 @@ export const CodeViewer = memo(function CodeViewer({
   value,
   language,
   onMountEditor,
+  readOnly = true,
+  onChange,
 }: CodeViewerProps): ReactNode {
   const { theme } = useApp()
+  // Read-only mode stays controlled (the pane swaps files in place). Writable
+  // mode switches to an uncontrolled buffer so typing is never overwritten.
+  const buffer = readOnly ? { value } : { defaultValue: value }
   return (
     <Editor
       className="editor-surface"
-      value={value}
+      {...buffer}
       language={language}
       theme={theme === 'dark' ? 'codeslice-dark' : 'codeslice-light'}
+      onChange={readOnly ? undefined : (next) => onChange?.(next ?? '')}
       options={{
-        readOnly: true,
-        domReadOnly: true,
+        readOnly,
+        domReadOnly: readOnly,
         lineNumbers: 'on',
         lineNumbersMinChars: 4,
         // Gutter clicks are handled by attachGutterSelection in CodePane: it

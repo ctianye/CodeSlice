@@ -87,6 +87,12 @@ not need to install Python, Node.js, or developer tools.
 - Tree-sitter structural indexing is currently configured for Python,
   TypeScript, JavaScript, Go, Rust, Java, C, C++, JSON, and Bash. Other files
   remain available for the application’s supported text-based workflows.
+- The Markdown reader covers the common subset (headings, lists, tables, fenced
+  code, quotes, images, inline formatting). Raw HTML in a document is shown as
+  text, and nested block structures inside a list item are flattened.
+- Document editing saves the whole buffer; there is no partial-diff save and no
+  merge UI. A file changed on disk after you opened it is rejected rather than
+  merged, and unsaved drafts are kept per open tab for the session.
 
 ## For contributors
 
@@ -132,6 +138,7 @@ CodeSlice 是一个跑在你机器上的 Electron 桌面程序 + 本地 Python �
 | **多标签编辑器** | 像 VS Code 那样同时开多个文件和笔记，标签可拖拽排序、中键或 × 关闭、右键「关闭其他」。点笔记里的引用会新开一个代码标签，原来的笔记不会消失。 |
 | **集成终端** | 编辑器下方可展开的终端，直接跑命令；输出逐行流式到达，可拖拽调高、↑↓ 翻历史。 |
 | **AI 可执行命令** | 对话里模型调 `run_command` 走的审批卡与终端是同一套沙箱：同一份危险命令黑名单，同一条 `command_rules` 授权规则。 |
+| **文档阅读与就地编辑** | 打开 `.md` / `.mdx` 默认渲染成排版文档（标题层级、表格、代码块带复制、图片按相对路径解析并走本机接口加载）。工具栏「阅读 / 编辑」切换：编辑态用 Monaco 直接改，`⌘/Ctrl+S` 或「保存」写回磁盘；保存带 mtime 校验，文件在打开后被别人改过会拒绝覆盖并给出提示。 |
 | **可溯源的引用** | 每条回答附 `文件:行号` 引用块，点击直接跳转并用左侧色条标出范围；再点同一个引用块取消标亮。 |
 | **混合检索** | SQLite FTS5 关键词检索 + numpy 余弦相似度语义检索，结果融合排序。 |
 | **结构化索引** | Tree-sitter 解析 Python / TS / JS / Go / Rust / Java / C / C++ / JSON / Bash，按函数、类、模块切块。 |
@@ -222,12 +229,12 @@ CodeSplit/
 │   │   ├── services/         # 路径校验、git、锚点、终端沙箱、命令执行
 │   │   └── storage/          # 数据访问层
 │   ├── pyproject.toml
-│   ├── scripts/              # smoke / e2e_contract / ui_smoke / mock_model / cdp_reload 联调脚本
-│   ├── tests/                # pytest（17 个文件、237 个用例）
+│   ├── scripts/              # smoke / e2e_contract / ui_smoke / doc_save_test / doc_conflict_test / cdp_reload
+│   ├── tests/                # pytest（18 个文件、265 个用例）
 │   └── .venv/                # uv 管理的虚拟环境（Python 3.11）
 ├── frontend/                 # Vite + React 渲染进程
 │   └── src/
-│       ├── components/       # FileTree / CodeViewer / ChatPane / EditorTabs / TerminalPanel ...
+│       ├── components/       # FileTree / CodeViewer / MarkdownDoc / ChatPane / EditorTabs ...
 │       ├── api.ts            # HTTP 客户端
 │       └── bridge.ts         # Electron preload 桥接
 ├── desktop/                  # Electron 主进程 + 打包配置
@@ -460,6 +467,9 @@ CodeSlice 按「不信任本地服务的调用方」来设计——因为同一�
   （检索段数、模型、temperature、输出上限、追加指令、工具轮数上限、是否自动重拟标题）
   通过 `GET/PUT /api/agent/graph` 读写，存在 `settings` 表的 `agent.node_config` 键里，
   改完下一轮对话生效，不用重启后端
+- 文档阅读与就地编辑：`.md` / `.mdx` 打开即渲染（标题层级、表格、代码块、图片按相对路径
+  从本机接口加载），工具栏「阅读 / 编辑」切换，编辑态 `⌘/Ctrl+S` 或「保存」写回磁盘；
+  保存带 `expected_mtime` 校验，文件在打开后被别人改过会拒绝覆盖并提示重新打开
 - 模型配置（OpenAI 兼容 / Anthropic）+ 连通性测试
 - 本地向量模型一键下载：设置页内置 `bge-m3` / `qwen3-embedding:0.6b` 两个预设，
   通过本机 Ollama 下载并自动写入 Embedding 配置（切换模型后提示重建索引）

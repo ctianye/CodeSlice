@@ -146,6 +146,39 @@ export const getFile = (projectId: number, path: string, signal?: AbortSignal): 
   return request<FileContent>(`/api/projects/${projectId}/file?${params.toString()}`, { signal })
 }
 
+/**
+ * Write a text file back to disk.
+ *
+ * `expectedMtime` is the mtime that came back with the file when it was opened:
+ * the server refuses the write when the file changed on disk in the meantime, so
+ * an edit made against a stale buffer cannot silently overwrite someone else's
+ * work. Returns the same shape as `getFile`, so the pane can adopt the new
+ * mtime/size without another round trip.
+ */
+export const saveFile = (
+  projectId: number,
+  path: string,
+  content: string,
+  expectedMtime?: number | null,
+): Promise<FileContent> =>
+  request<FileContent>(`/api/projects/${projectId}/file`, {
+    method: 'PUT',
+    body: { path, content, expected_mtime: expectedMtime ?? null },
+  })
+
+/**
+ * URL for a raw image referenced by a Markdown file.
+ *
+ * `<img src>` cannot carry the `X-Session-Token` header, so the asset endpoint
+ * takes the token as a query parameter instead.
+ */
+export const assetUrl = (projectId: number, path: string): string => {
+  const params = new URLSearchParams({ path })
+  const token = getToken()
+  if (token) params.set('token', token)
+  return `${apiBase()}/api/projects/${projectId}/asset?${params.toString()}`
+}
+
 export const getGitStatus = (projectId: number): Promise<GitStatus> =>
   request<GitStatus>(`/api/projects/${projectId}/git/status`)
 

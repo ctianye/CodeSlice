@@ -40,6 +40,23 @@ body `{"path": "D:\\repo", "name": "repo"}`（name 可省略，取目录名）
 → `{"path": str, "language": str, "content": str, "size": int, "mtime": float, "truncated": bool}`
 路径必须落在项目根内，越界 400。>2MB 时 `truncated=true` 只给前 2MB。
 
+### PUT /api/projects/{project_id}/file
+body `{"path": str, "content": str, "expected_mtime": float | null}`。
+把整份 `content` 以 UTF-8 写回 `path`，响应与 `GET /file` 同构
+（`{"path", "language", "content", "size", "mtime", "truncated": false}`）。
+目标必须已存在：不存在 404 `file not found: <path>`，是目录 400 `not a file: <path>`，
+超过 `max_file_bytes` 400 `file too large: <N> bytes`。`expected_mtime` 给值时会与磁盘
+当前 mtime 比对（容差 0.001 秒），不一致 400 `file changed on disk since it was opened`
+——这条是为了不静默覆盖别人刚改过的文件，前端据此提示「重新打开再编辑」。
+校验全部通过才落盘，失败时磁盘保持原样。写文件同样受 `resolve_in_project` 约束，越界 400。
+
+### GET /api/projects/{project_id}/asset?path=docs/screenshots/welcome.png&token=<会话令牌>
+返回图片原始字节，`Content-Type` 由扩展名推断，`Cache-Control: no-cache`。
+**鉴权走 query 参数 `token`**（不是 `X-Session-Token` 头），因为 `<img src>` 无法带自定义头；
+令牌不对 401 `invalid token`。扩展名白名单 `.png .jpg .jpeg .gif .webp .bmp .ico .svg`，
+其余 400 `unsupported asset type: <后缀>`；文件不存在 404；上限 8MB。
+桌面前端用它渲染 Markdown 里的相对路径图片（CSP 的 `img-src` 已放行 `http://127.0.0.1:*`）。
+
 ### GET /api/projects/{project_id}/git/status
 → `{"is_repo": bool, "branch": str | null, "head": str | null, "dirty": bool,
     "staged": [str], "modified": [str], "untracked": [str]}`（非 git 仓库给空值）

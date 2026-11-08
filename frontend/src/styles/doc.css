@@ -1,0 +1,311 @@
+/*
+ * Document reader: `.md` files open rendered instead of as source.
+ *
+ * This is deliberately a different scale from `.md` in a chat bubble — a README
+ * is read top to bottom, so the body sits at 14px on a ~78ch measure rather than
+ * the 12.5px chat density. Everything here scopes under `.doc-doc` so the chat
+ * and note renderers keep their own rules.
+ */
+
+.editor-mount .doc-scroll {
+  height: 100%;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.doc-doc {
+  /* Room for the reader to breathe, capped so long lines stay readable on a
+     wide window. `ch` tracks the body size, which is what Markdown prose is set
+     in here. */
+  max-width: 78ch;
+  margin: 0 auto;
+  padding: 28px 32px 72px;
+  font-size: 14px;
+  line-height: 1.78;
+  color: var(--text);
+  /* Long paths and identifiers inside prose have to break; a README is full of
+     them and one unbreakable token would push the whole page sideways. */
+  overflow-wrap: break-word;
+}
+
+/* Same gap rhythm as the chat renderer, just wider. */
+.doc-doc .md {
+  gap: 13px;
+  font-size: 14px;
+  line-height: 1.78;
+}
+
+/*
+ * Prose collapses single newlines.
+ *
+ * A README is hard-wrapped at ~80 columns in the source, and the chat renderer
+ * keeps those breaks (`pre-wrap`) because an answer pasted from a terminal may
+ * rely on them. A document must not: it would show a ragged right edge at the
+ * source wrap width instead of filling the column, which is also what GitHub
+ * does. Blank lines still separate paragraphs — the block parser handles that.
+ */
+.doc-doc .md-p {
+  margin: 0;
+  white-space: normal;
+  color: var(--text);
+}
+
+/* The shared renderer folds `#` and `##` onto `.md-h1`, so the document reader
+   cannot tell them apart; both get the section treatment, which is what a README
+   wants anyway. Deeper levels step down. */
+.doc-doc .md-h1 {
+  margin: 26px 0 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 21px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+}
+
+.doc-doc .md > .md-h1:first-child {
+  margin-top: 0;
+}
+
+.doc-doc .md-h2 {
+  margin: 22px 0 0;
+  font-size: 15.5px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+}
+
+.doc-doc .md-h3 {
+  margin: 16px 0 0;
+  font-size: 13.5px;
+  font-weight: 620;
+  color: var(--text-dim);
+}
+
+.doc-doc .md-ul,
+.doc-doc .md-ol {
+  gap: 5px;
+  padding-left: 22px;
+}
+
+.doc-doc .md-ul li::marker,
+.doc-doc .md-ol li::marker {
+  color: var(--text-faint);
+}
+
+.doc-doc .md-quote {
+  margin: 0;
+  padding: 8px 14px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+}
+
+.doc-doc .md-hr {
+  margin: 22px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.doc-doc .md-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.doc-doc .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.doc-doc .md-table th,
+.doc-doc .md-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.doc-doc .md-table th {
+  background: var(--bg-sunken);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.doc-doc .md-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.doc-doc .md-inline-code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.9em;
+  /* A long path in backticks is common in a README; break it rather than let it
+     widen the page. */
+  overflow-wrap: anywhere;
+}
+
+.doc-doc .md-code {
+  margin: 2px 0;
+  border-radius: 8px;
+  /* The <pre> scrolls on its own axis; clipping here keeps the rounded corners
+     from being punched out by a wide code line. */
+  overflow: hidden;
+}
+
+.doc-doc .md-cite {
+  font-size: 0.92em;
+}
+
+.doc-doc a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.doc-doc a:hover {
+  border-bottom-color: var(--accent);
+}
+
+/* Images: a screenshot is content here, not decoration, so it gets a frame and
+   a caption line rather than sitting flush on the page. */
+.doc-doc .md-img {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.doc-doc .md-img img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+}
+
+.doc-doc .md-img-alt {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* A missing screenshot is a real state (the file may be gitignored or deleted);
+   show it as a quiet placeholder so the surrounding text still reads. */
+.doc-doc .md-img-missing {
+  display: block;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+/* Badge rows: `![](a.svg) ![](b.svg)` repeated inline must stay on one line. */
+.doc-doc .md-inline-img {
+  height: 18px;
+  width: auto;
+  vertical-align: -4px;
+  margin: 0 2px;
+}
+
+/* Save failure strip. It floats over the document rather than pushing it down:
+   the buffer is still editable underneath and the user is usually mid-fix. */
+.editor-mount .doc-error {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  right: 10px;
+  z-index: var(--z-splitter);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  box-shadow: var(--shadow-2);
+}
+
+.editor-mount .doc-error .error-note {
+  flex: 1;
+  min-width: 0;
+  background: var(--danger-soft);
+}
+
+.editor-mount .doc-error .icon {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  color: var(--danger);
+}
+
+/*
+ * Reader / edit toggle. Two segments, not a switch: the label has to say which
+ * mode you get, because "off" for a switch is ambiguous when both sides are
+ * named.
+ */
+.editor-toolbar .doc-mode {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+}
+
+.editor-toolbar .doc-mode button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.editor-toolbar .doc-mode button:hover {
+  color: var(--text);
+}
+
+.editor-toolbar .doc-mode button.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.editor-toolbar .doc-save {
+  margin-left: 6px;
+  flex: 0 0 auto;
+}
+
+/*
+ * Narrow editor pane: the toolbar cannot hold file name, language, size, mode
+ * toggle, branch and dirty badge at once. The document mode toggle is what this
+ * feature adds, so it stays; the informative tags fall away around it, worst
+ * first (size has the least value once you can see the document).
+ *
+ * These are container queries, not media queries: splitting the panes narrows
+ * the editor without changing the window size, and that is the case that
+ * actually overflows.
+ */
+@container editor-pane (max-width: 720px) {
+  .editor-toolbar .doc-mode button span {
+    display: none;
+  }
+}
+
+@container editor-pane (max-width: 560px) {
+  /*
+   * Branch and dirty state are project-level and already sit in the sidebar
+   * toolbar, so they are the safe duplicates to drop when the pane gets narrow.
+   */
+  .editor-toolbar .tag.dirty,
+  .editor-toolbar .tag.branch {
+    display: none;
+  }
+}

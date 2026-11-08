@@ -9,6 +9,13 @@
   min-height: 0;
   min-width: 0;
   background: var(--bg);
+  /*
+   * The toolbar drops tags based on how wide the pane is, not how wide the
+   * window is: side panels and the chat column shrink this pane without changing
+   * the viewport, so a media query would keep showing badges that do not fit.
+   */
+  container-type: inline-size;
+  container-name: editor-pane;
 }
 
 .editor-toolbar {
@@ -29,7 +36,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
+  /* Never shrink to nothing: a zero-width name leaves the toolbar showing only
+     mode and branch chrome, with no indication of which file is open. */
+  flex: 0 1 auto;
+  min-width: 72px;
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text);
@@ -51,9 +61,22 @@
 
 .editor-toolbar .tag {
   flex: 0 0 auto;
+  max-width: 132px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
+/*
+ * The branch name is the first thing to give up room.
+ *
+ * Once the toolbar also carries a document mode toggle, a long branch
+ * (`patch/v0.1.x`) plus the dirty badge can push the file name to zero width, so
+ * the tag shrinks and ellipsises instead of the name disappearing.
+ */
 .editor-toolbar .tag.branch {
+  flex: 0 1 auto;
+  min-width: 46px;
   color: var(--text-dim);
   font-family: var(--mono);
 }

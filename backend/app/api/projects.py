@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import ProjectDep, TokenDep
@@ -113,6 +114,82 @@ def get_file(project: ProjectDep, _: TokenDep, path: str = Query(min_length=1)) 
         "mtime": stat.st_mtime,
         "truncated": truncated,
     }
+
+
+class FileWrite(BaseModel):
+    path: str = Field(min_length=1)
+    content: str
+    # 打开文件时拿到的 mtime；给了就要做冲突检测
+    expected_mtime: float | None = None
+
+
+# Markdown 预览里 <img src> 只能走查询参数鉴权，允许的图片后缀。
+ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"}
+MAX_ASSET_BYTES = 8 * 1024 * 1024
+
+
+@router.put("/{project_id}/file")
+def put_file(project: ProjectDep, _: TokenDep, body: FileWrite) -> dict[str, Any]:
+    """Write a text file back to disk and return the same shape as ``GET /file``."""
+    root = paths.resolve_root(project["path"])
+    target = paths.resolve_in_project(root, body.path)
+    if not target.exists():
+        raise NotFound(f"file not found: {body.path}")
+    if target.is_dir():
+        raise InvalidInput(f"not a file: {body.path}")
+
+    size = len(body.content.encode("utf-8"))
+    if size > settings.max_file_bytes:
+        raise InvalidInput(f"file too large: {size} bytes")
+
+    if body.expected_mtime is not None and abs(target.stat().st_mtime - body.expected_mtime) > 0.001:
+        raise InvalidInput("file changed on disk since it was opened")
+
+    # newline="" 保证内容原样落盘：不做换行转换、不自动补尾换行。
+    target.write_text(body.content, encoding="utf-8", newline="")
+    stat = target.stat()
+    rel = target.relative_to(root).as_posix()
+    repo.touch_project(project["id"])
+    return {
+        "path": rel,
+        "language": detect_language(rel, body.content),
+        "content": body.content,
+        "size": size,
+        "mtime": stat.st_mtime,
+        "truncated": False,
+    }
+
+
+@router.get("/{project_id}/asset")
+def get_asset(
+    project: ProjectDep,
+    token: str | None = Query(default=None),
+    path: str = Query(min_length=1),
+) -> Response:
+    """Serve a raw image for Markdown ``<img src>`` tags.
+
+    The renderer cannot attach ``X-Session-Token`` to an image request, so this
+    endpoint accepts the token as a query parameter instead.
+    """
+    if not token or token != settings.token:
+        raise HTTPException(status_code=401, detail="invalid token")
+
+    root = paths.resolve_root(project["path"])
+    target = paths.resolve_in_project(root, path)
+    if not target.is_file():
+        raise NotFound(f"file not found: {path}")
+
+    suffix = target.suffix.lower()
+    if suffix not in ASSET_SUFFIXES:
+        raise InvalidInput(f"unsupported asset type: {suffix}")
+
+    size = target.stat().st_size
+    if size > MAX_ASSET_BYTES:
+        raise InvalidInput(f"asset too large: {size} bytes")
+
+    raw = target.read_bytes()
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return Response(content=raw, media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/{project_id}/git/status")

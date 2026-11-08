@@ -66,6 +66,9 @@ docs/                   本文件与 API_CONTRACT.md
 11. **终端与 Agent 共用一套命令策略**：危险命令黑名单（`services/sandbox.py` 的 `BLOCKED_FRAGMENTS`）是同一个对象，AI 的 `run_command` 和用户在终端敲的命令命中同一份名单；终端历史只放内存环形缓冲（命令可能带 `-H` token，不能进明文 SQLite）。实现是 `Popen(shell=True)` + 读线程 + `queue` 的真流式，不是 PTY，因此没有跨命令的 shell 状态。
 12. **工作流节点可配、拓扑不可改，且只有后端接口**：`agent/node_config.py` 的 `NODES` 既是默认值表也是校验 schema，`GET /api/agent/graph` 直接序列化它，节点在运行时读自己的合并配置（存在 `settings` 表的 `agent.node_config` 一个 JSON 键里），所以保存后下一轮即刻生效、无需重启；边的走向由 `graph.py` 固定。这条能力**只暴露成后端 HTTP 接口**，桌面前端不再画流程图——用户要调的是 LangGraph 这一层的行为，不需要在界面上看一张只读的拓扑图。
 
+13. **Markdown 默认渲染、编辑才进 Monaco**：`.md` / `.mdx` 打开即走 `MarkdownDoc`（复用对话与笔记那套零依赖渲染器，另加图片解析），不挂 Monaco；工具栏「阅读 / 编辑」切到编辑态才换成可写的 Monaco。理由：代码阅读器里 Markdown 的源码视图没有价值，而正文有。图片走 `GET /asset` 的 **query token** 鉴权（`<img>` 无法带自定义头），路径按文档所在目录解析相对路径、`/` 开头视为仓库根（与 GitHub 一致），远程 URL 一律不解析以免绕过 CSP。
+14. **保存以 mtime 做乐观锁，不做合并**：`PUT /file` 带 `expected_mtime`，与磁盘当前值差超过 1 毫秒就 400 拒绝，前端把这条英文原因翻成「文件在打开后被改动过，请重新打开再编辑」。不做三方合并：文档编辑器一旦自动合并，用户很难判断最终写进仓库的是什么。未保存草稿按 tab 路径留在 `docDraftsRef`，切标签或切渲染模式都不会无声丢失。
+
 ## 分层边界
 
 | 层 | 可以做 | 不可以做 |

@@ -347,9 +347,12 @@ def main() -> int:
             export_path.is_file() and export_path.suffix == ".md" and exported["bytes"] > 0,
             exported,
         )
+        # The exported H1 comes from the note body's own ``# heading`` when it
+        # has one, not from the sidebar title, so a renamed note keeps the
+        # heading its author wrote. ``e2e note`` was the body heading.
         check(
-            "exported markdown starts with the note title",
-            export_path.is_file() and export_path.read_text(encoding="utf-8").startswith("# e2e note v2"),
+            "exported markdown starts with the body heading",
+            export_path.is_file() and export_path.read_text(encoding="utf-8").startswith("# e2e note\n"),
             export_path,
         )
 

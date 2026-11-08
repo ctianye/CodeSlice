@@ -12,6 +12,7 @@ import { CodeViewer } from './CodeViewer'
 import { ConversationCards } from './ConversationCards'
 import { ErrorNote, Loading } from './Feedback'
 import { Icon } from './Icon'
+import { MarkdownDoc } from './MarkdownDoc'
 import type { FrameZoneItem } from './editor/frameZones'
 import { createFrameZones } from './editor/frameZones'
 import { frameDecorations, hoverDecorations } from './editor/decorations'
@@ -91,6 +92,24 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const [hoverRange, setHoverRange] = useState<{ start: number; end: number } | null>(null)
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [cardError, setCardError] = useState<string | null>(null)
+  /**
+   * Markdown documents open rendered, not as source. `docDraft` is null while
+   * the buffer still matches the file; once the user types it holds the unsaved
+   * text, which is what makes `docDirty` cheap to compute.
+   */
+  const [docEditing, setDocEditing] = useState(false)
+  const [docDraft, setDocDraft] = useState<string | null>(null)
+  /**
+   * Unsaved buffers keyed by path.
+   *
+   * Tabs do not keep a component per file, so switching away would otherwise
+   * throw the edit away without a word. Keeping the draft here lets the tab come
+   * back with its text intact; the map entry is dropped as soon as it is saved.
+   */
+  const docDraftsRef = useRef<Map<string, string>>(new Map())
+  const [docSaving, setDocSaving] = useState(false)
+  const [docNotice, setDocNotice] = useState<string | null>(null)
+  const [docError, setDocError] = useState<string | null>(null)
 
   const updateSelection = useCallback((instance: MonacoEditor.IStandaloneCodeEditor) => {
     const model = instance.getModel()
@@ -343,7 +362,22 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     setSelection(null)
     setPicked(null)
     setHoverRange(null)
+    // The document buffer belongs to the previous path; leaving it would offer to
+    // save one file's text into another.
+    setDocEditing(false)
+    setDocDraft(null)
+    setDocNotice(null)
+    setDocError(null)
   }, [path])
+
+  // Restore an unsaved document buffer when the tab comes back.
+  useEffect(() => {
+    if (!path || !file.data || file.data.language !== 'markdown') return
+    const kept = docDraftsRef.current.get(path)
+    if (kept === undefined) return
+    setDocDraft(kept)
+    setDocEditing(true)
+  }, [path, file.data])
 
   const zoneItems = useMemo<FrameZoneItem[]>(() => {
     const list = cards.data ?? []
@@ -374,6 +408,85 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   useEffect(() => {
     zonesRef.current?.update(zoneItems)
   }, [zoneItems, file.data, ready])
+
+  const content = file.data
+  const dirty = git.data?.dirty ?? false
+  /** Markdown opens rendered; the toggle is the only way into the source. */
+  const isDoc = content?.language === 'markdown'
+  const docText = docDraft ?? content?.content ?? ''
+  const docDirty = isDoc && docDraft !== null && docDraft !== content?.content
+
+  // Hooks below run before the placeholder returns: the pane keeps its hook order
+  // when a project is closed and reopened, and React throws on a mismatch.
+
+  /**
+   * Write the edited document back.
+   *
+   * `expected_mtime` is the mtime the buffer was read with, so the backend can
+   * refuse the write when the file changed underneath us. That refusal is shown
+   * verbatim: it tells the user to reopen rather than silently overwrite someone
+   * else's edit.
+   */
+  const saveDoc = useCallback(async () => {
+    if (projectId === null || !path || !content || docDraft === null) return
+    if (docDraft === content.content) {
+      setDocDraft(null)
+      docDraftsRef.current.delete(path)
+      setDocNotice('没有改动')
+      return
+    }
+    setDocSaving(true)
+    setDocError(null)
+    setDocNotice(null)
+    try {
+      await api.saveFile(projectId, path, docDraft, content.mtime)
+      docDraftsRef.current.delete(path)
+      setDocDraft(null)
+      setDocNotice('已保存')
+      file.reload()
+      // The file list shows sizes, and the git badge may flip to "modified".
+      git.reload()
+    } catch (err) {
+      setDocError(saveErrorText(err))
+    } finally {
+      setDocSaving(false)
+    }
+  }, [projectId, path, content, docDraft, file, git])
+
+  // Ctrl/Cmd+S saves instead of letting the browser open its own dialog.
+  useEffect(() => {
+    if (!docEditing) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void saveDoc()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [docEditing, saveDoc])
+
+  // Drop the "已保存" note on its own so the toolbar does not keep a stale badge.
+  useEffect(() => {
+    if (!docNotice) return
+    const timer = window.setTimeout(() => setDocNotice(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [docNotice])
+
+  const updateDocDraft = useCallback(
+    (next: string) => {
+      if (!path) return
+      setDocDraft(next)
+      if (file.data && next === file.data.content) {
+        // Typing back to the original text clears the dirty state, so drop the
+        // parked buffer instead of remembering a no-op edit.
+        docDraftsRef.current.delete(path)
+      } else {
+        docDraftsRef.current.set(path, next)
+      }
+    },
+    [path, file],
+  )
 
   if (!project) {
     return (
@@ -406,9 +519,6 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       </div>
     )
   }
-
-  const content = file.data
-  const dirty = git.data?.dirty ?? false
 
   const openConversation = (conversation: Conversation) => {
     focusConversation(conversation.id)
@@ -462,9 +572,47 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <span className="tag accent">{content.language || languageFromPath(path)}</span>
             <span className="tag">{formatBytes(content.size)}</span>
             {content.truncated ? <span className="tag warn">已截断</span> : null}
+            {docDirty ? <span className="tag warn">未保存</span> : null}
+            {docNotice ? <span className="tag ok">{docNotice}</span> : null}
           </>
         ) : null}
         <span className="spacer" />
+        {isDoc ? (
+          <div className="doc-mode" role="group" aria-label="文档显示方式">
+            <button
+              className={docEditing ? '' : 'active'}
+              onClick={() => setDocEditing(false)}
+              title="渲染后的文档（默认）"
+              aria-pressed={!docEditing}
+              type="button"
+            >
+              <Icon name="book" size={12} />
+              阅读
+            </button>
+            <button
+              className={docEditing ? 'active' : ''}
+              onClick={() => setDocEditing(true)}
+              title="查看并编辑 Markdown 源码"
+              aria-pressed={docEditing}
+              type="button"
+            >
+              <Icon name="pencil" size={12} />
+              编辑
+            </button>
+          </div>
+        ) : null}
+        {isDoc && docEditing ? (
+          <button
+            className="small primary doc-save"
+            onClick={() => void saveDoc()}
+            disabled={docSaving || !docDirty}
+            title="保存（Ctrl+S）"
+            type="button"
+          >
+            <Icon name="check" size={11} />
+            {docSaving ? '保存中…' : '保存'}
+          </button>
+        ) : null}
         <div className="toolbar-actions">
           <button
             className="ghost icon"
@@ -572,8 +720,30 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       <div className="editor-mount">
         {file.loading && !content ? <Loading text="正在读取文件…" /> : null}
         {file.error ? <ErrorNote message={file.error} onRetry={file.reload} /> : null}
-        {content ? (
-          <CodeViewer value={content.content} language={languageFor(content)} onMountEditor={onMount} />
+        {docError ? (
+          <div className="doc-error">
+            <ErrorNote message={`保存失败：${docError}`} />
+            <button
+              className="icon small"
+              onClick={() => setDocError(null)}
+              title="关闭"
+              type="button"
+            >
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+        ) : null}
+        {content && isDoc && !docEditing ? (
+          <MarkdownDoc path={content.path} projectId={projectId ?? 0} text={docText} />
+        ) : null}
+        {content && (!isDoc || docEditing) ? (
+          <CodeViewer
+            value={isDoc ? docText : content.content}
+            language={languageFor(content)}
+            onMountEditor={onMount}
+            readOnly={!docEditing}
+            onChange={(next) => updateDocDraft(next)}
+          />
         ) : null}
         {!file.loading && !content && !file.error ? (
           <div className="editor-placeholder">未能读取该文件。</div>
@@ -581,6 +751,31 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       </div>
     </div>
   )
+}
+
+/*
+ * Backend write errors arrive in English and name the reason precisely; the
+ * panel is otherwise Chinese, so translate the cases a user can actually hit and
+ * fall back to the original text for anything else (never lose the detail).
+ */
+function saveErrorText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (raw.includes('file changed on disk since it was opened')) {
+    return '文件在打开后被改动过，请重新打开再编辑'
+  }
+  if (raw.includes('file too large')) {
+    return '文件太大，无法保存'
+  }
+  if (raw.includes('not a file')) {
+    return '目标不是文件'
+  }
+  if (raw.includes('file not found')) {
+    return '文件不存在'
+  }
+  if (raw.includes('escapes project root')) {
+    return '路径超出项目范围'
+  }
+  return raw
 }
 
 function languageFor(file: FileContent): string {
