@@ -14,6 +14,8 @@ import type {
   GeneratedNote,
   GitDiff,
   GitStatus,
+  GraphNodeDetail,
+  GraphPayload,
   Health,
   IndexStatus,
   Job,
@@ -210,8 +212,38 @@ export const searchProject = (
   return request<RetrievedChunk[]>(`/api/projects/${projectId}/search?${params.toString()}`, { signal })
 }
 
-/* --------------------------------- settings -------------------------------- */
+/* ---------------------------------- graph ---------------------------------- */
 
+/**
+ * The project's code knowledge graph.
+ *
+ * The whole payload comes at once: the layout algorithm needs every node and
+ * edge, and paginating a graph is far more work than it saves over localhost.
+ */
+export const getGraph = (projectId: number, signal?: AbortSignal): Promise<GraphPayload> =>
+  request<GraphPayload>(`/api/projects/${projectId}/graph`, { signal })
+
+/** Force a rebuild, for when the user changed ignore rules or wants a fresh view. */
+export const rebuildGraph = (
+  projectId: number,
+): Promise<{ nodes: number; edges: number; communities: number; rebuilt: boolean }> =>
+  request<{ nodes: number; edges: number; communities: number; rebuilt: boolean }>(
+    `/api/projects/${projectId}/graph/build`,
+    { method: 'POST' },
+  )
+
+/** One node plus its immediate connections, for the click-through panel. */
+export const getGraphNode = (
+  projectId: number,
+  nodeId: string,
+  depth = 1,
+  signal?: AbortSignal,
+): Promise<GraphNodeDetail> => {
+  const params = new URLSearchParams({ node_id: nodeId, depth: String(depth) })
+  return request<GraphNodeDetail>(`/api/projects/${projectId}/graph/node?${params.toString()}`, { signal })
+}
+
+/* --------------------------------- settings -------------------------------- */
 export const getModelSettings = (): Promise<ModelSettings> =>
   request<ModelSettings>('/api/settings/model')
 
@@ -404,14 +436,22 @@ function parseFrame<T extends { type: string }>(frame: string): T[] {
   return out
 }
 
-/** Send a user message; yields token/status/citation/... events. */
+/**
+ * Send a user message; yields token/status/citation/... events.
+ *
+ * `graphAnchor` names the graph node the question is about. The backend renders
+ * that node's neighbourhood into the prompt, so the model can answer "who calls
+ * this" from real edges instead of guessing at file contents.
+ */
 export function streamChat(
   conversationId: string,
   content: string,
   signal?: AbortSignal,
-  options?: { useContext?: boolean },
+  options?: { useContext?: boolean; graphAnchor?: string | null },
 ): AsyncGenerator<AgentStreamEvent> {
-  const body = options?.useContext ? { content, use_context: true } : { content }
+  const body: Record<string, unknown> = { content }
+  if (options?.useContext) body.use_context = true
+  if (options?.graphAnchor) body.graph_anchor = options.graphAnchor
   return postSse(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, body, signal)
 }
 

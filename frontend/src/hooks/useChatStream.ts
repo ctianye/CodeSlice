@@ -35,7 +35,7 @@ export interface ChatController {
   busy: boolean
   loading: boolean
   loadError: string | null
-  send: (content: string, options?: { useContext?: boolean }) => void
+  send: (content: string, options?: { useContext?: boolean; graphAnchor?: string | null }) => void
   resume: (decision: ApprovalDecision) => void
   stop: () => void
   reload: () => void
@@ -239,7 +239,7 @@ export function useChatStream(conversationId: string | null, onSettled?: () => v
   )
 
   const send = useCallback(
-    (content: string, options?: { useContext?: boolean }) => {
+    (content: string, options?: { useContext?: boolean; graphAnchor?: string | null }) => {
       if (!conversationId) return
       const trimmed = content.trim()
       if (!trimmed) return
@@ -252,7 +252,11 @@ export function useChatStream(conversationId: string | null, onSettled?: () => v
         meta: null,
       }
       void drive(
-        (signal) => api.streamChat(conversationId, trimmed, signal, { useContext: options?.useContext }),
+        (signal) =>
+          api.streamChat(conversationId, trimmed, signal, {
+            useContext: options?.useContext,
+            graphAnchor: options?.graphAnchor,
+          }),
         optimistic,
       )
     },

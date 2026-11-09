@@ -34,6 +34,25 @@ export interface OpenFileState {
 export type EditorTab =
   | { kind: 'file'; path: string; highlight: { start: number; end: number } | null }
   | { kind: 'note'; note: Note }
+  /**
+   * A project-wide graph. Both graphs are single-instance: two code-graph tabs
+   * would render the same payload twice and only confuse "which one am I on".
+   *
+   * `code` is the project's structure, `notes` is the knowledge base. They are
+   * separate views because they answer different questions and their edges mean
+   * different things.
+   */
+  | { kind: 'graph'; scope: 'code'; focusNodeId: string | null }
+  | { kind: 'graph'; scope: 'notes'; focusNodeId: null }
+
+/** A node the user asked the agent about from a graph view. */
+export interface GraphAsk {
+  label: string
+  node_id: string
+  path: string
+  start_line: number
+  community_label: string
+}
 
 interface AppState {
   project: Project | null
@@ -106,6 +125,28 @@ interface AppState {
    * and the sidebar's "click the selected note again" both want.
    */
   openNoteView: (note: Note | null) => void
+  /**
+   * The graph tab's node focus, when that tab is active.
+   *
+   * Kept separate from `openFile`/`noteView` because the graph is neither: it is a
+   * whole-project view that happens to be able to focus one node.
+   */
+  graphFocusNodeId: string | null
+  /** Which graph tab is active, or null when neither is. */
+  activeGraphScope: 'code' | 'notes' | null
+  /** Open a graph tab (reusing it when already open), optionally focused on a node. */
+  openGraph: (focusNodeId?: string | null, scope?: 'code' | 'notes') => void
+  /**
+   * Ask the agent about a graph node.
+   *
+   * Sets `graphAsk`, which the composer picks up to seed the next message. Routing
+   * through state rather than calling the chat directly keeps the graph view free
+   * of conversation concerns.
+   */
+  askAboutNode: (ask: GraphAsk) => void
+  /** Consumed once by the composer. */
+  graphAsk: GraphAsk | null
+  clearGraphAsk: () => void
   theme: AppTheme
   setTheme: (theme: AppTheme) => void
 }
@@ -326,6 +367,41 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
     [activeTab],
   )
   const noteView = activeTab && activeTab.kind === 'note' ? activeTab.note : null
+  const graphFocusNodeId = activeTab && activeTab.kind === 'graph' ? activeTab.focusNodeId : null
+  const activeGraphScope = activeTab && activeTab.kind === 'graph' ? activeTab.scope : null
+
+  /**
+   * Open (or focus) a graph tab.
+   *
+   * Passing a node id focuses it, which is how a citation or a "show me this
+   * symbol" jump arrives here. The scope picks which graph; each is a separate tab
+   * so both can be open at once.
+   */
+  const openGraph = useCallback((focusNodeId: string | null = null, scope: 'code' | 'notes' = 'code') => {
+    setTabs((prev) => {
+      const existing = prev.findIndex((tab) => tab.kind === 'graph' && tab.scope === scope)
+      if (existing >= 0) {
+        const next = [...prev]
+        next[existing] =
+          scope === 'code'
+            ? { kind: 'graph', scope, focusNodeId }
+            : { kind: 'graph', scope, focusNodeId: null }
+        setActiveTabIndex(existing)
+        return next
+      }
+      setActiveTabIndex(prev.length)
+      return [
+        ...prev,
+        scope === 'code'
+          ? { kind: 'graph' as const, scope, focusNodeId }
+          : { kind: 'graph' as const, scope, focusNodeId: null },
+      ]
+    })
+  }, [])
+
+  const [graphAsk, setGraphAsk] = useState<GraphAsk | null>(null)
+  const askAboutNode = useCallback((ask: GraphAsk) => setGraphAsk(ask), [])
+  const clearGraphAsk = useCallback(() => setGraphAsk(null), [])
 
   const value = useMemo<AppState>(
     () => ({
@@ -355,6 +431,12 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       focusNote,
       noteView,
       openNoteView,
+      graphFocusNodeId,
+      activeGraphScope,
+      openGraph,
+      askAboutNode,
+      graphAsk,
+      clearGraphAsk,
       theme,
       setTheme,
     }),
@@ -384,6 +466,12 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       focusNote,
       noteView,
       openNoteView,
+      graphFocusNodeId,
+      activeGraphScope,
+      openGraph,
+      askAboutNode,
+      graphAsk,
+      clearGraphAsk,
       theme,
       setTheme,
     ],

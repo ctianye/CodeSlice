@@ -101,7 +101,7 @@ export function EditorTabs({ onToggleTerminal, terminalOpen }: EditorTabsProps):
                 onClick={() => activateTab(index)}
                 type="button"
               >
-                <Icon name={tab.kind === 'note' ? 'notes' : 'file-code'} size={11} />
+                <Icon name={iconOf(tab)} size={11} />
                 <span className="editor-tab-title">{title}</span>
               </button>
               <button
@@ -139,12 +139,20 @@ export function EditorTabs({ onToggleTerminal, terminalOpen }: EditorTabsProps):
                   </button>
                   <button
                     onClick={() => {
-                      void navigator.clipboard?.writeText(tab.kind === 'file' ? tab.path : tab.note.title)
+                      const value =
+                        tab.kind === 'file'
+                          ? tab.path
+                          : tab.kind === 'note'
+                            ? tab.note.title
+                            : tab.scope === 'notes'
+                              ? '笔记图谱'
+                              : '知识图谱'
+                      void navigator.clipboard?.writeText(value)
                       setMenuIndex(null)
                     }}
                     type="button"
                   >
-                    {tab.kind === 'file' ? '复制路径' : '复制标题'}
+                    {tab.kind === 'file' ? '复制路径' : tab.kind === 'note' ? '复制标题' : '复制名称'}
                   </button>
                 </div>
               ) : null}
@@ -169,15 +177,26 @@ export function EditorTabs({ onToggleTerminal, terminalOpen }: EditorTabsProps):
 }
 
 function keyOf(tab: EditorTab): string {
-  return tab.kind === 'file' ? `file:${tab.path}` : `note:${tab.note.id}`
+  if (tab.kind === 'file') return `file:${tab.path}`
+  if (tab.kind === 'note') return `note:${tab.note.id}`
+  return `graph:${tab.scope}`
 }
 
 function titleOf(tab: EditorTab): string {
-  return tab.kind === 'file' ? baseName(tab.path) : tab.note.title
+  if (tab.kind === 'file') return baseName(tab.path)
+  if (tab.kind === 'note') return tab.note.title
+  return tab.scope === 'notes' ? '笔记图谱' : '知识图谱'
 }
 
 /** Full path or note origin, shown on hover. */
 function hintOf(tab: EditorTab): string {
   if (tab.kind === 'file') return tab.path
-  return tab.note.project_name ? `${tab.note.title} · ${tab.note.project_name}` : tab.note.title
+  if (tab.kind === 'note') return tab.note.project_name ? `${tab.note.title} · ${tab.note.project_name}` : tab.note.title
+  return tab.scope === 'notes' ? '知识库笔记之间的关系' : '项目代码结构的知识图谱'
+}
+
+function iconOf(tab: EditorTab): 'file-code' | 'notes' | 'network' {
+  if (tab.kind === 'file') return 'file-code'
+  if (tab.kind === 'note') return 'notes'
+  return 'network'
 }

@@ -12,7 +12,7 @@ import { Icon } from './Icon'
 
 /** File tree + git badge + index progress + project search for one project. */
 export function FilePanel(): ReactNode {
-  const { project, reveal, refreshKey, focusNote, bumpRefresh } = useApp()
+  const { project, reveal, refreshKey, focusNote, bumpRefresh, openGraph } = useApp()
   const projectId = project?.id ?? null
   const index = useIndexJob(projectId, () => bumpRefresh())
 
@@ -96,6 +96,15 @@ export function FilePanel(): ReactNode {
           </span>
         ) : null}
         <span className="spacer" />
+        <button
+          type="button"
+          className="small ghost"
+          onClick={() => openGraph(null)}
+          title="用二维知识图谱查看这个项目的代码结构"
+        >
+          <Icon name="network" size={12} />
+          图谱
+        </button>
         <button
           type="button"
           className="icon"

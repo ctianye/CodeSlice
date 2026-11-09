@@ -6,7 +6,7 @@ import { useAsync } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
 import { EmptyState, ErrorNote, Loading } from './Feedback'
 import { Icon } from './Icon'
-import { NotesGraphModal } from './NotesGraphModal'
+
 
 /** The note body starts with its own ``# 标题``; the list already shows it. */
 function preview(content: string): string {
@@ -44,14 +44,22 @@ function compareTitle(a: string, b: string): number {
  * rather than growing an editor inside this narrow column.
  */
 export function NotesPanel(): ReactNode {
-  const { project, activeConversationId, refreshKey, bumpRefresh, focusNoteId, focusNote, noteView, openNoteView } =
-    useApp()
+  const {
+    project,
+    activeConversationId,
+    refreshKey,
+    bumpRefresh,
+    focusNoteId,
+    focusNote,
+    noteView,
+    openNoteView,
+    openGraph,
+  } = useApp()
   const projectId = project?.id ?? null
 
   const [scope, setScope] = useState<Scope>({ kind: 'all' })
   const [openFolders, setOpenFolders] = useState<Record<number, boolean>>({})
   const [query, setQuery] = useState('')
-  const [graphOpen, setGraphOpen] = useState(false)
 
   const folders = useAsync((signal) => api.listNoteFolders(signal), [refreshKey])
   const notes = useAsync((signal) => api.listNotes({}, signal), [refreshKey])
@@ -395,7 +403,7 @@ export function NotesPanel(): ReactNode {
   return (
     <div className="sidebar-section">
       <div className="sidebar-toolbar">
-        <button type="button" className="icon" title="知识图谱" aria-label="知识图谱" onClick={() => setGraphOpen(true)}>
+        <button type="button" className="icon" title="笔记图谱" aria-label="笔记图谱" onClick={() => openGraph(null, 'notes')}>
           <Icon name="network" size={13} />
         </button>
         <button type="button" className="small" onClick={startNew} disabled={projectId === null || saving} title="新建一条阅读笔记">
@@ -574,7 +582,8 @@ export function NotesPanel(): ReactNode {
           {(notesByFolder.get(null) ?? []).map((note) => renderNote(note, 0))}
         </div>
       </div>
-      {graphOpen ? <NotesGraphModal notes={allNotes} folders={folders.data ?? []} onClose={() => setGraphOpen(false)} onOpen={(note) => { setGraphOpen(false); openNoteView(note) }} /> : null}
+      {/* The graph is a full pane tab, not a modal: it needs the room, and a
+          floating window would cover the chat the user asks from. */}
     </div>
   )
 }

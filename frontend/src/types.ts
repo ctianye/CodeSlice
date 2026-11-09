@@ -363,6 +363,133 @@ export interface AgentEventUnknown {
   raw: unknown
 }
 
+/* ----------------------------------- graph --------------------------------- */
+
+/**
+ * Node kinds the AST builder emits.
+ *
+ * `external` is a dependency outside the corpus (a base class or imported module
+ * whose definition is not here). `rationale` is a docstring or marked comment that
+ * explains the code it hangs off. Both are first-class so the view can style them
+ * apart from ordinary symbols instead of pretending they are the same thing.
+ */
+export type GraphNodeKind = 'file' | 'class' | 'function' | 'module' | 'rationale' | 'external'
+
+/** One node of the code knowledge graph. */
+export interface GraphNode {
+  id: string
+  label: string
+  kind: GraphNodeKind | string
+  path: string
+  language?: string
+  start_line: number
+  end_line: number
+  /** Id of the containing class or file node; null for a file node itself. */
+  parent?: string | null
+  /** Total number of edges touching this node, computed by the backend. */
+  degree: number
+  community: number
+  community_label: string
+  /** Set on `external` nodes: the dependency is not defined inside this project. */
+  external?: boolean
+  /** Set on `rationale` nodes: whether it came from a docstring or a comment. */
+  origin?: string
+}
+
+/**
+ * Relation kinds emitted by the builder.
+ *
+ * Split rather than merged on purpose: `imports` (a whole module) and
+ * `imports_from` (one name out of it) answer different questions, and `method`
+ * (a class owns a function) is not the same as `contains` (lexical nesting).
+ */
+export type GraphRelation =
+  | 'contains'
+  | 'imports'
+  | 'imports_from'
+  | 'calls'
+  | 'indirect_call'
+  | 'references'
+  | 'inherits'
+  | 'implements'
+  | 'method'
+  | 'declares'
+  | 'rationale_for'
+  | 'uses'
+
+/**
+ * How sure the builder is about an edge.
+ *
+ * `EXTRACTED` means the relationship is literally in the source (a containment, an
+ * import line, a call whose target was proven). `INFERRED` means it was deduced.
+ * The UI must show the difference so a guess never reads as a fact.
+ */
+export type GraphConfidence = 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS'
+
+export interface GraphEdge {
+  source: string
+  target: string
+  relation: GraphRelation
+  confidence: GraphConfidence
+  line?: number | null
+}
+
+export interface GraphCommunity {
+  id: number
+  label: string
+  size: number
+  /** Node id of the most connected member, used as the community's anchor. */
+  hub: string
+  kind: string
+  /** True for the pooled bucket of unconnected nodes. */
+  pooled: boolean
+}
+
+export interface GraphStats {
+  files: number
+  symbols: number
+  edges: number
+  extracted: number
+  inferred: number
+  communities: number
+  /** Nodes that record a docstring or marked comment. */
+  rationale?: number
+  /** Nodes standing in for a dependency defined outside the project. */
+  external?: number
+  /** Edge count per relation kind, for the header and the legend. */
+  by_relation?: Record<string, number>
+  built_hash?: string
+  schema_version?: number
+  /** True when the last read had to rebuild because the index moved on. */
+  rebuilt?: boolean
+}
+
+export interface GraphPayload {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  communities: GraphCommunity[]
+  stats: GraphStats
+}
+
+/** One connection of a node, as returned by the node-detail endpoint. */
+export interface GraphNeighbor {
+  direction: 'in' | 'out'
+  relation: GraphRelation
+  confidence: GraphConfidence
+  id: string
+  label: string
+  kind: string
+  path: string
+  start_line: number
+  community: number
+}
+
+export interface GraphNodeDetail {
+  node: GraphNode | null
+  edges: GraphNeighbor[]
+  neighbors: GraphNeighbor[]
+}
+
 export type AgentStreamEvent = AgentEvent | AgentEventUnknown
 
 /* ----------------------------------- notes --------------------------------- */

@@ -2,16 +2,24 @@
 
 Graph shape::
 
-    START → prepare → agent ─┬─(tool calls)──→ run_one ─┬─(more calls)─→ run_one
-                             │                          └───────────────→ agent
-                             └─(final answer)──→ finalize → END
+    START → ensure_graph → prepare → agent ─┬─(read-only calls)──→ run_readonly_batch ─┐
+                                            │                                          │
+                                            ├─(other calls)──────→ run_one ────────────┤
+                                            │                                          └→ agent
+                                            └─(final answer)─────→ finalize → END
 
-``prepare`` builds the system prompt and retrieves context for this turn.
+``ensure_graph`` keeps the code knowledge graph in step with the index, so a turn
+never answers from a structure that no longer matches the code.
+``prepare`` builds the system prompt and retrieves context for this turn, plus the
+graph neighbourhood of an anchor node when the user asked about one.
 ``agent`` streams the model answer (tokens go out as custom stream events).
-``run_one`` executes exactly **one** tool call per node run so a resumed
-approval cannot re-run a previous side effect: for ``write_file`` /
-``run_command`` it calls ``interrupt()`` *before* touching the filesystem, so
-the re-run on resume reaches the side effect exactly once.
+``run_readonly_batch`` executes every read-only call in one node run: those tools
+have no side effects, so the one-call-at-a-time rule below does not apply to them
+and forcing a full agent round trip per call only adds latency.
+``run_one`` executes exactly **one** side-effecting tool call per node run so a
+resumed approval cannot re-run a previous side effect: for ``write_file`` /
+``run_command`` it calls ``interrupt()`` *before* touching the filesystem, so the
+re-run on resume reaches the side effect exactly once.
 
 Events written through ``get_stream_writer`` are forwarded verbatim by the SSE
 endpoint (see ``app/api/conversations.py``).
@@ -41,6 +49,7 @@ from langgraph.types import Command, interrupt
 from app.agent import checkpoints, node_config, prompts
 from app.agent import tools as agent_tools
 from app.core.errors import ConfigMissing, NotFound
+from app.graph import service as graph_service
 from app.models import config as model_config
 from app.retrieval import hybrid
 from app.services import git_service, notegen, paths
@@ -51,8 +60,20 @@ log = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 10
 MAX_HISTORY_MESSAGES = 30
 
-# Tools that only read the project, so they can never need an approval prompt.
-READONLY_TOOLS = frozenset({"list_files", "read_file", "search_code", "git_diff"})
+# Tools that only read the project, so they can never need an approval prompt and
+# can safely run several per node.
+READONLY_TOOLS = frozenset(
+    {
+        "list_files",
+        "read_file",
+        "search_code",
+        "git_diff",
+        "graph_query",
+        "graph_path",
+        "graph_neighbors",
+        "graph_rationale",
+    }
+)
 
 
 class AgentState(TypedDict, total=False):
@@ -67,6 +88,11 @@ class AgentState(TypedDict, total=False):
     selected_code: str | None
     query: str
     use_context: bool
+    # Set when the turn was started from a graph node ("ask about this node").
+    # The id is the builder's node id; the context is pre-rendered neighbourhood
+    # text, so ``prepare`` does not have to reload the graph.
+    graph_anchor: str | None
+    graph_context: str
     system: str
     context: str
     citations: list[dict[str, Any]]
@@ -267,6 +293,39 @@ def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
 
+def ensure_graph(state: AgentState) -> dict[str, Any]:
+    """Make sure the code graph matches the current index before the turn runs.
+
+    Cheap when nothing changed: the freshness check is one query over the chunk
+    ids and hashes. Doing it here rather than inside ``prepare`` keeps that node
+    focused on prompt assembly, and keeps a slow rebuild visible as its own status
+    stage instead of appearing to be "retrieving".
+    """
+    config = _node_config("ensure_graph")
+    if not bool(config.get("enabled", True)):
+        return {}
+    project = repo.get_project(int(state["project_id"]))
+    if project is None:
+        raise NotFound("project not found")
+    root = paths.resolve_root(project["path"])
+    started = time.monotonic()
+    _emit({"type": "status", "stage": "graph", "detail": "检查知识图谱"})
+    try:
+        graph, rebuilt = graph_service.load_fresh(int(state["project_id"]), root)
+    except Exception as exc:  # a broken graph must not cost the user their turn
+        log.warning("graph refresh failed", exc_info=True)
+        node_config.record_run("ensure_graph", last_error=f"{type(exc).__name__}: {exc}")
+        return {}
+    node_config.record_run(
+        "ensure_graph",
+        last_duration_ms=_elapsed_ms(started),
+        rebuilt=rebuilt,
+        nodes=len(graph.get("nodes") or []),
+        edges=len(graph.get("edges") or []),
+    )
+    return {}
+
+
 def prepare(state: AgentState) -> dict[str, Any]:
     project = repo.get_project(int(state["project_id"]))
     if project is None:
@@ -313,6 +372,35 @@ def prepare(state: AgentState) -> dict[str, Any]:
     if not selected_code and snippet:
         selected_code = _read_snippet(root, state["file_path"], state.get("start_line"), state.get("end_line"))
 
+    # Graph context: when the turn came from a node ("ask about this"), render its
+    # neighbourhood. When it did not, a structural hit for the question is still
+    # useful alongside the vector hits — the two retrieve different things
+    # (literal similarity vs. actual connections), so this adds rather than
+    # replaces.
+    graph_context = ""
+    anchor = state.get("graph_anchor")
+    try:
+        if anchor:
+            graph_context = graph_service.context_for_node(
+                int(state["project_id"]),
+                root,
+                anchor,
+                depth=int(config.get("graph_depth") or 2),
+                token_budget=int(config.get("graph_token_budget") or 1200),
+            )
+        elif bool(config.get("include_graph_context", True)) and query.strip():
+            graph_context = graph_service.context_for_question(
+                int(state["project_id"]),
+                root,
+                query,
+                mode=str(config.get("graph_mode") or "bfs"),
+                depth=int(config.get("graph_depth") or 3),
+                token_budget=int(config.get("graph_token_budget") or 1200),
+            )
+    except Exception:  # pragma: no cover - the graph is an enhancement, not a requirement
+        log.warning("could not build graph context", exc_info=True)
+        graph_context = ""
+
     system = prompts.build_system_prompt(
         mode=state.get("mode") or "project",
         file_path=state.get("file_path"),
@@ -320,6 +408,7 @@ def prepare(state: AgentState) -> dict[str, Any]:
         end_line=state.get("end_line"),
         selected_code=selected_code,
         context=hybrid.context_for_prompt(chunks),
+        graph_context=graph_context,
         project_name=project["name"],
         git_branch=branch,
         use_context=use_context,
@@ -327,10 +416,16 @@ def prepare(state: AgentState) -> dict[str, Any]:
         custom_system_prompt=model_config.load_settings().chat.system_prompt,
         custom_qa_prompt=model_config.load_settings().chat.qa_prompt,
     )
-    node_config.record_run("prepare", last_chunks=len(chunks), last_top_k=top_k)
+    node_config.record_run(
+        "prepare",
+        last_chunks=len(chunks),
+        last_top_k=top_k,
+        last_graph_chars=len(graph_context),
+    )
     return {
         "system": system,
         "context": hybrid.context_for_prompt(chunks),
+        "graph_context": graph_context,
         "citations": citations,
         "project_name": project["name"],
         "pending_calls": [],
@@ -407,6 +502,55 @@ def agent(state: AgentState) -> dict[str, Any]:
         "pending_calls": calls,
         "tool_rounds": rounds,
         "last_ai": {"content": _text_of(message), "tool_calls": calls},
+    }
+
+
+def run_readonly_batch(state: AgentState) -> dict[str, Any]:
+    """Run every queued read-only call in one node execution.
+
+    ``run_one`` deliberately does one call per node run so an approval cannot
+    replay a side effect. Read-only calls have no side effect to replay, so this
+    node runs the whole batch at once: exploring a graph otherwise costs one full
+    model round trip per lookup.
+    """
+    calls = list(state.get("pending_calls") or [])
+    if not calls:
+        return {"pending_calls": []}
+
+    project = repo.get_project(int(state["project_id"]))
+    if project is None:
+        raise NotFound("project not found")
+    root = paths.resolve_root(project["path"])
+
+    messages: list[AnyMessage] = []
+    citations = list(state.get("citations") or [])
+    for call in calls:
+        name = call["name"]
+        args = call.get("args") or {}
+        call_id = call.get("id") or f"call-{len(messages)}"
+        _emit({"type": "tool_call", "name": name, "args": args, "call_id": call_id})
+        result = agent_tools.run_tool(name, args, root, int(state["project_id"]))
+        ok = not result.startswith(("工具执行失败", "工具执行异常", "已拒绝执行"))
+        summary = result.splitlines()[0][:200] if result else ""
+        _emit({"type": "tool_result", "call_id": call_id, "ok": ok, "summary": summary})
+        messages.append(ToolMessage(content=result, tool_call_id=call_id))
+
+        if name == "read_file" and ok:
+            try:
+                start = int(args.get("start_line") or 1)
+                end = int(args.get("end_line") or start)
+                citations.append(
+                    {"path": str(args["path"]), "start_line": start, "end_line": end, "symbol": None}
+                )
+                _emit({"type": "citation", **citations[-1]})
+            except Exception:  # pragma: no cover - a bad citation line is not worth failing
+                pass
+
+    node_config.record_run("run_readonly_batch", last_calls=len(calls))
+    return {
+        "messages": messages,
+        "pending_calls": [],
+        "citations": _dedupe_citations(citations),
     }
 
 
@@ -585,14 +729,27 @@ def _retitle_placeholder(conversation_id: str, answer: str) -> bool:
 def _after_agent(state: AgentState) -> str:
     if state.get("error"):
         return "finalize"
-    if state.get("pending_calls"):
-        return "run_one"
-    return "finalize"
+    calls = state.get("pending_calls") or []
+    if not calls:
+        return "finalize"
+    # Everything the model asked for is side-effect free, so the whole batch can
+    # run in one node instead of one model round trip per lookup.
+    if all(call.get("name") in READONLY_TOOLS for call in calls):
+        return "run_readonly_batch"
+    return "run_one"
 
 
 def _after_tool(state: AgentState) -> str:
     if state.get("pending_calls"):
         return "run_one"
+    return "agent"
+
+
+def _after_batch(state: AgentState) -> str:
+    # The batch always drains ``pending_calls``, so this always returns to the
+    # model; the conditional edge is kept explicit for symmetry with _after_tool.
+    if state.get("pending_calls"):
+        return "run_readonly_batch"
     return "agent"
 
 
@@ -604,14 +761,30 @@ def build_graph():
     if _compiled is not None:
         return _compiled
     graph = StateGraph(AgentState)
+    graph.add_node("ensure_graph", ensure_graph)
     graph.add_node("prepare", prepare)
     graph.add_node("agent", agent)
+    graph.add_node("run_readonly_batch", run_readonly_batch)
     graph.add_node("run_one", run_one)
     graph.add_node("finalize", finalize)
 
-    graph.add_edge(START, "prepare")
+    graph.add_edge(START, "ensure_graph")
+    graph.add_edge("ensure_graph", "prepare")
     graph.add_edge("prepare", "agent")
-    graph.add_conditional_edges("agent", _after_agent, {"run_one": "run_one", "finalize": "finalize"})
+    graph.add_conditional_edges(
+        "agent",
+        _after_agent,
+        {
+            "run_readonly_batch": "run_readonly_batch",
+            "run_one": "run_one",
+            "finalize": "finalize",
+        },
+    )
+    graph.add_conditional_edges(
+        "run_readonly_batch",
+        _after_batch,
+        {"run_readonly_batch": "run_readonly_batch", "agent": "agent"},
+    )
     graph.add_conditional_edges("run_one", _after_tool, {"run_one": "run_one", "agent": "agent"})
     graph.add_edge("finalize", END)
     _compiled = graph.compile(checkpointer=checkpoints.get_saver())
@@ -625,7 +798,12 @@ def _config(conversation_id: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # public API used by the SSE routes
 # --------------------------------------------------------------------------- #
-def start_turn(conversation_id: str, text: str, use_context: bool = False) -> Iterator[dict[str, Any]]:
+def start_turn(
+    conversation_id: str,
+    text: str,
+    use_context: bool = False,
+    graph_anchor: str | None = None,
+) -> Iterator[dict[str, Any]]:
     conversation = repo.get_conversation(conversation_id)
     if conversation is None:
         raise NotFound("conversation not found")
@@ -646,6 +824,7 @@ def start_turn(conversation_id: str, text: str, use_context: bool = False) -> It
             "messages": [user_message],
             "query": text,
             "use_context": use_context,
+            "graph_anchor": graph_anchor,
             "citations": [],
             "error": None,
         }
@@ -654,6 +833,8 @@ def start_turn(conversation_id: str, text: str, use_context: bool = False) -> It
             "messages": [user_message],
             "query": text,
             "use_context": use_context,
+            "graph_anchor": graph_anchor,
+            "graph_context": "",
             "project_id": int(conversation["project_id"]),
             "conversation_id": conversation_id,
             "mode": conversation.get("mode") or "snippet",

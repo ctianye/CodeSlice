@@ -128,6 +128,10 @@ def test_tool_schemas_are_exposed():
         "read_file",
         "search_code",
         "git_diff",
+        "graph_query",
+        "graph_path",
+        "graph_neighbors",
+        "graph_rationale",
         "write_file",
         "run_command",
     }

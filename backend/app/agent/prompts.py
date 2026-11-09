@@ -57,6 +57,10 @@ TOOL_NOTE = """你可以使用的工具：
 - `read_file(path, start_line, end_line)` 读取文件片段
 - `search_code(query)` 在项目里做混合检索（关键词 + 语义）
 - `git_diff(path)` 查看工作区改动
+- `graph_query(question, mode, depth)` 在代码知识图谱里检索结构关系（bfs 广域 / dfs 追链）
+- `graph_path(source, target)` 找两个符号之间的最短连接路径
+- `graph_neighbors(label)` 看某个符号的直接邻居（谁调用它、它调用了谁、继承自谁）
+- `graph_rationale(label)` 看某个符号记录下来的设计说明（docstring / # WHY 注释），回答"为什么这么写"
 - `write_file(path, content, reason)` 修改文件 —— 必须经过用户授权
 - `run_command(command, cwd, reason)` 执行命令 —— 必须经过用户授权
 
@@ -64,9 +68,13 @@ TOOL_NOTE = """你可以使用的工具：
 不要先在正文里问用户"要不要我改"。
 """
 
+GRAPH_CONTEXT_INTRO = """下面是从项目知识图谱里取出的结构信息。每条关系后面标了置信度：
+[EXTRACTED] 表示源码里直接写了（导入、包含关系），[INFERRED] 是按同名调用推断出来的。
+回答"谁调用了谁""某功能怎么串起来"这类结构问题时，优先用这里的信息，并且不要把
+[INFERRED] 当成确定事实；需要更多关系时用 `graph_neighbors` / `graph_path` 继续查。"""
 
-def build_system_prompt(
-    mode: str,
+
+def build_system_prompt(    mode: str,
     file_path: str | None,
     start_line: int | None,
     end_line: int | None,
@@ -78,6 +86,7 @@ def build_system_prompt(
     extra_prompt: str | None = None,
     custom_system_prompt: str | None = None,
     custom_qa_prompt: str | None = None,
+    graph_context: str = "",
 ) -> str:
     """Assemble the system prompt for one turn.
 
@@ -89,6 +98,12 @@ def build_system_prompt(
     ``extra_prompt`` is the free-form instruction from the workflow panel (agent
     node config). It goes last so it reads as the final, most specific instruction
     and never displaces the built-in rules above it.
+
+    ``graph_context`` is a rendered neighbourhood from the code knowledge graph.
+    It is placed right after the retrieved chunks because it answers a different
+    question: the chunks are "text that resembles the question", the graph is "what
+    this symbol is actually connected to". A model given only the former tends to
+    guess at callers; given both, it can cite them.
     """
     parts = [
         (custom_system_prompt or "").strip() or BASE,
@@ -114,6 +129,8 @@ def build_system_prompt(
             parts.append("同文件内的其他相关片段：\n" + context)
     else:
         parts.append(PROJECT.format(context=context or "（没有检索到相关片段）"))
+    if graph_context.strip():
+        parts.append(GRAPH_CONTEXT_INTRO + "\n\n" + graph_context.strip())
     extra = (extra_prompt or "").strip()
     if extra:
         parts.append("额外要求（用户在工作流面板中补充）：\n" + extra)

@@ -27,15 +27,33 @@ SETTINGS_KEY = "agent.node_config"
 
 # Ordered as the graph runs; the panel renders them top to bottom.
 NODES: dict[str, dict[str, Any]] = {
+    "ensure_graph": {
+        "label": "检查图谱",
+        "kind": "input",
+        "description": "索引变化时重建代码知识图谱，让后续回答用到的结构始终与代码一致",
+        "editable": {"enabled": {"type": "bool"}},
+        "defaults": {"enabled": True},
+    },
     "prepare": {
         "label": "准备上下文",
         "kind": "input",
-        "description": "组装 system prompt、检索或读取选中代码",
+        "description": "组装 system prompt、检索或读取选中代码、补充图谱结构上下文",
         "editable": {
             "retrieval_top_k": {"type": "int", "min": 1, "max": 20},
             "include_git_branch": {"type": "bool"},
+            "include_graph_context": {"type": "bool"},
+            "graph_mode": {"type": "enum", "options": ["bfs", "dfs"]},
+            "graph_depth": {"type": "int", "min": 1, "max": 6},
+            "graph_token_budget": {"type": "int", "min": 200, "max": 8000},
         },
-        "defaults": {"retrieval_top_k": 6, "include_git_branch": True},
+        "defaults": {
+            "retrieval_top_k": 6,
+            "include_git_branch": True,
+            "include_graph_context": True,
+            "graph_mode": "bfs",
+            "graph_depth": 3,
+            "graph_token_budget": 1200,
+        },
     },
     "agent": {
         "label": "模型推理",
@@ -56,10 +74,17 @@ NODES: dict[str, dict[str, Any]] = {
             "max_tool_rounds": 10,
         },
     },
+    "run_readonly_batch": {
+        "label": "批量执行只读工具",
+        "kind": "tool",
+        "description": "一次执行多个只读工具调用（列目录/读文件/检索/查图谱）；有副作用的调用仍走逐个授权",
+        "editable": {},
+        "defaults": {},
+    },
     "run_one": {
         "label": "执行工具",
         "kind": "tool",
-        "description": "逐个执行工具调用，危险操作需要授权",
+        "description": "逐个执行有副作用的工具调用，危险操作需要授权",
         "editable": {
             "max_tool_rounds": {"type": "int", "min": 1, "max": 30},
             "auto_approve_readonly_tools": {"type": "bool"},

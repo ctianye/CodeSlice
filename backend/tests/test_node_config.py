@@ -35,10 +35,26 @@ def clean_settings(conn_reset):
 # --------------------------------------------------------------------------- #
 def test_load_returns_defaults_when_nothing_is_saved():
     config = node_config.load()
-    assert list(config) == ["prepare", "agent", "run_one", "finalize"]
-    assert config["prepare"] == {"retrieval_top_k": 6, "include_git_branch": True}
+    assert list(config) == [
+        "ensure_graph",
+        "prepare",
+        "agent",
+        "run_readonly_batch",
+        "run_one",
+        "finalize",
+    ]
+    assert config["ensure_graph"] == {"enabled": True}
+    assert config["prepare"] == {
+        "retrieval_top_k": 6,
+        "include_git_branch": True,
+        "include_graph_context": True,
+        "graph_mode": "bfs",
+        "graph_depth": 3,
+        "graph_token_budget": 1200,
+    }
     assert config["agent"]["max_tool_rounds"] == 10
     assert config["agent"]["temperature"] == 0.2
+    assert config["run_readonly_batch"] == {}
     assert config["run_one"]["auto_approve_readonly_tools"] is True
     assert config["finalize"] == {"auto_retitle": True}
 
@@ -68,7 +84,10 @@ def test_save_merges_partial_patches():
     node_config.save_node("prepare", {"retrieval_top_k": 3})
     node_config.save_node("prepare", {"include_git_branch": False})
     config = node_config.load()["prepare"]
-    assert config == {"retrieval_top_k": 3, "include_git_branch": False}
+    # The patch is merged into the defaults, so untouched graph keys survive.
+    assert config["retrieval_top_k"] == 3
+    assert config["include_git_branch"] is False
+    assert config["graph_mode"] == "bfs"
 
 
 def test_legacy_row_missing_keys_falls_back_to_defaults():
@@ -85,7 +104,8 @@ def test_saving_one_node_leaves_the_others_alone():
     node_config.save_node("finalize", {"auto_retitle": False})
     config = node_config.load()
     assert config["finalize"] == {"auto_retitle": False}
-    assert config["prepare"] == {"retrieval_top_k": 6, "include_git_branch": True}
+    assert config["prepare"]["retrieval_top_k"] == 6
+    assert config["prepare"]["include_graph_context"] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -161,8 +181,15 @@ def test_node_payload_matches_the_http_contract():
 
 def test_payload_lists_nodes_in_graph_order():
     nodes = node_config.nodes_payload()
-    assert [n["id"] for n in nodes] == ["prepare", "agent", "run_one", "finalize"]
-    assert [n["kind"] for n in nodes] == ["input", "llm", "tool", "output"]
+    assert [n["id"] for n in nodes] == [
+        "ensure_graph",
+        "prepare",
+        "agent",
+        "run_readonly_batch",
+        "run_one",
+        "finalize",
+    ]
+    assert [n["kind"] for n in nodes] == ["input", "input", "llm", "tool", "tool", "output"]
 
 
 def test_editable_payload_is_a_copy():

@@ -12,6 +12,10 @@ import './styles/doc.css'
 import './styles/tabs.css'
 import './styles/chat.css'
 import './styles/note.css'
+/* vis-network ships its own tooltip/navigation CSS; the graph view renders no
+ * usable canvas chrome without it. */
+import 'vis-network/styles/vis-network.min.css'
+import './styles/graph.css'
 import './styles/feedback.css'
 import './styles/settings.css'
 

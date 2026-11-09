@@ -25,6 +25,7 @@ from typing import Any
 from langchain_core.tools import BaseTool, tool
 
 from app.core.errors import AppError
+from app.graph import service as graph_service
 from app.retrieval import hybrid
 from app.services import paths, sandbox
 from app.services.git_service import diff as git_diff_text
@@ -255,6 +256,26 @@ def tool_specs() -> tuple[BaseTool, ...]:
         return ""
 
     @tool
+    def graph_query(question: str, mode: str = "bfs", depth: int = 3, token_budget: int = 2000) -> str:
+        """在项目知识图谱中检索结构关系。bfs=广域上下文，dfs=顺着调用链往下追。"""
+        return ""
+
+    @tool
+    def graph_path(source: str, target: str, max_hops: int = 8) -> str:
+        """找出两个符号/文件之间的最短连接路径，返回逐跳关系和整体置信度。"""
+        return ""
+
+    @tool
+    def graph_neighbors(label: str, relation_filter: str = "") -> str:
+        """列出某个符号的直接邻居：谁调用它、它调用了谁、继承自谁。"""
+        return ""
+
+    @tool
+    def graph_rationale(label: str) -> str:
+        """查看某个符号/文件记录下来的设计说明（docstring 或 # WHY 注释），回答"为什么这么写"。"""
+        return ""
+
+    @tool
     def write_file(path: str, content: str, reason: str) -> str:
         """写入/覆盖项目内文件，需要用户授权。content 为完整的新文件内容。"""
         return ""
@@ -264,7 +285,18 @@ def tool_specs() -> tuple[BaseTool, ...]:
         """在项目目录内执行 shell 命令，需要用户授权。"""
         return ""
 
-    return (list_files, read_file, search_code, git_diff, write_file, run_command)
+    return (
+        list_files,
+        read_file,
+        search_code,
+        git_diff,
+        graph_query,
+        graph_path,
+        graph_neighbors,
+        graph_rationale,
+        write_file,
+        run_command,
+    )
 
 
 def bound_tools() -> list[BaseTool]:
@@ -290,6 +322,36 @@ def run_tool(name: str, args: dict[str, Any], root: Path, project_id: int) -> st
             return _search_code(project_id, str(args.get("query") or ""), int(args.get("top_k") or 6))
         if name == "git_diff":
             return _git_diff(root, str(args.get("path") or "") or None)
+        if name == "graph_query":
+            return graph_service.context_for_question(
+                project_id,
+                root,
+                str(args.get("question") or ""),
+                mode=str(args.get("mode") or "bfs"),
+                depth=int(args.get("depth") or 3),
+                token_budget=int(args.get("token_budget") or 2000),
+            )
+        if name == "graph_path":
+            return graph_service.path_between(
+                project_id,
+                root,
+                str(args.get("source") or ""),
+                str(args.get("target") or ""),
+                max_hops=int(args.get("max_hops") or 8),
+            )
+        if name == "graph_neighbors":
+            return graph_service.neighbors(
+                project_id,
+                root,
+                str(args.get("label") or ""),
+                relation_filter=str(args.get("relation_filter") or ""),
+            )
+        if name == "graph_rationale":
+            return graph_service.rationale_for(
+                project_id,
+                root,
+                str(args.get("label") or ""),
+            )
         if name == "write_file":
             return _write_file(root, str(args["path"]), str(args.get("content") or ""))
         if name == "run_command":

@@ -2,11 +2,14 @@ import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import * as api from './api'
 import { usePersistedState } from './hooks/useAsync'
+import { useAsync } from './hooks/useAsync'
 import { ChatPane } from './components/ChatPane'
 import { CodePane } from './components/CodePane'
 import type { SnippetSelection } from './components/CodePane'
 import { EditorTabs } from './components/EditorTabs'
 import { NoteReader } from './components/NoteReader'
+import { GraphView } from './components/graph/GraphView'
+import { NotesGraphView } from './components/NotesGraphView'
 import { SettingsModal } from './components/SettingsModal'
 import { ReleaseNotice } from './components/ReleaseNotice'
 import { checkForRelease } from './lib/releases'
@@ -27,7 +30,18 @@ import { useApp } from './state/AppState'
  * leaves the note reachable instead of destroying it.
  */
 export function App(): ReactNode {
-  const { project, setProjects, setProject, setActiveConversationId, noteView } = useApp()
+  const {
+    project,
+    setProjects,
+    setProject,
+    setActiveConversationId,
+    noteView,
+    graphFocusNodeId,
+    activeGraphScope,
+    tabs,
+    activeTabIndex,
+  } = useApp()
+  const graphTabActive = tabs[activeTabIndex]?.kind === 'graph'
   const [showWelcome, setShowWelcome] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newRelease, setNewRelease] = useState<AppRelease | null>(null)
@@ -124,7 +138,14 @@ export function App(): ReactNode {
               pane falls through to the editor's own empty state. */}
           <EditorTabs onToggleTerminal={() => setTerminalOpen((open) => !open)} terminalOpen={terminalOpen} />
           <div className="editor-pane-body">
-            {noteView ? (
+            {/* Three-way: a graph is a whole-project view, notes are read in
+                place, everything else is the code editor. The two graphs are
+                distinct tabs because their edges mean different things. */}
+            {graphTabActive && activeGraphScope === 'code' ? (
+              <GraphView initialNodeId={graphFocusNodeId} />
+            ) : graphTabActive && activeGraphScope === 'notes' ? (
+              <NotesGraphTab />
+            ) : noteView ? (
               <NoteReader />
             ) : (
               <CodePane onAskSelection={setSnippet} onOpenFile={openFileList} />
@@ -159,8 +180,28 @@ export function App(): ReactNode {
   )
 }
 
-function readLastProjectId(): number | null {
-  try {
+/**
+ * Data container for the notes graph tab.
+ *
+ * The view itself is pure presentation; this wrapper owns the two fetches and the
+ * refresh signal so the graph does not have to know about API wiring or the global
+ * refresh counter.
+ */
+function NotesGraphTab(): ReactNode {
+  const { refreshKey, openNoteView } = useApp()
+  const folders = useAsync((signal) => api.listNoteFolders(signal), [refreshKey])
+  const notes = useAsync((signal) => api.listNotes({}, signal), [refreshKey])
+  return (
+    <NotesGraphView
+      notes={notes.data ?? []}
+      folders={folders.data ?? []}
+      loading={notes.loading && !notes.data}
+      onOpen={(note) => openNoteView(note)}
+    />
+  )
+}
+
+function readLastProjectId(): number | null {  try {
     const raw = localStorage.getItem('codeslice.lastProjectId')
     if (!raw) return null
     const parsed = Number(raw)

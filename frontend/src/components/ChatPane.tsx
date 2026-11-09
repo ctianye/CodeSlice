@@ -26,7 +26,8 @@ const SUGGESTIONS = [
 ]
 
 export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNode {
-  const { project, activeConversationId, setActiveConversationId, bumpRefresh, openNoteView } = useApp()
+  const { project, activeConversationId, setActiveConversationId, bumpRefresh, openNoteView, graphAsk, clearGraphAsk } =
+    useApp()
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [draft, setDraft] = useState<{ text: string; nonce: number } | null>(null)
@@ -39,9 +40,26 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
   const [useContext, setUseContext] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const creatingConversationRef = useRef<Promise<string> | null>(null)
-  const pendingSendRef = useRef<{ conversationId: string; text: string } | null>(null)
+  const pendingSendRef = useRef<{ conversationId: string; text: string; anchor?: string | null } | null>(null)
+  /** Graph node id queued by "ask about this node", consumed by the next send. */
+  const pendingAnchorRef = useRef<string | null>(null)
 
   const chat = useChatStream(activeConversationId, () => bumpRefresh())
+
+  // "Ask about this node" from the graph view: put a ready-made question in the
+  // composer and remember which node it is about. Marking the anchor here (rather
+  // than at send time) is what ties the two together when the user edits the text.
+  useEffect(() => {
+    if (!graphAsk) return
+    pendingAnchorRef.current = graphAsk.node_id
+    const where = graphAsk.path && graphAsk.path.startsWith('note://')
+      ? `笔记「${graphAsk.label}」`
+      : `\`${graphAsk.label}\`${graphAsk.path ? `（${graphAsk.path}:${graphAsk.start_line}）` : ''}`
+    setDraft({
+      text: `请结合知识图谱说明 ${where} 的作用、它和其他部分的联系，以及调用它的地方。`,
+      nonce: Date.now(),
+    })
+  }, [graphAsk])
 
   // A new selection turns into a snippet conversation, then the user types.
   useEffect(() => {
@@ -156,19 +174,28 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
     if (!pending || chat.conversation?.id !== pending.conversationId) return
     pendingSendRef.current = null
     draftsRef.current.delete(pending.conversationId)
-    chat.send(pending.text)
+    chat.send(pending.text, { graphAnchor: pending.anchor ?? null })
   }, [activeConversationId, chat.conversation, chat.send, pendingSendVersion])
 
   const sendMessage = (text: string) => {
+    // A pending graph-node question anchors the turn to that node, so the
+    // backend can render its neighbourhood instead of the model guessing.
+    const anchor = pendingAnchorRef.current
+    pendingAnchorRef.current = null
+    if (anchor) clearGraphAsk()
+
     if (activeConversationId) {
       draftsRef.current.delete(activeConversationId)
-      chat.send(text, { useContext: useContext && Boolean(snippetHint) })
+      chat.send(text, {
+        useContext: useContext && Boolean(snippetHint),
+        graphAnchor: anchor,
+      })
       return
     }
 
     void ensureProjectConversation()
       .then((conversationId) => {
-        pendingSendRef.current = { conversationId, text }
+        pendingSendRef.current = { conversationId, text, anchor }
         setPendingSendVersion((version) => version + 1)
       })
       .catch(() => undefined)

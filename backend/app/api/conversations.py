@@ -49,6 +49,9 @@ class MessageCreate(BaseModel):
     # The "联系上下文" switch next to the send button. Off by default: a snippet
     # conversation should explain the selected lines, not the whole file.
     use_context: bool = False
+    # Set when the question came from a graph node ("ask about this node"): the
+    # builder's node id, which ``prepare`` turns into neighbourhood context.
+    graph_anchor: str | None = None
 
 
 class ResumeBody(BaseModel):
@@ -204,7 +207,12 @@ def post_message(conversation_id: str, body: MessageCreate, _: TokenDep) -> Stre
     pending = agent_graph.pending_interrupt(conversation_id)
     if pending:
         raise InvalidInput("waiting for approval on the previous step; call /resume first")
-    stream = agent_graph.start_turn(conversation_id, body.content, use_context=body.use_context)
+    stream = agent_graph.start_turn(
+        conversation_id,
+        body.content,
+        use_context=body.use_context,
+        graph_anchor=body.graph_anchor,
+    )
     return StreamingResponse(_wrap(stream, conversation_id), media_type="text/event-stream", headers=SSE_HEADERS)
 
 

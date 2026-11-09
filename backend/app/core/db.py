@@ -188,7 +188,6 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
-
 def utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
