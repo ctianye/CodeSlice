@@ -273,13 +273,54 @@ def test_annotations_roundtrip(client, project):
     assert client.get(f"/api/projects/{project['id']}/annotations", params={"file_path": "pkg/sample.py"}).json() == []
 
 
-def test_chat_settings_support_32k_and_custom_prompt(client):
+def test_chat_settings_support_32k_and_custom_prompts(client):
     initial = client.get("/api/settings/model").json()
     assert initial["chat"]["max_tokens"] == 32768
-    response = client.put("/api/settings/model", json={"chat": {"max_tokens": 32768, "system_prompt": "回答保持简洁"}})
+    assert initial["default_system_prompt"]
+    assert initial["default_qa_prompt"]
+    assert "{location}" in initial["default_note_prompt"]
+    response = client.put(
+        "/api/settings/model",
+        json={
+            "chat": {
+                "max_tokens": 32768,
+                "system_prompt": "系统规则自定义",
+                "qa_prompt": "问答方式自定义",
+                "note_prompt": "笔记格式自定义 {location}",
+            }
+        },
+    )
     assert response.status_code == 200
-    assert response.json()["chat"]["system_prompt"] == "回答保持简洁"
-    assert response.json()["default_system_prompt"]
+    assert response.json()["chat"]["system_prompt"] == "系统规则自定义"
+    assert response.json()["chat"]["qa_prompt"] == "问答方式自定义"
+    assert response.json()["chat"]["note_prompt"] == "笔记格式自定义 {location}"
+    client.put("/api/settings/model", json={"chat": {"qa_prompt": "", "note_prompt": ""}})
+
+
+def test_note_generation_uses_saved_note_prompt(conversation, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services import notegen
+
+    captured = []
+
+    class FakeModel:
+        def invoke(self, messages):
+            captured.append(messages)
+            return SimpleNamespace(content="## 标题\n测试标题\n\n## 知识点\n测试内容")
+
+    monkeypatch.setattr(notegen.model_config, "build_chat_model", lambda **_: FakeModel())
+    monkeypatch.setattr(
+        notegen.model_config,
+        "load_settings",
+        lambda: SimpleNamespace(chat=SimpleNamespace(note_prompt="用户的笔记格式 {location}")),
+    )
+
+    sections, error = notegen._model_sections("原始回答", conversation)
+
+    assert error is None
+    assert sections and sections["知识点"] == "测试内容"
+    assert captured[0][0][1] == f"用户的笔记格式 {notegen._location(conversation)}"
 
 
 def test_tests_never_touch_the_production_credential_store():

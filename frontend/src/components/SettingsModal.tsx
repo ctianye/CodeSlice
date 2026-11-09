@@ -138,7 +138,15 @@ function ModelSettingsForm(): ReactNode {
       .getModelSettings()
       .then((next) => {
         if (cancelled) return
-        setSettings({ ...next, chat: { ...next.chat, system_prompt: next.chat.system_prompt || next.default_system_prompt } })
+        setSettings({
+          ...next,
+          chat: {
+            ...next.chat,
+            system_prompt: next.chat.system_prompt || next.default_system_prompt,
+            qa_prompt: next.chat.qa_prompt || next.default_qa_prompt,
+            note_prompt: next.chat.note_prompt || next.default_note_prompt,
+          },
+        })
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -177,6 +185,8 @@ function ModelSettingsForm(): ReactNode {
           temperature: chat.temperature,
           max_tokens: chat.max_tokens,
           system_prompt: chat.system_prompt,
+          qa_prompt: chat.qa_prompt,
+          note_prompt: chat.note_prompt,
           ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         },
       }
@@ -335,6 +345,38 @@ function ModelSettingsForm(): ReactNode {
         <span className="hint">默认提示词已填入，可按需编辑；工具调用和授权规则仍由应用管理。</span>
         <button className="ghost small prompt-reset" type="button" onClick={() => patchChat({ system_prompt: settings.default_system_prompt })}>
           恢复默认提示词
+        </button>
+      </div>
+
+      <div className="field full prompt-field">
+        <label htmlFor="qa-prompt">问答提示词</label>
+        <textarea
+          id="qa-prompt"
+          rows={7}
+          maxLength={20000}
+          value={chat.qa_prompt}
+          onChange={(event) => patchChat({ qa_prompt: event.target.value })}
+          spellCheck={false}
+        />
+        <span className="hint">用于每轮代码问答，补充回答方式与内容要求；系统提示词中的应用规则仍会保留。</span>
+        <button className="ghost small prompt-reset" type="button" onClick={() => patchChat({ qa_prompt: settings.default_qa_prompt })}>
+          恢复默认问答提示词
+        </button>
+      </div>
+
+      <div className="field full prompt-field">
+        <label htmlFor="note-prompt">生成笔记提示词</label>
+        <textarea
+          id="note-prompt"
+          rows={12}
+          maxLength={20000}
+          value={chat.note_prompt}
+          onChange={(event) => patchChat({ note_prompt: event.target.value })}
+          spellCheck={false}
+        />
+        <span className="hint">用于将回答整理为知识库笔记。可保留 {'{location}'} 占位符插入来源位置。</span>
+        <button className="ghost small prompt-reset" type="button" onClick={() => patchChat({ note_prompt: settings.default_note_prompt })}>
+          恢复默认笔记提示词
         </button>
       </div>
 

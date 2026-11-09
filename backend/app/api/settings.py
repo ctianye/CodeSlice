@@ -33,6 +33,8 @@ class ChatBody(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=1024, le=262144)
     system_prompt: str | None = Field(default=None, max_length=20000)
+    qa_prompt: str | None = Field(default=None, max_length=20000)
+    note_prompt: str | None = Field(default=None, max_length=20000)
     api_key: str | None = None
 
 

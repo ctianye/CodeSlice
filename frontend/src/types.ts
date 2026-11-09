@@ -117,6 +117,8 @@ export interface ModelConfig {
   /** Extra output tokens. Returned by the backend but absent from the contract. */
   max_tokens: number
   system_prompt: string
+  qa_prompt: string
+  note_prompt: string
   api_key_configured: boolean
 }
 
@@ -133,6 +135,8 @@ export interface EmbeddingConfig {
 export interface ModelSettings {
   chat: ModelConfig
   default_system_prompt: string
+  default_qa_prompt: string
+  default_note_prompt: string
   embedding: EmbeddingConfig | null
 }
 

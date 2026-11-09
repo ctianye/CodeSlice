@@ -253,3 +253,21 @@ def test_prompt_builder_appends_the_extra_instruction():
     )
     assert extra.startswith(plain)
     assert extra.endswith("只用一句话回答")
+
+
+def test_prompt_builder_includes_default_or_custom_qa_prompt():
+    from app.agent import prompts
+
+    args = {
+        "mode": "project",
+        "file_path": None,
+        "start_line": None,
+        "end_line": None,
+        "selected_code": None,
+        "context": "",
+        "project_name": "demo",
+    }
+    assert prompts.DEFAULT_QA_PROMPT in prompts.build_system_prompt(**args)
+    custom = prompts.build_system_prompt(**args, custom_qa_prompt="自定义问答规则")
+    assert "自定义问答规则" in custom
+    assert prompts.DEFAULT_QA_PROMPT not in custom

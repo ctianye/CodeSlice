@@ -21,6 +21,12 @@ BASE = """你是 CodeSlice 的代码阅读助手，运行在用户本机的桌�
 5. 不要输出整段无关的大文件；引用的代码保持精简，只贴关键几行。
 """
 
+DEFAULT_QA_PROMPT = """回答用户关于代码的问题时：
+- 先直接回答问题，再解释关键机制；结合当前选中的代码和项目上下文，避免泛泛而谈。
+- 对重要判断给出可核对的依据和代码位置；不确定或证据不足时明确说明。
+- 使用清晰、简洁的中文，保留必要的 API、类型和代码标识符原文。
+- 用户的问题是首要目标；不要为了套用固定格式而重复无关背景。"""
+
 SNIPPET = """当前对话聚焦在一个代码片段上。
 文件：{file_path}
 行范围：{start_line}-{end_line}
@@ -71,6 +77,7 @@ def build_system_prompt(
     use_context: bool = False,
     extra_prompt: str | None = None,
     custom_system_prompt: str | None = None,
+    custom_qa_prompt: str | None = None,
 ) -> str:
     """Assemble the system prompt for one turn.
 
@@ -83,7 +90,11 @@ def build_system_prompt(
     node config). It goes last so it reads as the final, most specific instruction
     and never displaces the built-in rules above it.
     """
-    parts = [(custom_system_prompt or "").strip() or BASE, TOOL_NOTE]
+    parts = [
+        (custom_system_prompt or "").strip() or BASE,
+        (custom_qa_prompt or "").strip() or DEFAULT_QA_PROMPT,
+        TOOL_NOTE,
+    ]
     parts.append(f"项目：{project_name}" + (f"（分支 {git_branch}）" if git_branch else ""))
     if mode == "snippet" and file_path:
         if selected_code:

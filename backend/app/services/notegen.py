@@ -40,7 +40,7 @@ MAX_REF_CHARS = 1600
 NOTE_MAX_TOKENS = 4096
 NOTE_RETRY_MAX_TOKENS = 8192
 
-NOTE_PROMPT = """你在帮一位读者把一次代码讲解整理成可长期保存的阅读笔记。
+DEFAULT_NOTE_PROMPT = """你在帮一位读者把一次代码讲解整理成可长期保存的阅读笔记。
 
 请严格输出五个 Markdown 二级标题小节，标题文字必须完全一致，顺序也一致：
 
@@ -458,7 +458,9 @@ def _model_sections(
     location = _location(conversation)
     if transcript:
         location = f"{location}（整段会话，包含多轮问答）"
-    prompt = NOTE_PROMPT.format(location=location)
+    configured_prompt = model_config.load_settings().chat.note_prompt.strip()
+    prompt_template = configured_prompt or DEFAULT_NOTE_PROMPT
+    prompt = prompt_template.replace("{location}", location)
     selected_code = str(conversation.get("selected_code") or "").strip()
     if selected_code:
         opening, closing = _fence_for(selected_code, _language_for(str(conversation.get("file_path") or "")))

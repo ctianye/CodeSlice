@@ -34,6 +34,8 @@ class ModelConfig:
     temperature: float = 0.2
     max_tokens: int = 32768
     system_prompt: str = ""
+    qa_prompt: str = ""
+    note_prompt: str = ""
 
     def public(self, key_configured: bool) -> dict[str, Any]:
         data = asdict(self)
@@ -147,6 +149,8 @@ def load_settings() -> ModelSettings:
         temperature=float(chat_raw.get("temperature", 0.2)),
         max_tokens=int(chat_raw.get("max_tokens", 32768)),
         system_prompt=str(chat_raw.get("system_prompt", "")),
+        qa_prompt=str(chat_raw.get("qa_prompt", "")),
+        note_prompt=str(chat_raw.get("note_prompt", "")),
     )
     emb_raw = raw.get("embedding")
     embedding = None
@@ -180,6 +184,8 @@ def update_settings(payload: dict[str, Any]) -> ModelSettings:
             temperature=float(chat_payload.get("temperature", current.chat.temperature)),
             max_tokens=int(chat_payload.get("max_tokens", current.chat.max_tokens)),
             system_prompt=str(chat_payload.get("system_prompt", current.chat.system_prompt)),
+            qa_prompt=str(chat_payload.get("qa_prompt", current.chat.qa_prompt)),
+            note_prompt=str(chat_payload.get("note_prompt", current.chat.note_prompt)),
         )
         key = chat_payload.get("api_key")
         if key:
@@ -207,11 +213,14 @@ def update_settings(payload: dict[str, Any]) -> ModelSettings:
 
 def public_settings() -> dict[str, Any]:
     ms = load_settings()
-    from app.agent.prompts import BASE
+    from app.agent.prompts import BASE, DEFAULT_QA_PROMPT
+    from app.services.notegen import DEFAULT_NOTE_PROMPT
 
     return {
         "chat": ms.chat.public(has_api_key("chat")),
         "default_system_prompt": BASE,
+        "default_qa_prompt": DEFAULT_QA_PROMPT,
+        "default_note_prompt": DEFAULT_NOTE_PROMPT,
         "embedding": ms.embedding.public(has_api_key("embedding")) if ms.embedding else None,
     }
 
