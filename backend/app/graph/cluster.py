@@ -14,6 +14,7 @@ with no edges at all are pooled into one explicitly-labelled fallback community.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 
 import networkx as nx
@@ -91,6 +92,21 @@ def detect_communities(
             assignment[nid] = cid
         summaries.append(_summarise(cid, pooled, graph, pooled=True))
 
+    # Two communities can be named after the same dominant file (one large
+    # cluster and one small satellite in the same module). The legend would then
+    # show two identical rows with different colours, which reads as a bug. Give
+    # each duplicate a representative symbol so the rows are distinguishable.
+    by_label: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for summary in summaries:
+        by_label[str(summary["label"])].append(summary)
+    for label, duplicates in by_label.items():
+        if len(duplicates) < 2:
+            continue
+        for summary in duplicates:
+            representative = str(summary.get("representative") or "")
+            if representative and representative != label:
+                summary["label"] = f"{label} · {representative}"
+
     return assignment, summaries
 
 
@@ -142,6 +158,14 @@ def _summarise(
     if not kind:
         kind = str(graph.nodes[hub_id].get("kind") or "")
 
+    # Highest-degree real symbol, used only to disambiguate duplicate labels.
+    symbols = [nid for nid in members if graph.nodes[nid].get("kind") in ("function", "class")]
+    representative = ""
+    if symbols:
+        representative = str(
+            graph.nodes[max(symbols, key=lambda nid: (graph.degree(nid), nid))].get("label") or ""
+        )
+
     return {
         "id": cid,
         "label": label,
@@ -149,6 +173,7 @@ def _summarise(
         "hub": hub_id,
         "kind": kind,
         "pooled": pooled,
+        "representative": representative,
     }
 
 

@@ -19,13 +19,18 @@ Design rules that come from graphify's architecture and are worth keeping:
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 """Bumped whenever the builder's output shape or rules change.
 
 Version 2 replaced the chunk-derived graph with a real AST pass: docstrings and
 marker comments become ``rationale`` nodes, calls are resolved against a
 project-wide symbol table instead of by unique name alone, and imports split into
 ``imports`` / ``imports_from``.
+
+Version 3 adds JSX component calls, arrow/function-expression names, ``new``
+constructor calls, exact-class ``self``/``this``/``cls`` resolution, import-gated
+cross-file calls for Python/JS/TS, exported-declaration traversal, and import
+aliases (``from x import y as z``).
 
 A stored graph with a different version is rebuilt instead of served. Without
 this, changing how edges are derived would silently keep serving a graph built by

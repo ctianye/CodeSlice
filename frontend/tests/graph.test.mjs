@@ -3,48 +3,85 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import ts from 'typescript'
 
-// Exercise the actual pure projection without adding a second TS test runtime.
-const source = await readFile(new URL('../src/components/graph/communityGraph.ts', import.meta.url), 'utf8')
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText
-const { communityGraph } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'))
+// Exercise the real projection modules without adding a TS test runtime. The
+// filter imports relationFamily from graphMeta, so that module is compiled to a
+// data URL first and the specifier rewritten.
+const compile = async (path) => {
+  const source = await readFile(new URL(path, import.meta.url), 'utf8')
+  return ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText
+}
+const toUrl = (code) => 'data:text/javascript;base64,' + Buffer.from(code).toString('base64')
+
+const metaUrl = toUrl(await compile('../src/components/graph/graphMeta.ts'))
+const filterUrl = toUrl(
+  (await compile('../src/components/graph/graphFilter.ts'))
+    .replace(/from ['"]\.\/graphMeta['"]/g, `from '${metaUrl}'`),
+)
+const { filterGraph, defaultFilters } = await import(filterUrl)
+const relationsUrl = toUrl(await compile('../src/components/graph/graphRelations.ts'))
+const { groupConnections } = await import(relationsUrl)
+
 const payload = {
   nodes: [
-    { id: 'a', community: 0, kind: 'function', label: 'A', degree: 2 },
-    { id: 'b', community: 0, kind: 'rationale', label: 'B', degree: 1 },
-    { id: 'c', community: 1, kind: 'function', label: 'C', degree: 1 },
+    { id: 'file', community: 0, kind: 'file', label: 'a.py', degree: 3 },
+    { id: 'fn', community: 0, kind: 'function', label: 'fn', degree: 3, path: 'a.py', start_line: 2, end_line: 4 },
+    { id: 'why', community: 0, kind: 'rationale', label: 'why', degree: 1 },
+    { id: 'ext', community: 0, kind: 'external', label: 'typing', degree: 1, external: true },
+    { id: 'other', community: 1, kind: 'function', label: 'other', degree: 1 },
   ],
   edges: [
-    { source: 'a', target: 'b', relation: 'rationale_for', confidence: 'EXTRACTED' },
-    { source: 'a', target: 'c', relation: 'calls', confidence: 'INFERRED' },
+    { source: 'file', target: 'fn', relation: 'contains', confidence: 'EXTRACTED' },
+    { source: 'fn', target: 'other', relation: 'calls', confidence: 'EXTRACTED' },
+    { source: 'why', target: 'fn', relation: 'rationale_for', confidence: 'EXTRACTED' },
+    { source: 'file', target: 'ext', relation: 'uses', confidence: 'EXTRACTED' },
   ],
-  communities: [{ id: 0, label: 'One', size: 2 }, { id: 1, label: 'Two', size: 1 }],
+  communities: [{ id: 0, label: 'One', size: 4 }, { id: 1, label: 'Two', size: 1 }],
 }
-const project = (expanded = [], hidden = [], kinds = []) => communityGraph(payload, new Set(expanded), new Set(hidden), new Set(kinds))
-test('collapsed communities retain cross-community confidence and hide ordinary members', () => {
-  const graph = project()
-  assert.deepEqual(graph.nodes.map(n => n.id), ['community:0', 'community:1'])
-  assert.deepEqual(graph.edges, [{ source: 'community:0', target: 'community:1', relation: 'calls', confidence: 'INFERRED' }])
+
+const hiddenIds = (graph) => graph.nodes.filter(node => node.hidden).map(node => node.id)
+
+test('default filters hide commentary but keep dependencies', () => {
+  const graph = filterGraph(payload, defaultFilters())
+  assert.deepEqual(hiddenIds(graph), ['why'])
+  assert.equal(graph.edges.find(edge => edge.relation === 'rationale_for').hidden, true)
+  assert.equal(graph.edges.find(edge => edge.relation === 'uses').hidden, false)
 })
-test('opening one cluster leaves other cluster collapsed and stationary', () => {
-  const before = project()
-  const after = project([0])
-  assert.deepEqual(after.nodes.map(n => n.id), ['community:0', 'a', 'b', 'community:1'])
-  assert.deepEqual(after.nodes.find(n => n.id === 'community:1'), before.nodes[1])
-  assert(after.edges.some(e => e.source === 'a' && e.target === 'community:1'))
-  assert.equal(payload.edges.length, 2, 'presentation membership edges must not mutate source evidence')
+
+test('turning a family off hides its edges and annotation nodes', () => {
+  const filters = defaultFilters()
+  filters.families.delete('dependency')
+  const graph = filterGraph(payload, filters)
+  assert.deepEqual(hiddenIds(graph).sort(), ['ext', 'why'])
+  assert.equal(graph.edges.find(edge => edge.relation === 'uses').hidden, true)
 })
-test('filters exclude incident links as well as members', () => {
-  const graph = project([0, 1], [1], ['rationale'])
-  assert.deepEqual(graph.nodes.map(n => n.id), ['community:0', 'a'])
-  const ids = new Set(graph.nodes.map(n => n.id))
-  assert(graph.edges.every(e => ids.has(e.source) && ids.has(e.target)))
-  assert.equal(graph.nodes[0].degree, 1)
+
+test('hiding a community hides both its nodes and incident edges', () => {
+  const filters = defaultFilters()
+  filters.hiddenCommunities.add(1)
+  const graph = filterGraph(payload, filters)
+  assert.equal(graph.nodes.find(node => node.id === 'other').hidden, true)
+  assert.equal(graph.edges.find(edge => edge.relation === 'calls').hidden, true)
+  assert.equal(graph.edges.find(edge => edge.relation === 'contains').hidden, false)
 })
-test('notes use their own ids and the exact same projection', () => {
-  const graph = communityGraph({
-    nodes: [{ id: 'note://1', kind: 'note', label: 'A', community: 0, degree: 0 }], edges: [],
-    communities: [{ id: 0, label: 'Notes', size: 1 }],
-  }, new Set([0]), new Set(), new Set())
-  assert.deepEqual(graph.nodes.map(n => n.id), ['community:0', 'note://1'])
-  assert(!graph.nodes.some(n => n.id === 'a'))
+
+test('inspector splits callers from callees and groups scaffolding', () => {
+  const byId = new Map(payload.nodes.map(node => [node.id, node]))
+  const groups = groupConnections('fn', payload.edges, byId, 'code')
+  const byKey = Object.fromEntries(groups.map(group => [group.key, group.items]))
+  assert.deepEqual((byKey.callers ?? []).map(item => item.other.label), [])
+  assert.deepEqual(byKey.calls.map(item => item.other.label), ['other'])
+  assert.deepEqual(byKey.structure.map(item => item.other.label), ['a.py'])
+  assert.deepEqual(byKey.meaning.map(item => item.other.label), ['why'])
+})
+
+test('notes use one relation bucket', () => {
+  const byId = new Map([
+    ['a', { id: 'a', label: 'A', kind: 'note' }],
+    ['b', { id: 'b', label: 'B', kind: 'note' }],
+  ])
+  const groups = groupConnections('a', [
+    { source: 'a', target: 'b', relation: 'same_folder', confidence: 'EXTRACTED' },
+  ], byId, 'notes')
+  assert.deepEqual(groups.map(group => group.key), ['related'])
+  assert.equal(groups[0].items[0].other.label, 'B')
 })

@@ -16,8 +16,6 @@
  * always wins over the OS preference.
  */
 
-import { relationFamily } from './graphMeta'
-
 export type GraphTheme = 'dark' | 'light'
 
 /**
@@ -39,19 +37,52 @@ export const COMMUNITY_PALETTE = [
   '#BAB0AC', // grey
 ] as const
 
-/** Kept for callers that still import the old name (tests, rail swatches). */
-export const GRAPH_PALETTE = COMMUNITY_PALETTE
-
 /**
- * Edge alpha / weight by proof level, from the reference data:
- * solid 2px @0.7 for extracted facts, hairline dashed @0.35 for deductions.
+ * Edge weight and alpha are chosen by relation family: a call is the evidence
+ * a reader came for, while `contains`/`method`/`rationale_for` are scaffolding.
+ * Drawing both at the same weight is what turned the old canvas into rope.
  */
-export const EDGE_STYLE = {
-  extracted: { width: 2, opacity: 0.7 },
-  inferred: { width: 1, opacity: 0.35 },
-  /** Synthetic membership links stay fainter than any real edge. */
-  member: { width: 0.5, opacity: 0.18 },
-} as const
+export interface EdgeInk {
+  width: number
+  opacity: number
+}
+
+const CALL_EDGE = { width: 1.5, opacity: 0.58 } as const
+const DEPENDENCY_EDGE = { width: 0.8, opacity: 0.3 } as const
+const HIERARCHY_EDGE = { width: 0.9, opacity: 0.38 } as const
+const STRUCTURE_EDGE = { width: 0.5, opacity: 0.12 } as const
+const MEANING_EDGE = { width: 0.5, opacity: 0.12 } as const
+const DEFAULT_EDGE = { width: 0.8, opacity: 0.28 } as const
+
+/** Weight and alpha for one edge; inferred edges are halved again by the canvas. */
+export function edgeStyle(relation: string): EdgeInk {
+  switch (relation) {
+    case 'calls':
+    case 'indirect_call':
+    case 'references':
+      return CALL_EDGE
+    case 'imports':
+    case 'imports_from':
+    case 'uses':
+      return DEPENDENCY_EDGE
+    case 'inherits':
+    case 'implements':
+      return HIERARCHY_EDGE
+    case 'contains':
+    case 'method':
+    case 'declares':
+      return STRUCTURE_EDGE
+    case 'rationale_for':
+      return MEANING_EDGE
+    default:
+      return DEFAULT_EDGE
+  }
+}
+
+/** Structural scaffolding gets neutral ink so call edges keep their colour signal. */
+export function isStructuralRelation(relation: string): boolean {
+  return relation === 'contains' || relation === 'method' || relation === 'declares' || relation === 'rationale_for'
+}
 
 export interface CanvasTheme {
   /** Node fills, indexed by community. */
@@ -97,28 +128,3 @@ export function communityColor(theme: GraphTheme, community: number): string {
   const index = ((community % colors.length) + colors.length) % colors.length
   return colors[index]
 }
-
-/**
- * Ink for one edge: the **source** node's community colour, exactly as the
- * reference binds edges (no explicit edge colour → vis inherits from-node).
- *
- * The relation family is kept in the signature so call sites stay honest about
- * the data they pass, and so a future per-family override has one choke point.
- */
-export function edgeColor(
-  theme: GraphTheme,
-  _relation: string,
-  sourceCommunity?: number,
-): string {
-  if (sourceCommunity === undefined || Number.isNaN(sourceCommunity)) {
-    return CANVAS_THEMES[theme].fallbackEdge
-  }
-  return communityColor(theme, sourceCommunity)
-}
-
-/** Relation family, kept for the rail's relation rows. */
-export function familyColor(theme: GraphTheme, family: string): string {
-  return edgeColor(theme, family)
-}
-
-export { relationFamily as _relationFamilyRef }

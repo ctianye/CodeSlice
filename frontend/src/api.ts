@@ -259,6 +259,20 @@ export const getGraphNode = (
   return request<GraphNodeDetail>(`/api/projects/${projectId}/graph/node?${params.toString()}`, { signal })
 }
 
+/** Resolve a code position to the graph node that encloses it. */
+export const locateGraphNode = (
+  projectId: number,
+  path: string,
+  line: number,
+  signal?: AbortSignal,
+): Promise<{ node: GraphNode | null }> => {
+  const params = new URLSearchParams({ path, line: String(line) })
+  return request<{ node: GraphNode | null }>(
+    `/api/projects/${projectId}/graph/locate?${params.toString()}`,
+    { signal },
+  )
+}
+
 /* --------------------------------- settings -------------------------------- */
 export const getModelSettings = (): Promise<ModelSettings> =>
   request<ModelSettings>('/api/settings/model')

@@ -44,33 +44,6 @@
   overflow: hidden;
 }
 
-.graph-head-id {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
-.graph-glyph {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  border: 1px solid var(--accent-line);
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.graph-head-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
 .graph-syncing {
   display: inline-flex;
   align-items: center;
@@ -94,38 +67,26 @@
   to { transform: rotate(360deg); }
 }
 
-/* Scope switch: a real segmented control, not two loose buttons. */
-.graph-scope {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
+/* Relation-family switch. It is the only filter control in the header; the rail
+ * keeps the community legend, so the two cannot be confused. */
+.graph-head-filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.graph-scope button {
+.graph-head-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.graph-head-filters .graph-chip {
   height: 22px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11.5px;
-  font-weight: 500;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-
-.graph-scope button:hover:not([aria-pressed='true']) {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.graph-scope button[aria-pressed='true'] {
-  background: var(--bg-panel);
-  color: var(--accent);
-  box-shadow: var(--shadow-1);
+  padding: 0 8px;
+  font-size: 10.5px;
 }
 
 /* Stat pills. Numerals are tabular and muted: they are context, not the point. */
@@ -355,6 +316,38 @@
   z-index: 2;
 }
 
+/* Shown while force-atlas settles on first paint; the graph is already visible
+ * underneath, so this is a quiet label rather than a blocking spinner. */
+.graph-settling {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.graph-settling .spinner {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: graph-spin 0.8s linear infinite;
+}
+
 /* Compact empty state: a strip, not a centred hero. */
 .graph-blank {
   display: flex;
@@ -478,6 +471,15 @@
   margin-top: 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* Typing a search replaces the whole rail; results should use the height the
+ * community list or inspector would otherwise occupy. */
+.graph-results.graph-rail-scroll {
+  flex: 1 1 auto;
+  max-height: none;
+  margin: 8px 12px 0;
+  padding-bottom: 8px;
 }
 
 .graph-result {
@@ -643,42 +645,38 @@
 .graph-comm {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 7px;
+  min-height: 28px;
+  padding: 2px 6px;
   border-radius: var(--radius-xs);
-  transition: background var(--dur-fast) var(--ease);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .graph-comm:hover {
   background: var(--bg-hover);
+  color: var(--text);
 }
 
-.graph-comm[data-selected] {
-  background: var(--accent-soft);
-}
-
-.graph-comm-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  height: 26px;
-  padding: 0 4px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11.5px;
-  text-align: left;
-}
-
-.graph-comm[data-selected] .graph-comm-toggle {
-  color: var(--accent);
-}
-
-.graph-comm-toggle svg {
-  flex: 0 0 auto;
+.graph-comm[data-hidden] {
   color: var(--text-faint);
+}
+
+.graph-comm[data-hidden] .graph-comm-label,
+.graph-comm[data-hidden] .graph-count {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.graph-comm input {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .graph-comm-label {
@@ -689,6 +687,25 @@
   white-space: nowrap;
 }
 
+.graph-comm-all {
+  margin-left: 6px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.graph-comm-all:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .graph-count {
   flex: 0 0 auto;
   min-width: 20px;
@@ -696,36 +713,6 @@
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   text-align: right;
-}
-
-/* Show/hide is an icon toggle now: a native checkbox was the loudest control
- * in the old rail and did not match anything else in the app. */
-.graph-visibility {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-faint);
-}
-
-.graph-visibility:hover {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
-.graph-visibility[aria-pressed='false'] {
-  color: var(--text-faint);
-  opacity: 0.75;
-}
-
-.graph-visibility:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 /* -------------------------------- detail ---------------------------------- */
@@ -741,9 +728,33 @@
   min-height: 120px;
   padding: 10px 12px;
   gap: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.graph-detail-back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 2px;
+  height: 22px;
+  padding: 0 6px 0 2px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.graph-detail-back:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.graph-detail-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .graph-detail-head {
@@ -863,36 +874,74 @@
   border-bottom: 0;
 }
 
-.graph-relations {
+.graph-rel-group {
+  flex-shrink: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.graph-rel-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.graph-rel-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.graph-rel-group > summary::before {
+  content: '▸';
+  width: 10px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.graph-rel-group[open] > summary::before {
+  content: '▾';
+}
+
+.graph-rel-group > summary small {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-rel-list {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  flex-shrink: 0;
-  max-height: 176px;
+  max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-.graph-relation {
+.graph-rel-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  min-height: 24px;
+  min-height: 26px;
   padding: 3px 5px;
-  border: 0;
   border-radius: var(--radius-xs);
-  background: transparent;
   color: var(--text);
   font-size: 11px;
-  text-align: left;
+  cursor: pointer;
 }
 
-.graph-relation:hover {
+.graph-rel-row:hover {
   background: var(--bg-hover);
 }
 
-.graph-relation:focus-visible {
+.graph-rel-row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -916,10 +965,57 @@
   white-space: nowrap;
 }
 
+.graph-relation-kind {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.graph-relation-loc {
+  flex: 0 1 auto;
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.graph-relation-loc:empty {
+  display: none;
+}
+
+.graph-rel-open {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+}
+
+.graph-rel-row:hover .graph-rel-open,
+.graph-rel-row:focus-within .graph-rel-open {
+  opacity: 1;
+}
+
+.graph-rel-open:hover {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
 .graph-relation-rel {
   flex: 0 0 auto;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 9.5px;
   white-space: nowrap;
 }
 
@@ -1192,18 +1288,20 @@
   }
 }
 
+@container graph (max-width: 860px) {
+  .graph-head-stats {
+    display: none;
+  }
+}
+
 @container graph (max-width: 560px) {
   .graph-head {
     gap: 8px;
     padding: 0 8px;
   }
 
-  .graph-head-stats {
-    display: none;
-  }
-
-  .graph-scope button {
-    padding: 0 8px;
+  .graph-head-filters .graph-chip {
+    padding: 0 7px;
   }
 
   .graph-canvas-hint {
@@ -1224,8 +1322,13 @@
     gap: 6px;
   }
 
-  .graph-head-acts {
+  .graph-head-filters {
+    order: 3;
     width: 100%;
-    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  .graph-head-acts {
+    margin-left: auto;
   }
 }

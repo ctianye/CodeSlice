@@ -40,23 +40,41 @@ def _python_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
         dots, module, names_blob = match.group(1), match.group(2), match.group(3)
         module = ("." * len(dots)) + module
         names = []
+        aliases: dict[str, str] = {}
         for chunk in names_blob.strip("() \n").split(","):
-            name = chunk.strip().split(" as ")[0].strip()
-            if name and name != "*":
-                names.append(name)
+            parts = re.split(r"\s+as\s+", chunk.strip())
+            name = parts[0].strip()
+            if not name or name == "*":
+                continue
+            names.append(name)
+            if len(parts) > 1 and parts[1].strip():
+                # ``from x import y as z`` binds only ``z`` in this file.
+                aliases[parts[1].strip()] = name
         facts.append(
             {
                 "kind": "from",
                 "module": module.strip(),
                 "names": names,
+                "aliases": aliases,
                 "line": line,
             }
         )
     else:
         for chunk in stripped[len("import ") :].split(","):
-            module = chunk.strip().split(" as ")[0].strip()
-            if module:
-                facts.append({"kind": "plain", "module": module, "names": [], "line": line})
+            parts = re.split(r"\s+as\s+", chunk.strip())
+            module = parts[0].strip()
+            if not module:
+                continue
+            alias = parts[1].strip() if len(parts) > 1 else ""
+            facts.append(
+                {
+                    "kind": "plain",
+                    "module": module,
+                    "names": [],
+                    "aliases": {alias: ""} if alias else {},
+                    "line": line,
+                }
+            )
     return facts
 
 
@@ -108,20 +126,30 @@ def _js_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
         if not module:
             continue
         names: list[str] = []
+        aliases: dict[str, str] = {}
         if match.group("default"):
             names.append(match.group("default"))
         if match.group("ns"):
             names.append(match.group("ns"))
         if match.group("named"):
             for chunk in match.group("named").split(","):
-                name = chunk.strip().split(" as ")[0].strip()
-                if name:
-                    names.append(name)
+                parts = re.split(r"\s+as\s+", chunk.strip())
+                name = parts[0].strip()
+                if not name:
+                    continue
+                names.append(name)
+                if len(parts) > 1 and parts[1].strip():
+                    aliases[parts[1].strip()] = name
         facts.append(
             {
                 "kind": "from" if names else "plain",
                 "module": module,
                 "names": names,
+                "aliases": aliases,
+                # A re-export does not bind anything in this file; it only
+                # records the dependency, so the resolver must not use it for
+                # bare-call resolution.
+                "reexport": bool(match.group("reexp")),
                 "line": line,
             }
         )
@@ -143,7 +171,14 @@ _JS_COMMON = dict(  # noqa: C408
         }
     ),
     import_types=frozenset({"import_statement", "export_statement"}),
-    call_types=frozenset({"call_expression", "new_expression"}),
+    call_types=frozenset(
+        {
+            "call_expression",
+            "new_expression",
+            "jsx_self_closing_element",
+            "jsx_opening_element",
+        }
+    ),
     name_field="name",
     call_function_field="function",
     call_arguments_field="arguments",
@@ -159,9 +194,12 @@ _JS_COMMON = dict(  # noqa: C408
 JAVASCRIPT = LanguageConfig(name="javascript", ts_module="tree_sitter_javascript", **_JS_COMMON)
 
 # TypeScript overrides the shared JS table where its grammar differs: it exposes
-# interfaces, abstract classes, enums and type aliases as their own node types, and
-# method *signatures* (declarations without bodies) are contracts a subclass must
-# implement, so they belong in the graph too.
+# interfaces, abstract classes and enums as their own node types, and method
+# *signatures* (declarations without bodies) are contracts a subclass must
+# implement, so they belong in the graph too. Type aliases are deliberately
+# absent: they have no runtime identity, and a type alias sharing a name with a
+# function (``type Block`` vs ``function Block``) made every call to that
+# function look ambiguous.
 TYPESCRIPT = LanguageConfig(
     name="typescript",
     ts_module="tree_sitter_typescript",
@@ -173,7 +211,6 @@ TYPESCRIPT = LanguageConfig(
                 "abstract_class_declaration",
                 "interface_declaration",
                 "enum_declaration",
-                "type_alias_declaration",
             }
         ),
         "function_types": frozenset(

@@ -1,221 +1,372 @@
-/** Static network shared by code and notes. Only explicit gestures move the view. */
-import { useEffect, useMemo, useRef } from 'react'
+/**
+ * Force-directed graph canvas, modelled on graphify's `graph.html`.
+ *
+ * Three differences from the previous static layout matter:
+ *
+ * - **Physics, settled once.** A force-atlas layout lets communities pull
+ *   together instead of pinning them to pre-computed rays. Stabilisation runs on
+ *   first paint, then physics is switched off; the settled coordinates are cached
+ *   in this module so a tab switch does not shake the graph again.
+ * - **Filters hide, never remove.** Every node/edge stays in the DataSet with a
+ *   `hidden` flag, so toggling a filter cannot reassign positions or restart the
+ *   layout.
+ * - **Labels are earned by degree.** A few high-degree anchors carry names at the
+ *   overview zoom; the rest stay dots with tooltips until the reader zooms in.
+ */
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { DataSet, Network } from 'vis-network/standalone'
 import type { Edge, Node, Options } from 'vis-network'
 import { Icon } from '../Icon'
 import { confidenceLabel, isInferred, kindLabel, relationLabel } from './graphMeta'
-import { EDGE_STYLE, canvasTheme, communityColor, type CanvasTheme, type GraphTheme } from './graphTheme'
+import type { VisibleEdge, VisibleNode } from './graphFilter'
+import {
+  canvasTheme, communityColor, edgeStyle, isStructuralRelation,
+  type CanvasTheme, type GraphTheme,
+} from './graphTheme'
 
-export interface CanvasNode {
-  id: string; label: string; degree: number; community: number; kind: string; start_line: number; path: string
-  communityLabel?: string; origin?: string; tooltip?: string; x?: number; y?: number
-}
-export interface CanvasEdge { source: string; target: string; confidence: string; relation: string }
 interface Props {
-  nodes: CanvasNode[]
-  edges: CanvasEdge[]
+  nodes: VisibleNode[]
+  edges: VisibleEdge[]
   theme: GraphTheme
+  scope: 'code' | 'notes'
   selectedId: string | null
   focus: { id: string; nonce: number } | null
+  /** Identifies one build so settled coordinates survive a tab switch. */
+  layoutKey: string
   onSelect: (id: string | null) => void
   onActivate?: (id: string) => void
 }
 
-/** Relations with no direction; an arrowhead on these would imply a call that does not exist. */
-const UNDIRECTED = new Set(['same_folder', 'same_project', 'shared_reference'])
-
 const LABEL_FACE = 'system-ui, "Microsoft YaHei UI", "Segoe UI", sans-serif'
 
-/**
- * How many node labels stay visible at a given zoom.
- *
- * Labels are drawn at a constant 12px on screen (see scaleLabels), which means
- * their *world* size grows as the view zooms out. On a 1,800-node project that
- * turns fit-to-window into a wall of overlapping text. Rather than shrink the
- * type below readability, name only the top few anchors when zoomed out and let
- * the rest stay dots with hover tooltips; zooming in progressively brings more
- * names back. `rank` is the node's index in degree-descending order.
- */
-function labelLimit(scale: number): number {
-  if (scale >= 0.5) return Number.POSITIVE_INFINITY
-  if (scale >= 0.3) return 40
-  if (scale >= 0.18) return 16
-  if (scale >= 0.1) return 8
-  return 4
-}
+/** Relations with no direction; an arrowhead would imply a call that does not exist. */
+const UNDIRECTED = new Set(['same_folder', 'same_project', 'shared_reference'])
+const ARROWED = new Set(['calls', 'indirect_call', 'imports', 'imports_from', 'inherits', 'implements'])
 
 /**
- * Repaint node labels so they keep a constant on-screen size.
- *
- * vis-network scales the whole canvas, which would shrink labels to specks at
- * 0.15×. Dividing by the current scale cancels that out, so the graph can be
- * zoomed out to read its shape without losing the community names. The halo
- * (strokeWidth/strokeColor) keeps a label legible where an edge crosses it.
+ * How many node labels stay visible in the current viewport. Labels keep a
+ * constant on-screen size, so a fixed global rank either drowns the overview or
+ * leaves a zoomed-in neighbourhood nameless. Candidates are clipped to the
+ * viewport and ranked by degree, which is what makes a focused hub readable
+ * without labelling every neighbour it has.
  */
-function scaleLabels(network: Network, nodes: DataSet<Node>, vars: CanvasTheme, rank: Map<string, number>) {
-  const scale = network.getScale()
+function labelLimit(scale: number): number {
+  if (scale >= 0.7) return 22
+  if (scale >= 0.45) return 26
+  if (scale >= 0.28) return 24
+  if (scale >= 0.15) return 16
+  if (scale >= 0.08) return 10
+  return 6
+}
+
+/** Settled positions per build, newest last. Reset by page reload. */
+const POSITION_CACHE = new Map<string, Map<string, { x: number; y: number }>>()
+const POSITION_CACHE_MAX = 4
+
+function rememberPositions(layoutKey: string, positions: Map<string, { x: number; y: number }>): void {
+  POSITION_CACHE.delete(layoutKey)
+  POSITION_CACHE.set(layoutKey, positions)
+  while (POSITION_CACHE.size > POSITION_CACHE_MAX) {
+    const oldest = POSITION_CACHE.keys().next().value
+    if (oldest === undefined) break
+    POSITION_CACHE.delete(oldest)
+  }
+}
+
+function recallPositions(layoutKey: string, ids: string[]): Map<string, { x: number; y: number }> | null {
+  const cached = POSITION_CACHE.get(layoutKey)
+  if (!cached) return null
+  const hits = ids.reduce((count, id) => count + (cached.has(id) ? 1 : 0), 0)
+  return ids.length && hits / ids.length >= 0.8 ? cached : null
+}
+
+function edgeInk(theme: GraphTheme, relation: string, sourceCommunity: number | undefined): string {
+  if (isStructuralRelation(relation)) return canvasTheme(theme).fallbackEdge
+  return sourceCommunity === undefined
+    ? canvasTheme(theme).fallbackEdge
+    : communityColor(theme, sourceCommunity)
+}
+
+function applyLabels(
+  network: Network,
+  dataset: DataSet<Node>,
+  nodes: VisibleNode[],
+  vars: CanvasTheme,
+  selectedId: string | null,
+  viewport: { width: number; height: number },
+): void {
+  const scale = Math.max(network.getScale(), 0.01)
   const limit = labelLimit(scale)
-  nodes.update(nodes.get().filter(node => node.label).map(node => {
-    const visible = (rank.get(String(node.id)) ?? Number.MAX_SAFE_INTEGER) < limit
+  const view = network.getViewPosition()
+  const positions = network.getPositions()
+  const halfWidth = (viewport.width / scale / 2) * 1.2
+  const halfHeight = (viewport.height / scale / 2) * 1.2
+  const candidates = nodes.filter(node => {
+    if (node.hidden) return false
+    const position = positions[node.id]
+    return Boolean(position)
+      && Math.abs(position.x - view.x) <= halfWidth
+      && Math.abs(position.y - view.y) <= halfHeight
+  })
+  candidates.sort((a, b) => b.degree - a.degree)
+  const labelled = new Set(candidates.slice(0, limit).map(node => node.id))
+  if (selectedId) labelled.add(selectedId)
+
+  const fontPx = Math.round((vars.labelPx / scale) * 10) / 10
+  const halo = Math.round((1.1 / scale) * 10) / 10
+  dataset.update(nodes.map(node => {
+    const visible = !node.hidden && labelled.has(node.id)
     return {
-      id: node.id!,
+      id: node.id,
       font: {
-        size: visible ? vars.labelPx / scale : 0,
+        size: visible ? fontPx : 0,
         color: vars.label,
         face: LABEL_FACE,
-        strokeWidth: visible ? Math.round((2.4 / scale) * 10) / 10 : 0,
+        strokeWidth: visible ? halo : 0,
         strokeColor: vars.labelHalo,
       },
     }
   }))
 }
 
-export function GraphCanvas({ nodes, edges, theme, selectedId, focus, onSelect, onActivate }: Props): ReactNode {
+export function GraphCanvas({
+  nodes, edges, theme, scope, selectedId, focus, layoutKey, onSelect, onActivate,
+}: Props): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null)
   const networkRef = useRef<Network | null>(null)
   const appliedFocus = useRef<Props['focus']>(null)
-  const firstFit = useRef(false)
+  const fitted = useRef(false)
   const selectRef = useRef(onSelect)
   const activateRef = useRef(onActivate)
   selectRef.current = onSelect
   activateRef.current = onActivate
+  const [settling, setSettling] = useState(false)
 
   const datasets = useMemo(() => ({ nodes: new DataSet<Node>(), edges: new DataSet<Edge>() }), [])
   const vars = useMemo(() => canvasTheme(theme), [theme])
-  // Labels are ranked by degree so the overview keeps the anchors and drops the
-  // tail. Only labelled (community) nodes take part, since ordinary nodes have
-  // no label at all.
-  const rank = useMemo(() => {
-    const order = nodes.filter(n => n.label).sort((a, b) => b.degree - a.degree)
-    return new Map(order.map((n, index) => [n.id, index]))
-  }, [nodes])
-  // The mount effect owns the zoom listener for the lifetime of the canvas, so
-  // it reads the palette through a ref: a theme swap must not re-create the
-  // network, which would reset the camera the user positioned.
   const varsRef = useRef(vars)
   varsRef.current = vars
-  const rankRef = useRef(rank)
-  rankRef.current = rank
+  const selectedRef = useRef(selectedId)
+  selectedRef.current = selectedId
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
+  const labelFrame = useRef(0)
+  const viewport = () => ({
+    width: hostRef.current?.clientWidth ?? 1200,
+    height: hostRef.current?.clientHeight ?? 800,
+  })
+
+  /**
+   * Fit only what the filters currently show. vis-network's own `fit()` also
+   * frames hidden nodes, which sat unused far outside the visible clusters and
+   * made the graph look tiny in the corner.
+   */
+  const fitVisible = (network: Network) => {
+    const ids = nodesRef.current.filter(node => !node.hidden).map(node => node.id)
+    network.fit(ids.length ? { nodes: ids, animation: false } : { animation: false })
+    applyLabels(network, datasets.nodes, nodesRef.current, varsRef.current, selectedRef.current, viewport())
+  }
+
+  // Seed coordinates from the last settled layout before the network exists, so
+  // a remount can skip a multi-second stabilisation entirely.
+  const seeded = useRef<Map<string, { x: number; y: number }> | null>(null)
+  if (seeded.current === null && !fitted.current) {
+    seeded.current = recallPositions(layoutKey, nodes.map(node => node.id))
+  }
 
   useEffect(() => {
     if (!hostRef.current) return
+    const usePhysics = !seeded.current
     const options: Options = {
-      physics: { enabled: false },
+      physics: {
+        enabled: usePhysics,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -60,
+          centralGravity: 0.005,
+          springLength: 120,
+          springConstant: 0.08,
+          damping: 0.4,
+          avoidOverlap: 0.8,
+        },
+        stabilization: { enabled: true, iterations: nodes.length > 2600 ? 120 : 200, fit: false },
+      },
       layout: { improvedLayout: false, randomSeed: 42 },
-      interaction: { hover: true, tooltipDelay: 120, hideEdgesOnDrag: true,
-        hideEdgesOnZoom: true, keyboard: false, multiselect: false },
-      nodes: { chosen: { node: true, label: false }, borderWidth: 1.5 },
-      edges: { smooth: { enabled: true, type: 'continuous', roundness: 0.2 }, selectionWidth: 3 },
+      interaction: {
+        hover: true,
+        tooltipDelay: 120,
+        hideEdgesOnDrag: true,
+        keyboard: false,
+        multiselect: false,
+      },
+      nodes: { shape: 'dot', borderWidth: 1.5, chosen: { node: true, label: false } },
+      edges: { smooth: { enabled: true, type: 'continuous', roundness: 0.15 }, selectionWidth: 3 },
     }
     const network = new Network(hostRef.current, datasets, options)
-    firstFit.current = false
-    appliedFocus.current = null
     networkRef.current = network
-    network.on('zoom', () => scaleLabels(network, datasets.nodes, varsRef.current, rankRef.current))
+    fitted.current = false
+    appliedFocus.current = null
+    if (usePhysics) setSettling(true)
+    network.on('zoom', () => {
+      if (labelFrame.current) return
+      labelFrame.current = window.requestAnimationFrame(() => {
+        labelFrame.current = 0
+        applyLabels(network, datasets.nodes, nodesRef.current, varsRef.current, selectedRef.current, viewport())
+      })
+    })
     network.on('click', event => selectRef.current(typeof event.nodes[0] === 'string' ? event.nodes[0] : null))
     network.on('doubleClick', event => {
       if (typeof event.nodes[0] === 'string') activateRef.current?.(event.nodes[0])
     })
-    return () => { network.destroy(); networkRef.current = null }
-  }, [datasets])
+    const settle = () => {
+      network.setOptions({ physics: { enabled: false } })
+      const positions = network.getPositions()
+      rememberPositions(layoutKey, new Map(Object.entries(positions)))
+      setSettling(false)
+      fitVisible(network)
+    }
+    network.once('stabilizationIterationsDone', settle)
+    network.on('dragEnd', () => {
+      const positions = network.getPositions()
+      rememberPositions(layoutKey, new Map(Object.entries(positions)))
+    })
+    return () => {
+      if (labelFrame.current) window.cancelAnimationFrame(labelFrame.current)
+      labelFrame.current = 0
+      network.destroy()
+      networkRef.current = null
+    }
+    // The canvas is rebuilt only for a different graph build; theme and data
+    // changes update datasets in place so the camera is never reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasets, layoutKey])
 
   useEffect(() => {
     const network = networkRef.current
     if (!network) return
-    const positions = network.getPositions()
-    const ids = new Set(nodes.map(n => n.id))
+    const ids = new Set(nodes.map(node => node.id))
     datasets.nodes.remove(datasets.nodes.getIds().filter(id => !ids.has(String(id))))
-    const maxDegree = Math.max(1, ...nodes.map(n => n.degree))
-    // Ported from the reference: every node is a plain dot whose border equals
-    // its fill, so the shape reads as one solid disc of community colour; a
-    // selected or hovered node inverts to a white disc with the same border.
+    const maxDegree = Math.max(1, ...nodes.map(node => node.degree))
+    const positions = seeded.current ?? new Map(Object.entries(network.getPositions()))
     datasets.nodes.update(nodes.map((node, index): Node => {
       const color = communityColor(theme, node.community)
-      const center = node.kind === 'community'
-      // String titles can contain HTML. textContent keeps source and notes literal.
       const title = document.createElement('div')
-      title.textContent = [node.label, kindLabel(node.kind), node.path ? node.path + ':' + node.start_line : '',
-        node.communityLabel, (center ? '成员：' : '连接：') + node.degree, node.tooltip].filter(Boolean).join('\n')
+      title.textContent = [
+        node.label,
+        kindLabel(node.kind),
+        node.path ? node.path + ':' + node.start_line : '',
+        node.community_label ? '社区：' + node.community_label : '',
+        '连接：' + node.degree,
+      ].filter(Boolean).join('\n')
+      const position = positions.get(node.id)
       return {
-        id: node.id, label: center ? (node.label.length > 32 ? node.label.slice(0, 31) + '…' : node.label) : '', title,
+        id: node.id,
+        label: node.label.length > 42 ? node.label.slice(0, 41) + '…' : node.label,
+        title,
+        hidden: node.hidden,
         shape: 'dot',
-        size: center ? 19 + 12 * Math.sqrt(node.degree / maxDegree) : 6 + 9 * Math.sqrt(node.degree / maxDegree),
+        size: 7 + 17 * Math.sqrt(node.degree / maxDegree),
         color: {
-          background: color, border: color,
+          background: color,
+          border: color,
           highlight: { background: vars.selectionFill, border: color },
           hover: { background: vars.selectionFill, border: color },
         },
-        font: center
-          ? { size: vars.labelPx, color: vars.label, face: LABEL_FACE, strokeWidth: 2.4, strokeColor: vars.labelHalo }
-          : { size: 0, color: vars.label, face: LABEL_FACE },
-        borderWidth: center ? 3 : 0,
-        ...(positions[node.id] ?? { x: node.x ?? 40 * Math.sqrt(index) * Math.cos(index * 2.4),
-          y: node.y ?? 40 * Math.sqrt(index) * Math.sin(index * 2.4) }),
+        font: { size: 0, color: vars.label, face: LABEL_FACE },
+        ...(position ?? {
+          x: 40 * Math.sqrt(index) * Math.cos(index * 2.4),
+          y: 40 * Math.sqrt(index) * Math.sin(index * 2.4),
+        }),
       }
     }))
-    // Edge ink = the SOURCE node's community colour (the reference sets no
-    // explicit edge colour, so vis inherits from-node). Proof level drives the
-    // weight/alpha: extracted facts 2px @0.7, deductions dashed 1px @0.35.
+    const byId = new Map(nodes.map(node => [node.id, node]))
     datasets.edges.clear()
     datasets.edges.add(edges.map((edge, index): Edge => {
-      const membership = edge.relation === 'community_member'
-      const inferred = !membership && isInferred(edge.relation, edge.confidence)
-      const style = membership ? EDGE_STYLE.member : inferred ? EDGE_STYLE.inferred : EDGE_STYLE.extracted
-      const source = nodes.find(n => n.id === edge.source)
-      const ink = source ? communityColor(theme, source.community) : vars.fallbackEdge
+      const inferred = isInferred(edge.relation, edge.confidence)
+      const style = edgeStyle(edge.relation)
+      const ink = edgeInk(theme, edge.relation, byId.get(edge.source)?.community)
       const title = document.createElement('div')
       title.textContent = relationLabel(edge.relation) + ' · ' + confidenceLabel(edge.confidence)
-      return { id: 'e' + index, from: edge.source, to: edge.target, title,
-        dashes: inferred, width: style.width,
-        color: { color: ink, opacity: style.opacity },
-        arrows: { to: { enabled: !membership && !UNDIRECTED.has(edge.relation), scaleFactor: 0.5 } },
+        + (edge.line ? ' · L' + edge.line : '')
+      return {
+        id: 'e' + index,
+        from: edge.source,
+        to: edge.target,
+        hidden: edge.hidden,
+        title,
+        dashes: inferred,
+        width: inferred ? style.width * 0.7 : style.width,
+        color: { color: ink, opacity: inferred ? style.opacity * 0.6 : style.opacity },
+        arrows: {
+          to: {
+            enabled: !UNDIRECTED.has(edge.relation) && ARROWED.has(edge.relation),
+            scaleFactor: 0.45,
+          },
+        },
       }
     }))
-    if (!firstFit.current && nodes.length) {
-      network.fit({ animation: false })
-      firstFit.current = true
+    if (!fitted.current && nodes.some(node => !node.hidden)) {
+      fitVisible(network)
+      fitted.current = true
     }
-    scaleLabels(network, datasets.nodes, vars, rank)
-  }, [nodes, edges, theme, vars, rank, datasets])
+    applyLabels(network, datasets.nodes, nodes, vars, selectedId, viewport())
+    seeded.current = null
+  }, [nodes, edges, theme, vars, selectedId, datasets])
 
+  // Dim everything except the selected node's one-hop neighbourhood.
   useEffect(() => {
     const network = networkRef.current
     if (!network) return
-    const exists = selectedId && datasets.nodes.get(selectedId)
-    network.selectNodes(exists ? [selectedId] : [], false)
-    const connected = new Set(exists ? [selectedId, ...network.getConnectedNodes(selectedId).map(String)] : [])
-    datasets.nodes.update(nodes.map(node => ({ id: node.id,
-      opacity: !exists || connected.has(node.id) || node.kind === 'community' ? 1 : 0.25 })))
-    datasets.edges.update(datasets.edges.get().map(edge => ({ id: edge.id!,
-      color: { ...(typeof edge.color === 'object' ? edge.color : {}),
-        opacity: !exists ? undefined
-          : edge.from === selectedId || edge.to === selectedId ? 0.85 : 0.08 } })))
-  }, [selectedId, nodes, edges, datasets])
+    const active = selectedId && datasets.nodes.get(selectedId) ? selectedId : null
+    network.selectNodes(active ? [active] : [], false)
+    const connected = new Set(active ? [active, ...network.getConnectedNodes(active).map(String)] : [])
+    datasets.nodes.update(nodes.map(node => ({
+      id: node.id,
+      opacity: !active || node.hidden || connected.has(node.id) ? 1 : 0.42,
+    })))
+    datasets.edges.update(datasets.edges.get().map(edge => {
+      const base = typeof edge.color === 'object' && edge.color ? Number(edge.color.opacity ?? 0.6) : 0.6
+      return {
+        id: edge.id!,
+        color: {
+          ...(typeof edge.color === 'object' ? edge.color : {}),
+          opacity: !active ? undefined
+            : edge.from === active || edge.to === active ? Math.max(base, 0.75) : 0.08,
+        },
+      }
+    }))
+    applyLabels(network, datasets.nodes, nodes, vars, selectedId, viewport())
+  }, [selectedId, nodes, edges, datasets, vars])
 
   useEffect(() => {
     if (!focus) { appliedFocus.current = null; return }
     if (appliedFocus.current === focus || !datasets.nodes.get(focus.id)) return
-    networkRef.current?.focus(focus.id, { scale: 1.25, animation: false, locked: false })
+    networkRef.current?.focus(focus.id, { scale: 0.85, animation: false, locked: false })
     appliedFocus.current = focus
-    if (networkRef.current) scaleLabels(networkRef.current, datasets.nodes, vars, rank)
-  }, [focus, nodes, datasets, vars, rank])
+    if (networkRef.current) {
+      applyLabels(networkRef.current, datasets.nodes, nodes, vars, selectedId, viewport())
+    }
+  }, [focus, nodes, datasets, vars, selectedId])
 
   const zoom = (factor: number) => {
     const network = networkRef.current
-    if (network) {
-      network.moveTo({ scale: Math.max(0.03, Math.min(4, network.getScale() * factor)), animation: false })
-      scaleLabels(network, datasets.nodes, vars, rank)
-    }
+    if (!network) return
+    network.moveTo({ scale: Math.max(0.03, Math.min(4, network.getScale() * factor)), animation: false })
+    applyLabels(network, datasets.nodes, nodes, vars, selectedId, viewport())
   }
   const fit = () => {
     const network = networkRef.current
-    if (network) { network.fit({ animation: false }); scaleLabels(network, datasets.nodes, vars, rank) }
+    if (!network) return
+    fitVisible(network)
   }
 
+  const visibleCount = nodes.reduce((count, node) => count + (node.hidden ? 0 : 1), 0)
+
   return <div className="graph-canvas-wrap" data-graph-theme={theme}>
-    <div className="graph-canvas" ref={hostRef} aria-label="静态知识图谱画布" />
-    {!nodes.length && <div className="graph-canvas-empty">
+    <div className="graph-canvas" ref={hostRef} aria-label="知识图谱画布" />
+    {settling ? <div className="graph-settling"><span className="spinner" />正在排布图谱…</div> : null}
+    {!visibleCount && <div className="graph-canvas-empty">
       <Icon name="layers" size={15} />
       <span>当前筛选下没有可显示的节点</span>
     </div>}
@@ -230,6 +381,8 @@ export function GraphCanvas({ nodes, edges, theme, selectedId, focus, onSelect, 
         <Icon name="minus" size={14} />
       </button>
     </div>
-    <div className="graph-canvas-hint">静态模式 · 拖拽调整 · 滚轮缩放 · 点击社区展开 / 收起 · 悬浮查看详情</div>
+    <div className="graph-canvas-hint">
+      滚轮缩放 · 拖拽平移 · 单击查看 · 双击{scope === 'code' ? '打开代码' : '打开笔记'}
+    </div>
   </div>
 }

@@ -120,6 +120,30 @@ def test_node_detail_returns_null_for_an_unknown_node(client, graph_project):
     assert resp.json()["edges"] == []
 
 
+def test_locate_returns_the_enclosing_symbol(client, graph_project):
+    body = client.get(
+        f"/api/projects/{graph_project['id']}/graph/locate",
+        params={"path": "a.py", "line": 2},
+    ).json()
+    assert body["node"]["label"] == "run"
+
+
+def test_locate_falls_back_to_the_file_node(client, graph_project):
+    body = client.get(
+        f"/api/projects/{graph_project['id']}/graph/locate",
+        params={"path": "./a.py", "line": 99},
+    ).json()
+    assert body["node"]["label"] == "a.py"
+
+
+def test_locate_returns_null_outside_the_project(client, graph_project):
+    body = client.get(
+        f"/api/projects/{graph_project['id']}/graph/locate",
+        params={"path": "nope.py", "line": 1},
+    ).json()
+    assert body["node"] is None
+
+
 def test_graph_endpoints_require_a_token(graph_project):
     from fastapi.testclient import TestClient
 

@@ -146,6 +146,59 @@ def rebuild_graph(project: ProjectDep, _: TokenDep) -> GraphBuildResult:
     )
 
 
+def _location_node(graph: dict[str, Any], path: str, line: int) -> dict[str, Any] | None:
+    """Most specific node that covers a file position.
+
+    A cursor inside a method must resolve to the method, not to the file node that
+    also contains it. ``rationale`` is included only when it starts exactly on the
+    requested line: a docstring explains the definition below it, but a click on
+    the ``def`` line means the function.
+    """
+    wanted = path.replace("\\", "/").removeprefix("./")
+    candidates = [node for node in graph.get("nodes") or [] if node.get("path") == wanted]
+    enclosing = [
+        node
+        for node in candidates
+        if node.get("kind") != "external"
+        and int(node.get("start_line") or 1) <= line <= int(node.get("end_line") or 1)
+        and not (node.get("kind") == "rationale" and int(node.get("start_line") or 1) != line)
+    ]
+    kind_rank = {"function": 0, "class": 0, "file": 2, "rationale": 3}
+    enclosing.sort(
+        key=lambda node: (
+            kind_rank.get(str(node.get("kind")), 1),
+            int(node.get("end_line") or 1) - int(node.get("start_line") or 1),
+            node["id"],
+        )
+    )
+    if enclosing:
+        return enclosing[0]
+    before = [
+        node
+        for node in candidates
+        if node.get("kind") not in {"external", "rationale"}
+        and int(node.get("start_line") or 1) <= line
+    ]
+    before.sort(key=lambda node: (-int(node.get("start_line") or 1), node["id"]))
+    return before[0] if before else (candidates[0] if candidates else None)
+
+
+@router.get("/projects/{project_id}/graph/locate")
+def locate_file_position(
+    project: ProjectDep,
+    _: TokenDep,
+    path: str = Query(min_length=1),
+    line: int = Query(default=1, ge=1),
+) -> dict[str, Any]:
+    """Resolve a code position to graph node, for "locate in graph" in the editor.
+
+    Served from the persisted copy: this runs while the user is reading code and
+    must never walk the source tree. The caller opens the returned node.
+    """
+    graph = _cached_or_build(project, paths.resolve_root(project["path"]))
+    return {"node": _location_node(graph, path, line)}
+
+
 @router.get("/projects/{project_id}/graph/node")
 def get_node_detail(
     project: ProjectDep,

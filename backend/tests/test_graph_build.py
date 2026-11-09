@@ -17,7 +17,8 @@ from app.graph.ast.resolve import SymbolTable, resolve
 
 
 def _extract(path: str, code: str):
-    return extract_file(path, code.encode("utf-8"), PYTHON)
+    config = by_suffix_config(path) or PYTHON
+    return extract_file(path, code.encode("utf-8"), config)
 
 
 def _labels(graph: dict) -> dict[str, dict]:
@@ -78,12 +79,22 @@ def test_a_same_file_call_resolves():
     assert ("caller", "helper") in _edges(graph, "calls")
 
 
-def test_a_cross_file_call_resolves_through_the_unique_name():
+def test_a_cross_file_call_resolves_through_an_import():
+    """The import is the proof: it names the file that defines `helper`."""
+    graph = _build(
+        ("a.py", "def helper():\n    pass\n"),
+        ("b.py", "from a import helper\ndef caller():\n    helper()\n"),
+    )
+    assert ("caller", "helper") in _edges(graph, "calls")
+
+
+def test_a_unique_name_elsewhere_without_an_import_produces_no_edge():
+    """A unique name in a file this one never imports is not evidence."""
     graph = _build(
         ("a.py", "def helper():\n    pass\n"),
         ("b.py", "def caller():\n    helper()\n"),
     )
-    assert ("caller", "helper") in _edges(graph, "calls")
+    assert ("caller", "helper") not in _edges(graph, "calls")
 
 
 def test_an_ambiguous_name_produces_no_edge():
@@ -112,6 +123,15 @@ def test_a_class_qualified_call_resolves_to_the_method():
     assert ("caller", "bar") in _edges(graph, "calls")
 
 
+def test_a_class_qualified_call_requires_a_visible_class():
+    """`Foo` in an unrelated file is not a qualifier this file can use."""
+    graph = _build(
+        ("a.py", "class Foo:\n    def bar(self):\n        pass\n"),
+        ("b.py", "def caller():\n    Foo.bar()\n"),
+    )
+    assert ("caller", "bar") not in _edges(graph, "calls")
+
+
 def test_a_self_call_resolves_within_the_class():
     graph = _build(
         (
@@ -137,6 +157,152 @@ def test_resolved_calls_are_extracted_not_inferred():
     calls = [e for e in graph["edges"] if e["relation"] == "calls"]
     assert calls
     assert all(e["confidence"] == "EXTRACTED" for e in calls)
+
+
+# --------------------------------------------------------------------------- #
+# javascript / typescript
+# --------------------------------------------------------------------------- #
+def test_a_jsx_component_is_a_call_edge_through_its_import():
+    graph = _build(
+        (
+            "widget.tsx",
+            "import { Markdown } from './markdown';\nconst Widget = () => <Markdown/>;\n",
+        ),
+        ("markdown.tsx", "const Markdown = () => null;\n"),
+    )
+    labels = _labels(graph)
+    assert labels["Widget"]["kind"] == "function"
+    assert ("Widget", "Markdown") in _edges(graph, "calls")
+
+
+def test_a_lowercase_jsx_tag_is_not_a_call():
+    """`div` is intrinsic HTML, not a project component."""
+    graph = _build(("widget.tsx", 'const Widget = () => <div className="x"/>;\n'))
+    assert ("Widget", "div") not in _edges(graph, "calls")
+    assert not _edges(graph, "calls")
+
+
+def test_a_jsx_opening_tag_emits_one_call_and_the_closing_tag_none():
+    graph = _build(
+        (
+            "widget.jsx",
+            "function App() { return <Markdown>hi</Markdown>; }\nfunction Markdown() { return null; }\n",
+        )
+    )
+    assert _edges(graph, "calls") == {("App", "Markdown")}
+
+
+def test_new_expression_resolves_to_its_class():
+    graph = _build(
+        (
+            "factory.ts",
+            "class Foo { bar() { return 1; } }\nfunction make() { return new Foo(); }\n",
+        )
+    )
+    assert ("make", "Foo") in _edges(graph, "calls")
+
+
+def test_a_this_call_resolves_within_the_class():
+    graph = _build(
+        (
+            "panel.tsx",
+            "class Panel {\n"
+            "  helper() { return 1; }\n"
+            "  run() { this.helper(); }\n"
+            "}\n",
+        )
+    )
+    assert ("run", "helper") in _edges(graph, "calls")
+
+
+def test_an_arrow_function_takes_the_name_of_its_binding():
+    graph = _build(
+        (
+            "widget.tsx",
+            "const Widget = () => <Markdown/>;\nconst Markdown = () => null;\n",
+        )
+    )
+    labels = _labels(graph)
+    assert labels["Widget"]["kind"] == "function"
+    assert "<anonymous>" not in labels
+    assert ("Widget", "Markdown") in _edges(graph, "calls")
+
+
+def test_an_arrow_function_parameter_is_not_its_name():
+    """`props => ...` must be named after its binding, not after `props`."""
+    graph = _build(
+        (
+            "widget.tsx",
+            "const Widget = props => <Markdown/>;\nconst Markdown = () => null;\n",
+        )
+    )
+    labels = _labels(graph)
+    assert labels["Widget"]["kind"] == "function"
+    assert "props" not in labels
+    assert ("Widget", "Markdown") in _edges(graph, "calls")
+
+
+def test_an_unnameable_function_is_not_a_node():
+    """Its calls belong to the enclosing scope instead of a meaningless symbol."""
+    graph = _build(
+        (
+            "a.tsx",
+            "const mounted = useEffect(() => { doThing(); });\nfunction doThing() { return null; }\n",
+        )
+    )
+    assert "<anonymous>" not in _labels(graph)
+    assert ("a.tsx", "doThing") in _edges(graph, "calls")
+
+
+def test_exported_declarations_are_walked_not_swallowed_as_imports():
+    """`export_statement` is also how every React module exposes its components."""
+    graph = _build(
+        (
+            "widget.tsx",
+            "export function Icon() { return null }\n"
+            "export const Widget = () => <Icon/>;\n"
+            "export default function App() { return <Widget/>; }\n"
+            "export const Markdown = memo(function Markdown() { return null });\n",
+        )
+    )
+    labels = _labels(graph)
+    assert labels["Icon"]["kind"] == "function"
+    assert labels["Widget"]["kind"] == "function"
+    assert labels["App"]["kind"] == "function"
+    assert labels["Markdown"]["kind"] == "function"
+    assert ("Widget", "Icon") in _edges(graph, "calls")
+    assert ("App", "Widget") in _edges(graph, "calls")
+
+
+def test_a_type_alias_does_not_make_a_function_call_ambiguous():
+    """`type Block` and `function Block` are two nodes, but only one is callable."""
+    graph = _build(
+        (
+            "render.tsx",
+            "type Block = { text: string };\n"
+            "function Block() { return null }\n"
+            "function Render() { return <Block/>; }\n",
+        )
+    )
+    assert ("Render", "Block") in _edges(graph, "calls")
+
+
+def test_a_typescript_import_alias_binds_the_alias():
+    graph = _build(
+        ("api.ts", "export const getGraph = () => 1;\n"),
+        ("main.ts", "import { getGraph as fetchGraph } from './api';\n"
+         "export function run() { fetchGraph(); }\n"),
+    )
+    assert ("run", "getGraph") in _edges(graph, "calls")
+
+
+def test_a_reexport_does_not_bind_a_local_name():
+    """`export { foo } from './a'` records the dependency but not a callable."""
+    graph = _build(
+        ("a.ts", "export const foo = () => 1;\n"),
+        ("b.ts", "export { foo } from './a';\nexport function run() { foo(); }\n"),
+    )
+    assert ("run", "foo") not in _edges(graph, "calls")
 
 
 # --------------------------------------------------------------------------- #
@@ -197,6 +363,25 @@ def test_an_internal_import_links_two_files():
         ("app/helpers.py", "def thing():\n    pass\n"),
     )
     assert ("a.py", "helpers.py") in _edges(graph, "imports_from")
+
+
+def test_a_python_symbol_alias_binds_the_alias():
+    graph = _build(
+        ("app/service.py", "def load():\n    pass\n"),
+        ("app/main.py", "from app.service import load as load_service\n"
+         "def run():\n    load_service()\n"),
+    )
+    assert ("run", "load") in _edges(graph, "calls")
+
+
+def test_a_python_module_alias_resolves_member_calls():
+    graph = _build(
+        ("app/__init__.py", ""),
+        ("app/service.py", "def load():\n    pass\n"),
+        ("app/main.py", "from app import service as svc\n"
+         "def run():\n    svc.load()\n"),
+    )
+    assert ("run", "load") in _edges(graph, "calls")
 
 
 def test_an_external_import_becomes_an_external_node():

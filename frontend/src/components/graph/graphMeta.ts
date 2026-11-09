@@ -6,7 +6,7 @@
  * inferred edge must look inferred everywhere.
  */
 
-import type { GraphConfidence, GraphNodeKind, GraphRelation } from '../../types'
+import type { GraphConfidence, GraphRelation } from '../../types'
 
 /** Chinese label for each relation kind. */
 export const RELATION_LABEL: Record<string, string> = {
@@ -116,19 +116,4 @@ export function relationFamily(relation: string): RelationFamily {
     default:
       return 'other'
   }
-}
-
-/** Colour family label, for the legend rows in the inspector rail. */
-export const FAMILY_LABEL: Record<RelationFamily, string> = {
-  structure: '结构',
-  dependency: '依赖',
-  behaviour: '行为',
-  hierarchy: '继承',
-  meaning: '说明',
-  other: '其他',
-}
-
-/** Node kinds that carry no code and should not be traversed into. */
-export function isLeafKind(kind: GraphNodeKind | string): boolean {
-  return kind === 'external' || kind === 'rationale'
 }

@@ -37,11 +37,11 @@ export function RelationshipSummary({ scope, projectId, nodeId, neighborCount }:
   return <section className="graph-summary" aria-label="AI 关系总结">
     <div className="graph-summary-head">
       <button className="graph-act primary graph-summary-run" disabled={busy} onClick={() => void summarize()}>
-        <Icon name="sparkles" size={12} />{busy ? '正在总结…' : error ? '重试 AI 总结关系' : 'AI 总结关系'}
+        <Icon name="sparkles" size={12} />{busy ? '正在解读…' : error ? '重试 AI 解读' : 'AI 解读关系'}
       </button>
       {busy
         ? <button className="graph-act" onClick={() => { request.current?.abort(); setBusy(false) }}>取消</button>
-        : <span className="graph-summary-scope">全部 {result?.neighbor_count ?? neighborCount} 个直接邻点</span>}
+        : <span className="graph-summary-scope">覆盖全部 {result?.neighbor_count ?? neighborCount} 个直接邻点</span>}
     </div>
     <div className="graph-summary-output" aria-live="polite" aria-busy={busy}>
       {error
@@ -49,8 +49,8 @@ export function RelationshipSummary({ scope, projectId, nodeId, neighborCount }:
         : result
           ? <Markdown text={result.summary} />
           : busy
-            ? <p className="graph-hint">正在梳理核心节点与全部直接邻点的关联逻辑…</p>
-            : <p className="graph-hint">以所选节点为核心生成关系说明；社区的收起与筛选不会缩减总结范围。</p>}
+            ? <p className="graph-hint">正在梳理这个节点与全部直接邻点的关联…</p>
+            : <p className="graph-hint">只依据图谱里的直接关系解释，不会扩展到二跳节点。</p>}
     </div>
   </section>
 }

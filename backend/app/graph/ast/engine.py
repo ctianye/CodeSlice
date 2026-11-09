@@ -50,6 +50,10 @@ MAX_RATIONALE_CHARS = 400
 # A comment further than this many lines above a definition is not about it.
 MAX_RATIONALE_DISTANCE = 3
 
+# JSX nodes that *use* a component. The closing tag is deliberately absent: it
+# repeats the same name and would double every JSX call.
+_JSX_CALL_TYPES = frozenset({"jsx_self_closing_element", "jsx_opening_element"})
+
 
 def _text(node: Any, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
@@ -143,14 +147,35 @@ def _marker_rationale(raw: str) -> str | None:
 def _callee_facts(call_node: Any, config: LanguageConfig, source: bytes) -> dict[str, Any] | None:
     """Describe what a call node targets, without deciding what it resolves to.
 
-    Three shapes matter:
+    Four shapes matter:
 
-    - ``helper()``        -> bare name, resolvable only if globally unique
-    - ``Foo.bar()``       -> qualified; resolvable when ``Foo`` is a known class
+    - ``helper()``        -> bare name, resolvable only through the caller's imports
+    - ``Foo.bar()``       -> qualified; resolvable when ``Foo`` is a visible class
     - ``obj.method()``    -> member call on a value; needs a type, so it is recorded
       with the receiver name and left for the type-aware resolvers
+    - ``<Widget/>``       -> JSX component usage, which is a call for graph purposes
     """
+    if call_node.type in _JSX_CALL_TYPES:
+        name_node = _named_child(call_node, "name")
+        if name_node is None or name_node.type != "identifier":
+            return None
+        name = _text(name_node, source)
+        # Lowercase tags are intrinsic HTML (``div``, ``span``), not components.
+        if not name or not name[0].isupper():
+            return None
+        return {
+            "callee": name,
+            "receiver": "",
+            "receiver_type": None,
+            "is_member_call": False,
+            "line": _line(call_node),
+        }
+
     func_node = _named_child(call_node, config.call_function_field)
+    if func_node is None:
+        # ``new Foo()`` keeps the constructor in its own field rather than in
+        # ``function``; Java names the invocation target in ``name``.
+        func_node = _named_child(call_node, "constructor") or _named_child(call_node, "name")
     if func_node is None:
         return None
 
@@ -162,7 +187,9 @@ def _callee_facts(call_node: Any, config: LanguageConfig, source: bytes) -> dict
         attr_name = _text(attr, source)
         receiver = _text(obj, source) if obj is not None else ""
         receiver_type = None
-        if receiver == "self":
+        if receiver in ("self", "this", "cls"):
+            # ``self``/``this``/``cls`` name the enclosing class without spelling
+            # it out, so the resolver uses the caller's exact class node.
             receiver_type = "<self>"
         elif receiver and receiver[0].isupper():
             # ``Foo.bar()``: the receiver is capitalised, so treat it as a class
@@ -187,6 +214,58 @@ def _callee_facts(call_node: Any, config: LanguageConfig, source: bytes) -> dict
         "is_member_call": False,
         "line": _line(call_node),
     }
+
+
+def _function_name(node: Any, config: LanguageConfig, source: bytes) -> str | None:
+    """The declared name of a function-like node, or the name its binding gives it.
+
+    Arrow functions and ``function () {}`` expressions are anonymous in the grammar.
+    Their only useful name is the one they are assigned to, so the immediate parent
+    (``variable_declarator``, a class field, or ``=``) is consulted. One wrapper
+    level is allowed for ``memo``/``forwardRef``/``observer``, whose component name
+    lives on the grandparent declarator. Anything deeper is a guess and returns None.
+    """
+    name_node = _named_child(node, config.name_field)
+    if name_node is None and node.type != "arrow_function":
+        # A direct identifier child is a reliable name fallback except on an arrow
+        # function, where it is the single unparenthesised parameter.
+        name_node = next(
+            (c for c in node.children if c.type in ("identifier", "property_identifier", "name")),
+            None,
+        )
+    if name_node is not None:
+        return _text(name_node, source) or None
+
+    parent = getattr(node, "parent", None)
+    if parent is None:
+        return None
+    binding = None
+    if parent.type in ("variable_declarator", "public_field_definition", "field_definition"):
+        binding = _named_child(parent, "name")
+    elif parent.type == "assignment_expression":
+        left = _named_child(parent, "left")
+        if left is not None and left.type in ("identifier", "property_identifier"):
+            binding = left
+        elif left is not None and left.type == "member_expression":
+            binding = _named_child(left, "property")
+    elif parent.type in ("call_expression", "arguments"):
+        # The grammar puts arguments between the arrow and ``memo(...)``, so the
+        # wrapper call is the parent or its parent.
+        call = parent if parent.type == "call_expression" else getattr(parent, "parent", None)
+        wrapper = _named_child(call, "function") if call is not None else None
+        grand = getattr(call, "parent", None) if call is not None else None
+        if (
+            wrapper is not None
+            and wrapper.type == "identifier"
+            and _text(wrapper, source) in ("memo", "forwardRef", "observer")
+            and grand is not None
+            and grand.type == "variable_declarator"
+        ):
+            binding = _named_child(grand, "name")
+    if binding is None:
+        return None
+    name = _text(binding, source)
+    return name if re.fullmatch(r"[A-Za-z_$][\w$]*", name) else None
 
 
 def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction:
@@ -276,7 +355,7 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
         add_edge(rid, owner_id, REL_RATIONALE_FOR, CONF_EXTRACTED, line)
 
     # ---- recursive scope walk ------------------------------------------------
-    def walk(node: Any, owner_id: str, owner_kind: str, class_name: str | None) -> None:
+    def walk(node: Any, owner_id: str, owner_kind: str, class_name: str | None, class_id: str | None) -> None:
         for child in getattr(node, "children", []):
             if not getattr(child, "is_named", False):
                 continue
@@ -286,6 +365,13 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                 if config.import_parser:
                     for fact in config.import_parser(child, source):
                         result.raw_imports.append({**fact, "source_id": fnode})
+                # ``export_statement`` doubles as the wrapper around exported
+                # declarations. Parsing its re-export form must not swallow the
+                # declaration inside it: ``export function Icon`` and
+                # ``export const X = () => …`` are how every React module exposes
+                # its components. Import facts are already recorded above.
+                if ctype == "export_statement":
+                    walk(child, owner_id, owner_kind, class_name, class_id)
                 continue
 
             if ctype in config.class_types:
@@ -327,15 +413,17 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                                     "is_interface": base.type in ("generic_name", "subscript"),
                                 }
                             )
-                walk(child, nid, KIND_CLASS, name)
+                walk(child, nid, KIND_CLASS, name, nid)
                 continue
 
             if ctype in config.function_types:
-                name_node = _named_child(child, config.name_field) or next(
-                    (c for c in child.children if c.type in ("identifier", "property_identifier", "name")),
-                    None,
-                )
-                name = _text(name_node, source) if name_node is not None else "<anonymous>"
+                name = _function_name(child, config, source)
+                if name is None:
+                    # An unnamed lambda has no node anyone could find or cite, so
+                    # its calls belong to the enclosing scope instead of to a
+                    # meaningless ``<anonymous>`` symbol.
+                    walk(child, owner_id, owner_kind, class_name, class_id)
+                    continue
                 nid = make_node_id(path, KIND_FUNCTION, name, _line(child))
                 add_node(
                     nid,
@@ -357,7 +445,7 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                 if doc:
                     add_rationale(doc, nid, _line(child), "docstring")
 
-                walk(child, nid, KIND_FUNCTION, class_name)
+                walk(child, nid, KIND_FUNCTION, class_name, class_id)
                 continue
 
             if ctype in config.call_types:
@@ -368,6 +456,7 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                             "caller_id": owner_id,
                             "caller_kind": owner_kind,
                             "caller_class": class_name,
+                            "caller_class_id": class_id,
                             **facts,
                         }
                     )
@@ -402,6 +491,7 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                                 "caller_id": owner_id,
                                 "caller_kind": owner_kind,
                                 "caller_class": class_name,
+                                "caller_class_id": class_id,
                                 "callee": name,
                                 "receiver": "",
                                 "receiver_type": None,
@@ -412,7 +502,7 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                         )
                 # Recurse: a call's arguments can contain further calls and
                 # lambdas, and their bodies declare things too.
-                walk(child, owner_id, owner_kind, class_name)
+                walk(child, owner_id, owner_kind, class_name, class_id)
                 continue
 
             if ctype in config.comment_types:
@@ -421,9 +511,9 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                     add_rationale(body, owner_id, _line(child), "comment")
                 continue
 
-            walk(child, owner_id, owner_kind, class_name)
+            walk(child, owner_id, owner_kind, class_name, class_id)
 
-    walk(tree.root_node, fnode, KIND_FILE, None)
+    walk(tree.root_node, fnode, KIND_FILE, None, None)
 
     # ---- module-level rationale: a header comment explains the file ----------
     header_lines: list[str] = []

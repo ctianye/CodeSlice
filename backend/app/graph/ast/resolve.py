@@ -101,28 +101,57 @@ def _symbol_key(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", name.lower())
 
 
+# Languages whose imports are parsed, so a cross-file bare call has to be backed
+# by an import binding. The others (Go/Rust/Java/C/C++) keep the global-unique
+# fallback because nothing records what their files import.
+_GATED_LANGUAGES = frozenset({"python", "javascript", "typescript"})
+
+
+def _import_local_names(fact: dict[str, Any]) -> list[str]:
+    """Names an import actually binds in the importing file.
+
+    ``from x import y as z`` binds only ``z``; the original ``y`` is not
+    addressable here. A re-export binds nothing at all: it only records that
+    this file depends on another module.
+    """
+    if fact.get("reexport"):
+        return []
+    aliases = fact.get("aliases") or {}
+    aliased = set(aliases.values())
+    names = [name for name in fact.get("names") or () if name not in aliased]
+    names.extend(aliases.keys())
+    return names
+
+
+def _import_original_name(fact: dict[str, Any], local: str) -> str:
+    return str((fact.get("aliases") or {}).get(local) or local)
+
+
 def _import_receiver_names(fact: dict[str, Any]) -> list[str]:
     """Names an import makes available as a *receiver* for ``name.attr()`` calls.
 
     ``import app.services.paths`` binds only ``app``; ``from app import repo`` binds
-    ``repo``; ``from app.services import paths`` binds ``paths``. Recording all three
-    spellings is what lets ``repo.get_project()`` and ``paths.resolve_root()`` resolve
-    without type inference.
+    ``repo``; ``from app.services import paths`` binds ``paths``; ``import app.x as p``
+    binds only ``p``. Recording these spellings is what lets ``repo.get_project()``,
+    ``paths.resolve_root()`` and ``p.run()`` resolve without type inference.
     """
+    if fact.get("reexport"):
+        return []
     module = str(fact.get("module") or "")
     out: list[str] = []
     if fact.get("kind") == "plain":
+        aliases = fact.get("aliases") or {}
+        if aliases:
+            return list(aliases)
+        # ``import a.b`` binds only ``a`` in Python. The trailing component is a
+        # *module*, not a local name; binding it too made ``paths.x()`` resolve
+        # for a file that only wrote ``import app.services.paths``.
         head = module.replace(".", "/").split("/")[0]
         if head:
             out.append(head)
-        leaf = module.replace(".", "/").split("/")[-1]
-        if leaf and leaf not in out:
-            out.append(leaf)
     else:
-        leaf = module.replace(".", "/").split("/")[-1]
-        if leaf:
-            out.append(leaf)
-        for name in fact.get("names") or ():
+        # ``from a import b`` binds ``b`` (or its alias), never ``a``.
+        for name in _import_local_names(fact):
             if name not in out:
                 out.append(name)
     return out
@@ -140,8 +169,14 @@ class SymbolTable:
         self.nodes: dict[str, dict[str, Any]] = {}
         # file path -> {imported name -> [candidate file paths]}
         self.import_bindings: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        # file path -> {local alias -> original symbol name}, for `import y as z`
+        self.import_originals: dict[str, dict[str, str]] = defaultdict(dict)
         # file path -> [imported module paths]
         self.imported_modules: dict[str, list[str]] = defaultdict(list)
+        # file path -> language name, taken from the file node the engine emits
+        self.file_languages: dict[str, str] = {}
+        # class node id -> [function node ids owned by that exact class node]
+        self.class_members: dict[str, list[str]] = defaultdict(list)
         # All file paths in the corpus, for suffix matching
         self.files: set[str] = set()
 
@@ -149,11 +184,19 @@ class SymbolTable:
             for node in extraction.nodes:
                 kind = node.get("kind")
                 if kind in (KIND_FILE, KIND_MODULE, KIND_RATIONALE):
+                    if kind == KIND_FILE:
+                        self.file_languages[node.get("path") or extraction.path] = node.get("language") or ""
                     continue
                 self.nodes[node["id"]] = node
                 self.by_name[(kind, _symbol_key(node.get("label") or ""))].append(node["id"])
                 self.by_file[node["path"]].append(node["id"])
             self.files.add(extraction.path)
+
+        for node_id, node in self.nodes.items():
+            parent = node.get("parent")
+            parent_node = self.nodes.get(parent) if parent else None
+            if node.get("kind") == KIND_FUNCTION and parent_node and parent_node.get("kind") == KIND_CLASS:
+                self.class_members[parent].append(node_id)
 
         # Suffix -> files, so an import spec can be matched to a path segment.
         self.suffix_index: dict[str, list[str]] = defaultdict(list)
@@ -195,6 +238,53 @@ class SymbolTable:
             ):
                 return node_id
         return None
+
+    def method_of_class(self, class_id: str, method: str) -> str | None:
+        """The method owned by this exact class node, with no global name lookup.
+
+        Two classes named ``Panel`` in different files are different classes; using
+        the caller's class id keeps ``self.helper()`` from landing in the other one.
+        """
+        for node_id in self.class_members.get(class_id, ()):
+            if _symbol_key(self.nodes[node_id].get("label") or "") == _symbol_key(method):
+                return node_id
+        return None
+
+    def class_declared_in_file(self, path: str, name: str) -> str | None:
+        """A class called ``name`` declared in this file, when there is exactly one."""
+        key = _symbol_key(name)
+        local = [
+            node_id
+            for node_id in self.by_file.get(path, ())
+            if self.nodes[node_id].get("kind") == KIND_CLASS
+            and _symbol_key(self.nodes[node_id].get("label") or "") == key
+        ]
+        return local[0] if len(local) == 1 else None
+
+    def class_visible_from(self, path: str, name: str) -> str | None:
+        """A unique class called ``name`` that the caller file can actually see.
+
+        Visible means declared in the caller's own file or in a file it imports.
+        A class elsewhere in the project is not evidence for a ``Foo.bar()`` there.
+        """
+        local = [
+            node_id
+            for node_id in self.by_file.get(path, ())
+            if self.nodes[node_id].get("kind") == KIND_CLASS
+            and _symbol_key(self.nodes[node_id].get("label") or "") == _symbol_key(name)
+        ]
+        if local:
+            return local[0] if len(local) == 1 else None
+        imported = set(self.imported_modules.get(path, ()))
+        hits = {
+            node_id
+            for node_id in self.by_name.get((KIND_CLASS, _symbol_key(name)), ())
+            if self.nodes[node_id].get("path") in imported
+        }
+        return hits.pop() if len(hits) == 1 else None
+
+    def language_of(self, path: str) -> str:
+        return self.file_languages.get(path) or ""
 
     def resolve_module(self, module: str) -> list[str]:
         """Files an import spec unambiguously identifies.
@@ -300,37 +390,40 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                 continue
 
             relation = REL_IMPORTS_FROM if fact.get("kind") == "from" else REL_IMPORTS
+            for local in _import_local_names(fact):
+                original = _import_original_name(fact, local)
+                if original and original != local:
+                    table.import_originals[path][local] = original
             for target_file in targets:
                 add_edge(source_file, file_node_id(target_file), relation, CONF_EXTRACTED, line)
-                # Remember the binding so a later ``helper()`` or ``repo.get()`` can
-                # find this file. For ``from app import repo`` the imported name is
-                # the module alias, so ``repo.x()`` resolves to that file's symbols.
-                for name in fact.get("names") or ():
-                    table.import_bindings[path][name].append(target_file)
-                # ``import app.services.paths`` binds the leading name only, and
-                # ``from app.x import y`` where y is itself a module binds y. Record
-                # both the leaf module name and the raw spec tail so either spelling
-                # of the receiver finds this file.
+                # Remember every *local* name the import binds so a later
+                # ``helper()``, ``graph_service.load()`` or ``api.getGraph()`` can
+                # find this file. Aliases replace the original name here; binding
+                # both would let a call to a name the file never imported resolve.
                 bound = _import_receiver_names(fact)
                 for name in bound:
-                    table.import_bindings[path][name].append(target_file)
+                    if target_file not in table.import_bindings[path][name]:
+                        table.import_bindings[path][name].append(target_file)
                 table.imported_modules[path].append(target_file)
 
             # ``from app.storage import repo`` imports a *submodule*, not a symbol:
             # ``repo`` is app/storage/repo.py and ``repo.get_project()`` must resolve
             # into that file. The rule above binds ``repo`` to app/storage/__init__.py,
             # which declares nothing useful, so each imported name is also tried as a
-            # module path of its own.
+            # module path of its own. With ``from app.graph import service as gs`` the
+            # submodule spec uses the original name but binds the alias.
             if fact.get("kind") == "from":
                 base = (fact.get("module") or "").strip()
-                for name in fact.get("names") or ():
-                    spec = f"{base}.{name}" if base and not base.startswith(".") else f"{base}/{name}"
+                for local in _import_local_names(fact):
+                    original = _import_original_name(fact, local)
+                    spec = f"{base}.{original}" if base and not base.startswith(".") else f"{base}/{original}"
                     sub_targets = table.resolve_module(spec)
                     for sub_file in sub_targets:
                         if sub_file == target_file:
                             continue
                         add_edge(source_file, file_node_id(sub_file), REL_IMPORTS_FROM, CONF_EXTRACTED, line)
-                        table.import_bindings[path][name].append(sub_file)
+                        if sub_file not in table.import_bindings[path][local]:
+                            table.import_bindings[path][local].append(sub_file)
                         table.imported_modules[path].append(sub_file)
 
     # ---- inheritance --------------------------------------------------------
@@ -422,22 +515,60 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
         unique_hits = sorted(set(hits))
         return unique_hits[0] if len(unique_hits) == 1 else None
 
-    for extraction in extractions:
-        path = extraction.path
-        # A bare call prefers a definition in its own file: that is the nearest
-        # scope, and it is what a reader means by "this helper".
-        local_symbols: dict[str, str] = {}
-        local_counts: dict[str, int] = defaultdict(int)
-        for nid in table.by_file.get(path, ()):
+    # A bare call prefers a definition in its own file: that is the nearest scope,
+    # and it is what a reader means by "this helper".
+    local_symbols: dict[str, dict[str, str]] = {}
+    local_counts: dict[str, dict[str, int]] = {}
+    for path, file_ids in table.by_file.items():
+        symbols: dict[str, str] = {}
+        counts: dict[str, int] = defaultdict(int)
+        for nid in file_ids:
             node = nodes.get(nid) or {}
             if node.get("kind") not in (KIND_FUNCTION, KIND_CLASS):
                 continue
             key = _symbol_key(node.get("label") or "")
             if not key:
                 continue
-            local_symbols.setdefault(key, nid)
-            local_counts[key] += 1
+            symbols.setdefault(key, nid)
+            counts[key] += 1
+        local_symbols[path] = symbols
+        local_counts[path] = counts
 
+    def resolve_bare(path: str, callee: str) -> str | None:
+        """The node a bare name refers to, using only evidence the caller file has.
+
+        Order: a same-file definition, then files this file explicitly imports. A
+        unique name elsewhere in the project is *not* evidence for Python/JS/TS: a
+        file that never imports ``helper`` cannot be said to call it. Languages
+        without an import parser keep the global-unique fallback.
+        """
+        key = _symbol_key(callee)
+        if not key:
+            return None
+        if local_counts.get(path, {}).get(key) == 1:
+            return local_symbols[path][key]
+        # An alias imports the symbol under another name in this file:
+        # `from app.service import load as load_service` binds `load_service`,
+        # while the declaration is still labelled `load`.
+        imported_name = table.import_originals.get(path, {}).get(callee, callee)
+        imported_key = _symbol_key(imported_name)
+        hits: set[str] = set()
+        for imported_file in table.import_bindings.get(path, {}).get(callee, ()):
+            for nid in table.by_file.get(imported_file, ()):
+                node = nodes.get(nid) or {}
+                if (
+                    node.get("kind") in (KIND_FUNCTION, KIND_CLASS)
+                    and _symbol_key(node.get("label") or "") == imported_key
+                ):
+                    hits.add(nid)
+        if hits:
+            return hits.pop() if len(hits) == 1 else None
+        if table.language_of(path) in _GATED_LANGUAGES:
+            return None
+        return table.unique(KIND_FUNCTION, imported_name) or table.unique(KIND_CLASS, imported_name)
+
+    for extraction in extractions:
+        path = extraction.path
         for fact in extraction.raw_calls:
             callee = fact.get("callee") or ""
             key = _symbol_key(callee)
@@ -451,14 +582,23 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
             receiver_name = fact.get("receiver") or ""
             if fact.get("is_member_call"):
                 if receiver_type == "<self>":
-                    # ``self.method()``: the owning class is the caller's class.
-                    owner_class = fact.get("caller_class")
-                    if owner_class:
-                        target = table.methods_of_class(owner_class, callee)
+                    # ``self``/``this``/``cls``: the owner is the caller's exact
+                    # class node, not whichever class happens to share the name.
+                    class_id = fact.get("caller_class_id")
+                    if not class_id and fact.get("caller_class"):
+                        class_id = table.class_declared_in_file(path, fact["caller_class"])
+                    if class_id:
+                        target = table.method_of_class(class_id, callee)
                 elif receiver_type:
-                    # ``Foo.bar()``: the receiver is an explicit class name.
-                    target = table.methods_of_class(receiver_type, callee)
-                if target is None and receiver_name and receiver_name != "self":
+                    # ``Foo.bar()``: ``Foo`` must be declared in this file or in a
+                    # file this one imports. Elsewhere in the project is not enough.
+                    if table.language_of(path) in _GATED_LANGUAGES:
+                        class_id = table.class_visible_from(path, receiver_type)
+                    else:
+                        class_id = table.unique(KIND_CLASS, receiver_type)
+                    if class_id:
+                        target = table.method_of_class(class_id, callee)
+                if target is None and receiver_name and receiver_name not in ("self", "this", "cls"):
                     # ``repo.get_project()``: the receiver is an imported module.
                     target = resolve_module_member(path, receiver_name, callee)
                 if target is None and receiver_type:
@@ -477,28 +617,7 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                 stats["calls_project"] += 1
                 continue
 
-            # 1. A definition in this file wins: it is the nearest scope.
-            if local_counts.get(key) == 1:
-                target = local_symbols.get(key)
-            # 2. Otherwise an explicit import binding names the file to look in.
-            if target is None:
-                for imported_file in table.import_bindings.get(path, {}).get(callee, ()):
-                    for nid in table.by_file.get(imported_file, ()):
-                        node = nodes.get(nid) or {}
-                        if (
-                            node.get("kind") in (KIND_FUNCTION, KIND_CLASS)
-                            and _symbol_key(node.get("label") or "") == key
-                        ):
-                            if target is None:
-                                target = nid
-                            else:
-                                target = None  # two files both provide it: ambiguous
-                                break
-                    if target:
-                        break
-            # 3. Otherwise require global uniqueness.
-            if target is None:
-                target = table.unique(KIND_FUNCTION, callee) or table.unique(KIND_CLASS, callee)
+            target = resolve_bare(path, callee)
 
             if target is None:
                 stats["calls_dropped"] += 1
@@ -525,7 +644,7 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
             if not fact.get("indirect"):
                 continue
             callee = fact.get("callee") or ""
-            target = table.unique(KIND_FUNCTION, callee)
+            target = resolve_bare(extraction.path, callee)
             if target and target != fact["caller_id"]:
                 add_edge(fact["caller_id"], target, REL_INDIRECT_CALL, CONF_INFERRED, fact.get("line"))
 

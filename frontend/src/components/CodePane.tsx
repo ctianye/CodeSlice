@@ -42,6 +42,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     refreshKey,
     bumpRefresh,
     openNoteView,
+    openGraph,
   } = useApp()
   const projectId = project?.id ?? null
   const path = openFile?.path ?? null
@@ -122,6 +123,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const [docSaving, setDocSaving] = useState(false)
   const [docNotice, setDocNotice] = useState<string | null>(null)
   const [docError, setDocError] = useState<string | null>(null)
+  const [graphLocating, setGraphLocating] = useState(false)
 
   const updateSelection = useCallback((instance: MonacoEditor.IStandaloneCodeEditor) => {
     const model = instance.getModel()
@@ -617,6 +619,28 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     }
   }
 
+  /** Jump from a cursor/selection line to the enclosing node in the code graph. */
+  const locateInGraph = async (line?: number) => {
+    if (projectId === null || !path || graphLocating) return
+    const target = line && line > 0
+      ? line
+      : editorRef.current?.getPosition()?.lineNumber ?? citationHighlight?.start_line ?? 1
+    setCardError(null)
+    setGraphLocating(true)
+    try {
+      const result = await api.locateGraphNode(projectId, path, target)
+      if (!result.node) {
+        setCardError('当前文件位置不在知识图谱中，请先重建图谱。')
+        return
+      }
+      openGraph(result.node.id, 'code')
+    } catch (err) {
+      setCardError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGraphLocating(false)
+    }
+  }
+
   return (
     <div className="editor-pane">
       <div className="editor-toolbar">
@@ -673,6 +697,16 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         <div className="toolbar-actions">
           <button
             className="ghost icon"
+            title="在知识图谱中定位当前行"
+            aria-label="在知识图谱中定位当前行"
+            disabled={graphLocating}
+            onClick={() => void locateInGraph()}
+            type="button"
+          >
+            <Icon name="network" size={13} />
+          </button>
+          <button
+            className="ghost icon"
             title="在文件中搜索（Ctrl+F）"
             aria-label="在文件中搜索"
             onClick={() => editorRef.current?.getAction('actions.find')?.run()}
@@ -715,6 +749,9 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           <button className="small annotation-action" type="button" onClick={() => { if (projectId === null || path === null) return; const start = picked.lines[0] ?? 1; const end = picked.lines[picked.lines.length - 1] ?? start; setAnnotationText(''); setAnnotationDraft({ projectId, path, start, end, code: picked.code }) }}>
             <Icon name="pencil" size={11} />就这段批注
           </button>
+          <button className="small ghost" type="button" onClick={() => void locateInGraph(picked.lines[0] ?? 1)}>
+            <Icon name="network" size={11} />在图谱中定位
+          </button>
           <button
             className="small ghost"
             onClick={() => {
@@ -747,6 +784,9 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           </button>
           <button className="small annotation-action" type="button" onClick={() => { if (projectId === null || path === null) return; setAnnotationText(''); setAnnotationDraft({ projectId, path, start: selection.start, end: selection.end, code: selection.code }) }}>
             <Icon name="pencil" size={11} />就这段批注
+          </button>
+          <button className="small ghost" type="button" onClick={() => void locateInGraph(selection.start)}>
+            <Icon name="network" size={11} />在图谱中定位
           </button>
           <button
             className="small ghost"
