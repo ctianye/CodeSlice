@@ -544,6 +544,8 @@ export interface CodeAnnotation {
   start_line: number
   end_line: number
   selected_code: string
+  /** Collapsed label; falls back to the body's first line for older rows. */
+  title: string
   body: string
   created_at: string
   updated_at: string

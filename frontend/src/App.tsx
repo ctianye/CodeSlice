@@ -68,7 +68,19 @@ export function App(): ReactNode {
         setProjects(list)
         const lastId = readLastProjectId()
         const restored = list.find((item) => item.id === lastId)
-        if (restored) setProject(restored)
+        if (restored) {
+          setProject(restored)
+          // Restoring the last project must go through the open lifecycle too:
+          // the backend starts its file watcher and backfills missing vectors.
+          // Without this call a restarted app never runs either.
+          void api.openProject(restored.id)
+            .then((opened) => {
+              if (!cancelled) setProject(opened)
+            })
+            .catch(() => {
+              /* the project may have moved; the editor will surface it */
+            })
+        }
       })
       .catch(() => {
         /* the welcome screen surfaces its own error */

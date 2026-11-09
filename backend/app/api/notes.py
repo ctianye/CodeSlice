@@ -39,6 +39,8 @@ class AnnotationCreate(BaseModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     selected_code: str = Field(default="", max_length=100000)
+    # Optional: an empty title falls back to the first line of the body.
+    title: str = Field(default="", max_length=200)
     body: str = Field(min_length=1, max_length=10000)
 
     @field_validator("body")
@@ -61,7 +63,13 @@ def create_annotation(project: ProjectDep, body: AnnotationCreate, _: TokenDep) 
 
         raise HTTPException(status_code=422, detail="end_line must be greater than or equal to start_line")
     return repo.create_annotation(
-        int(project["id"]), body.file_path, body.start_line, body.end_line, body.selected_code, body.body.strip()
+        int(project["id"]),
+        body.file_path,
+        body.start_line,
+        body.end_line,
+        body.selected_code,
+        body.body.strip(),
+        title=body.title,
     )
 
 

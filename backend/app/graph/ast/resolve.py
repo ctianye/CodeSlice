@@ -58,7 +58,7 @@ _BORING_CALLEES = frozenset(
 )
 
 
-def _module_suffix_variants(module: str) -> list[str]:
+def _module_suffix_variants(module: str, *, include_short_tail: bool = True) -> list[str]:
     """Path-ish forms an import spec could match.
 
     ``app.retrieval.hybrid`` should find ``app/retrieval/hybrid.py``. Relative specs
@@ -69,6 +69,11 @@ def _module_suffix_variants(module: str) -> list[str]:
     other ``db.py``. A package import (``app.retrieval`` with no file of that name)
     is matched by the ``__init__`` variant, which is how Python expresses
     "the package itself".
+
+    ``include_short_tail`` is disabled for languages whose imports are parsed.
+    Otherwise ``from langgraph.types import ...`` resolves to any project file
+    named ``types.*`` (and ``langgraph.graph`` to ``graph.py``), creating a
+    confident but false cross-file import/call edge.
     """
     if not module:
         return []
@@ -90,10 +95,12 @@ def _module_suffix_variants(module: str) -> list[str]:
         # A package import names a directory, which Python exposes as __init__.
         add(candidate + "/__init__")
         add(candidate + "/__init__.py")
-    # Short tails last: they are the fallback when nothing specific matched.
-    for candidate in (spec, base):
-        tail = candidate.rsplit("/", 1)[-1]
-        add(tail)
+    if include_short_tail:
+        # Languages with no import parser only give us a short package name, so
+        # the tail is the only thing that can match a project path.
+        for candidate in (spec, base):
+            tail = candidate.rsplit("/", 1)[-1]
+            add(tail)
     return out
 
 
@@ -105,6 +112,21 @@ def _symbol_key(name: str) -> str:
 # by an import binding. The others (Go/Rust/Java/C/C++) keep the global-unique
 # fallback because nothing records what their files import.
 _GATED_LANGUAGES = frozenset({"python", "javascript", "typescript"})
+
+_JS_LANGUAGES = frozenset({"javascript", "typescript"})
+
+
+def _compatible_language(importer: str, target: str) -> bool:
+    """Whether an import from one language can name a file in another.
+
+    A Python ``from types import ...`` must never resolve to ``types.ts`` just
+    because the module name matches; language is part of the import's identity.
+    """
+    if not importer or not target:
+        return True
+    if importer in _JS_LANGUAGES:
+        return target in _JS_LANGUAGES
+    return importer == target
 
 
 def _import_local_names(fact: dict[str, Any]) -> list[str]:
@@ -286,7 +308,13 @@ class SymbolTable:
     def language_of(self, path: str) -> str:
         return self.file_languages.get(path) or ""
 
-    def resolve_module(self, module: str) -> list[str]:
+    def resolve_module(
+        self,
+        module: str,
+        *,
+        include_short_tail: bool = True,
+        language: str = "",
+    ) -> list[str]:
         """Files an import spec unambiguously identifies.
 
         The first variant that matches anything wins. Variants are ordered most
@@ -295,11 +323,22 @@ class SymbolTable:
         file the import is genuinely ambiguous and the next variant is tried; if
         nothing is unambiguous the result is empty and the caller records an
         ``external`` node rather than inventing a link.
+
+        ``language`` filters candidates to the caller's language family. Without
+        it, a Python ``from types import ...`` can claim a TypeScript ``types.ts``
+        in a polyglot project.
         """
-        for variant in _module_suffix_variants(module):
+        for variant in _module_suffix_variants(module, include_short_tail=include_short_tail):
             candidates = self.suffix_index.get(variant)
             if not candidates:
                 continue
+            if language:
+                candidates = [
+                    path for path in candidates
+                    if _compatible_language(language, self.language_of(path))
+                ]
+                if not candidates:
+                    continue
             unique = sorted(set(candidates))
             if len(unique) == 1:
                 return [unique[0]]
@@ -357,7 +396,14 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
         for fact in extraction.raw_imports:
             module = fact.get("module") or ""
             line = fact.get("line")
-            targets = table.resolve_module(module)
+            # Parsed imports name the full module. Only languages without an
+            # import parser fall back to a short tail to find a project file.
+            importer_language = table.language_of(path)
+            targets = table.resolve_module(
+                module,
+                include_short_tail=importer_language not in _GATED_LANGUAGES,
+                language=importer_language,
+            )
             in_corpus = bool(targets)
             if not in_corpus:
                 # An import of something we do not index is still a fact about the
@@ -417,7 +463,11 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                 for local in _import_local_names(fact):
                     original = _import_original_name(fact, local)
                     spec = f"{base}.{original}" if base and not base.startswith(".") else f"{base}/{original}"
-                    sub_targets = table.resolve_module(spec)
+                    sub_targets = table.resolve_module(
+                        spec,
+                        include_short_tail=table.language_of(path) not in _GATED_LANGUAGES,
+                        language=table.language_of(path),
+                    )
                     for sub_file in sub_targets:
                         if sub_file == target_file:
                             continue

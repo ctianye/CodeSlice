@@ -511,7 +511,7 @@ export function streamResume(
 export const listAnnotations = (projectId: number, filePath: string, signal?: AbortSignal): Promise<CodeAnnotation[]> =>
   request<CodeAnnotation[]>(`/api/projects/${projectId}/annotations?${new URLSearchParams({ file_path: filePath })}`, { signal })
 
-export const createAnnotation = (projectId: number, body: Pick<CodeAnnotation, 'file_path' | 'start_line' | 'end_line' | 'selected_code' | 'body'>): Promise<CodeAnnotation> =>
+export const createAnnotation = (projectId: number, body: Pick<CodeAnnotation, 'file_path' | 'start_line' | 'end_line' | 'selected_code' | 'title' | 'body'>): Promise<CodeAnnotation> =>
   request<CodeAnnotation>(`/api/projects/${projectId}/annotations`, { method: 'POST', body })
 
 export const deleteAnnotation = (id: number): Promise<{ ok: boolean }> =>

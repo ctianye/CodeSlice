@@ -593,14 +593,19 @@ def create_annotation(
     end_line: int,
     selected_code: str,
     body: str,
+    title: str = "",
 ) -> dict[str, Any]:
+    # A blank title is normal: the first line is the most useful collapsed label
+    # and keeps older clients (which only sent a body) readable.
+    visible_title = title.strip() or body.strip().splitlines()[0].strip()
+    visible_title = visible_title[:200]
     now = utcnow()
     with write_conn() as conn:
         cur = conn.execute(
             "INSERT INTO code_annotations "
-            "(project_id,file_path,start_line,end_line,selected_code,body,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (project_id, file_path, start_line, end_line, selected_code, body, now, now),
+            "(project_id,file_path,start_line,end_line,selected_code,title,body,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (project_id, file_path, start_line, end_line, selected_code, visible_title, body, now, now),
         )
         row = conn.execute("SELECT * FROM code_annotations WHERE id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)

@@ -200,6 +200,72 @@ def test_lockfiles_and_vendor_dirs_are_skipped(project: dict):
     assert not any(p.startswith("_internal/") for p in paths)
 
 
+def test_configured_embeddings_backfill_vectors_without_rechunking(project: dict, monkeypatch):
+    """Configuring an embedding model must fill old chunks, not require edits.
+
+    This is the upgrade path: a project was indexed while embeddings were off,
+    then the user configures one. The next background scan skips every source
+    file but still embeds the existing chunks and persists both the vector and
+    the model name.
+    """
+    from app.core.db import get_conn
+    from app.models import embeddings
+
+    indexer.index_project(project["id"])
+    with get_conn() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) AS n FROM chunks WHERE project_id = ? AND vector IS NULL",
+            (project["id"],),
+        ).fetchone()["n"]
+    assert pending > 0
+
+    calls: list[list[str]] = []
+
+    def fake_embed_texts(texts: list[str], batch_size: int = 32):
+        calls.append(list(texts))
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    monkeypatch.setattr(embeddings, "is_configured", lambda: True)
+    monkeypatch.setattr(embeddings, "embedding_model_name", lambda: "test-embed")
+    monkeypatch.setattr(embeddings, "embed_texts", fake_embed_texts)
+
+    stats = indexer.index_project(project["id"])
+
+    assert stats["files"] == 0, "the corpus did not change; only vectors were missing"
+    assert stats["vectors"] == pending
+    assert calls, "the backfill never called the embedding model"
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT vector, embed_model FROM chunks WHERE project_id = ?",
+            (project["id"],),
+        ).fetchall()
+    assert rows
+    assert all(row["vector"] is not None and row["embed_model"] == "test-embed" for row in rows)
+
+
+def test_generated_artifacts_and_env_files_are_not_indexed(project: dict):
+    """Debug outputs and secrets must not enter the retrieval/embedding corpus."""
+    from app.core.db import get_conn
+
+    root = Path(project["path"])
+    generated = (".shots", ".tmp-preview-data", ".acl-fix", "acl-recovery", "graphify-out")
+    for name in generated:
+        (root / name).mkdir()
+        (root / name / "noise.py").write_text("def noise():\n    return 1\n", encoding="utf-8")
+    (root / ".env").write_text("SECRET=one\n", encoding="utf-8")
+    (root / ".env.local").write_text("SECRET=two\n", encoding="utf-8")
+
+    indexer.index_project(project["id"])
+
+    with get_conn() as conn:
+        paths = {row["path"] for row in conn.execute("SELECT path FROM indexed_files")}
+        chunk_paths = {row["path"] for row in conn.execute("SELECT path FROM chunks")}
+    assert not any(path.startswith(generated) for path in paths | chunk_paths)
+    assert ".env" not in paths | chunk_paths
+    assert ".env.local" not in paths | chunk_paths
+    assert "pkg/sample.py" in paths
+
+
 def test_chinese_query_matches_chinese_content(project: dict):
     """CJK bigrams make a Chinese question findable (unicode61 alone cannot)."""
     root = Path(project["path"])

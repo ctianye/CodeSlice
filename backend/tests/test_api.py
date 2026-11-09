@@ -284,15 +284,26 @@ def test_annotations_roundtrip(client, project):
             "start_line": 2,
             "end_line": 4,
             "selected_code": "def sample():",
+            "title": "为什么这样写",
             "body": "注释内容",
         },
     )
     assert created.status_code == 200
     annotation = created.json()
+    assert annotation["title"] == "为什么这样写"
     assert annotation["body"] == "注释内容"
     listed = client.get(f"/api/projects/{project['id']}/annotations", params={"file_path": "pkg/sample.py"})
     assert [item["id"] for item in listed.json()] == [annotation["id"]]
+
+    # Older clients only send a body; the first line becomes the collapsed title.
+    fallback = client.post(
+        f"/api/projects/{project['id']}/annotations",
+        json={"file_path": "pkg/sample.py", "start_line": 5, "end_line": 5, "body": "首行标题\n正文第二行"},
+    ).json()
+    assert fallback["title"] == "首行标题"
+
     assert client.delete(f"/api/annotations/{annotation['id']}").json() == {"ok": True}
+    assert client.delete(f"/api/annotations/{fallback['id']}").json() == {"ok": True}
     assert client.get(f"/api/projects/{project['id']}/annotations", params={"file_path": "pkg/sample.py"}).json() == []
 
 

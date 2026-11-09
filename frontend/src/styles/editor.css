@@ -169,12 +169,31 @@
 }
 
 .annotation-action { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok); }
-.annotation-editor { display:flex; align-items:center; gap:8px; padding:8px 12px; border-top:1px solid color-mix(in srgb, var(--ok) 36%, var(--border)); background:color-mix(in srgb, var(--ok) 8%, var(--bg-panel)); }
-.annotation-editor span { flex:0 0 auto; font-size:10px; color:var(--ok); }
-.annotation-editor textarea { flex:1; min-width:120px; resize:vertical; font-size:11px; }
-.annotation-zone { background:color-mix(in srgb, var(--ok) 9%, var(--bg-panel)); border-left:2px solid var(--ok); }
-.annotation-zone .range-flag { color:var(--ok); }
-.annotation-zone-body { padding:0 8px 5px 24px; color:var(--text-dim); font-size:11px; line-height:1.4; overflow:hidden; }
+.annotation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 12px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--ok) 36%, var(--border));
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel));
+}
+.annotation-editor-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.annotation-editor-range { flex: 0 0 auto; font-size: 10px; color: var(--ok); white-space: nowrap; }
+.annotation-title-input {
+  flex: 1;
+  min-width: 120px;
+  height: 25px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.annotation-editor textarea {
+  width: 100%;
+  min-height: 54px;
+  resize: vertical;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.annotation-editor-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 .selection-bar .lines {
   display: flex;
@@ -403,10 +422,88 @@
   box-sizing: border-box;
 }
 
-.range-zone.annotation-zone { height:100%; min-height:19px; align-items:flex-start; flex-wrap:wrap; padding:1px 6px; background:var(--bg-panel); border-left:2px solid var(--ok); }
-.annotation-zone-body { flex-basis:100%; padding:2px 8px 5px 8px; color:var(--text-dim); font-size:11px; line-height:1.4; white-space:pre-wrap; overflow:auto; max-height:124px; user-select:text; }
-.annotation-delete { height:16px; padding:0 5px; margin-left:5px; border:0; font-size:10px; color:var(--text-faint); }
-.annotation-zone .range-flag { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 50%, var(--border)); }
+.range-zone.annotation-zone {
+  display: block;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ok) 7%, var(--bg-panel));
+  border-top: 1px solid color-mix(in srgb, var(--ok) 28%, var(--border));
+  border-right: 1px solid color-mix(in srgb, var(--ok) 18%, var(--border));
+  border-left: 2px solid var(--ok);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  box-sizing: border-box;
+}
+.annotation-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px 0 5px;
+  box-sizing: border-box;
+}
+.annotation-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ok);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.annotation-toggle:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.annotation-chevron { flex: 0 0 10px; font-size: 10px; line-height: 1; opacity: .8; }
+.annotation-kind {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  color: var(--ok);
+  font-size: 9px;
+  line-height: 14px;
+}
+.annotation-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.annotation-delete {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10px;
+  cursor: pointer;
+}
+.annotation-delete:hover { background: var(--danger-soft); color: var(--danger); }
+.annotation-zone-body {
+  height: calc(100% - 24px);
+  padding: 3px 10px 8px 21px;
+  box-sizing: border-box;
+  overflow: auto;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
 
 .range-flag {
   display: inline-flex;

@@ -100,6 +100,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null)
   const [cardError, setCardError] = useState<string | null>(null)
   const [annotationDraft, setAnnotationDraft] = useState<{ projectId: number; path: string; start: number; end: number; code: string } | null>(null)
+  const [annotationTitle, setAnnotationTitle] = useState('')
   const [annotationText, setAnnotationText] = useState('')
   const [annotationSaving, setAnnotationSaving] = useState(false)
   const [expandedAnnotations, setExpandedAnnotations] = useState<Record<number, boolean>>({})
@@ -405,6 +406,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     setPicked(null)
     setHoverRange(null)
     setAnnotationDraft(null)
+    setAnnotationTitle('')
     setAnnotationText('')
     setExpandedAnnotations({})
     // The document buffer belongs to the previous path; leaving it would offer to
@@ -446,13 +448,14 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     }
     for (const annotation of annotations.data ?? []) {
       if (annotation.project_id !== projectId || annotation.file_path !== path) continue
+      const title = (annotation.title || annotation.body.split('\n')[0] || '批注').trim() || '批注'
       items.push({
         key: `annotation-${annotation.id}`,
         start: annotation.start_line,
-        label: `${expandedAnnotations[annotation.id] ? '▾' : '▸'} 批注 · ${annotation.body.slice(0, 42)}`,
+        label: title,
         active: false,
         onClick: () => undefined,
-        annotation: annotation.body,
+        annotation: { title, body: annotation.body },
         expanded: Boolean(expandedAnnotations[annotation.id]),
         onToggle: () => setExpandedAnnotations((prev) => ({ ...prev, [annotation.id]: !prev[annotation.id] })),
         onDelete: () => {
@@ -495,14 +498,29 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     return content.content.split('\n').slice(start - 1, end).join('\n').replace(/\n+$/, '')
   }
 
+  const beginAnnotation = (start: number, end: number, code: string) => {
+    if (projectId === null || path === null) return
+    setAnnotationTitle('')
+    setAnnotationText('')
+    setAnnotationDraft({ projectId, path, start, end, code })
+  }
+
   const saveAnnotation = async () => {
     if (!annotationDraft || !annotationText.trim() || annotationSaving) return
     const target = annotationDraft
     setAnnotationSaving(true)
     try {
-      await api.createAnnotation(target.projectId, { file_path: target.path, start_line: target.start, end_line: target.end, selected_code: target.code, body: annotationText.trim() })
+      await api.createAnnotation(target.projectId, {
+        file_path: target.path,
+        start_line: target.start,
+        end_line: target.end,
+        selected_code: target.code,
+        title: annotationTitle.trim(),
+        body: annotationText.trim(),
+      })
       if (annotationTargetRef.current === `${target.projectId}:${target.path}`) {
         setAnnotationDraft(null)
+        setAnnotationTitle('')
         setAnnotationText('')
       }
       annotations.reload()
@@ -786,7 +804,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <Icon name="message-plus" size={11} />
             就这些行提问
           </button>
-          <button className="small annotation-action" type="button" onClick={() => { if (projectId === null || path === null) return; const start = picked.lines[0] ?? 1; const end = picked.lines[picked.lines.length - 1] ?? start; setAnnotationText(''); setAnnotationDraft({ projectId, path, start, end, code: picked.code }) }}>
+          <button className="small annotation-action" type="button" onClick={() => {
+            const start = picked.lines[0] ?? 1
+            const end = picked.lines[picked.lines.length - 1] ?? start
+            beginAnnotation(start, end, picked.code)
+          }}>
             <Icon name="pencil" size={11} />就这段批注
           </button>
           <button className="small ghost" type="button" onClick={() => void locateInGraph(picked.lines[0] ?? 1)}>
@@ -822,7 +844,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <Icon name="message-plus" size={11} />
             就这段提问
           </button>
-          <button className="small annotation-action" type="button" onClick={() => { if (projectId === null || path === null) return; setAnnotationText(''); setAnnotationDraft({ projectId, path, start: selection.start, end: selection.end, code: selection.code }) }}>
+          <button className="small annotation-action" type="button" onClick={() => beginAnnotation(selection.start, selection.end, selection.code)}>
             <Icon name="pencil" size={11} />就这段批注
           </button>
           <button className="small ghost" type="button" onClick={() => void locateInGraph(selection.start)}>
@@ -869,17 +891,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             <Icon name="message-plus" size={11} />
             就这段提问
           </button>
-          <button className="small annotation-action" type="button" onClick={() => {
-            if (projectId === null || !path) return
-            setAnnotationText('')
-            setAnnotationDraft({
-              projectId,
-              path,
-              start: citationRange.start,
-              end: citationRange.end,
-              code: codeForRange(citationRange.start, citationRange.end),
-            })
-          }}>
+          <button className="small annotation-action" type="button" onClick={() => beginAnnotation(
+            citationRange.start,
+            citationRange.end,
+            codeForRange(citationRange.start, citationRange.end),
+          )}>
             <Icon name="pencil" size={11} />就这段批注
           </button>
           <button className="small ghost" type="button" onClick={() => void locateInGraph(citationRange.start)}>
@@ -892,10 +908,34 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       ) : null}
 
       {annotationDraft ? <div className="annotation-editor">
-        <span>批注 · 第 {annotationDraft.start}-{annotationDraft.end} 行</span>
-        <textarea autoFocus rows={2} maxLength={10000} value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} placeholder="写下这段代码的批注…" />
-        <button className="small ghost" type="button" onClick={() => setAnnotationDraft(null)}>取消</button>
-        <button className="small primary" type="button" disabled={!annotationText.trim() || annotationSaving} onClick={() => void saveAnnotation()}><Icon name="check" size={11} />{annotationSaving ? '保存中…' : '保存批注'}</button>
+        <div className="annotation-editor-head">
+          <span className="annotation-editor-range">批注 · 第 {annotationDraft.start}-{annotationDraft.end} 行</span>
+          <input
+            className="annotation-title-input"
+            autoFocus
+            maxLength={200}
+            value={annotationTitle}
+            onChange={(event) => setAnnotationTitle(event.target.value)}
+            placeholder="标题（可选，默认取正文首行）"
+            aria-label="批注标题"
+          />
+        </div>
+        <textarea
+          rows={3}
+          maxLength={10000}
+          value={annotationText}
+          onChange={(event) => setAnnotationText(event.target.value)}
+          placeholder="写下这段代码的批注…"
+          aria-label="批注正文"
+        />
+        <div className="annotation-editor-actions">
+          <button className="small ghost" type="button" onClick={() => {
+            setAnnotationDraft(null)
+            setAnnotationTitle('')
+            setAnnotationText('')
+          }}>取消</button>
+          <button className="small primary" type="button" disabled={!annotationText.trim() || annotationSaving} onClick={() => void saveAnnotation()}><Icon name="check" size={11} />{annotationSaving ? '保存中…' : '保存批注'}</button>
+        </div>
       </div> : null}
 
       {cardError ? <ErrorNote message={cardError} /> : null}

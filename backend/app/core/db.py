@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS code_annotations (
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
     selected_code TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
     body TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -328,6 +329,16 @@ def init_db(db_path: Path | None = None) -> None:
         # existing database: the column only appears in the ALTER above. Creating
         # it here covers both fresh databases and migrated ones.
         conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_folder ON notes(folder_id)")
+        # Annotations gained a title separate from their body. Existing rows keep
+        # their content: the first line becomes the visible collapsed label.
+        annotation_cols = {r["name"] for r in conn.execute("PRAGMA table_info(code_annotations)")}
+        if "title" not in annotation_cols:
+            conn.execute("ALTER TABLE code_annotations ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            "UPDATE code_annotations "
+            "SET title = trim(substr(body, 1, instr(body || char(10), char(10)) - 1)) "
+            "WHERE trim(COALESCE(title, '')) = ''"
+        )
     _migrate_fts(path)
 
 

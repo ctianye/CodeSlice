@@ -285,7 +285,15 @@ def build_embeddings():
         return None
     from langchain_openai import OpenAIEmbeddings
 
-    kwargs: dict[str, Any] = {"model": cfg.model, "api_key": api_key}
+    kwargs: dict[str, Any] = {
+        "model": cfg.model,
+        "api_key": api_key,
+        # Ollama's OpenAI-compatible endpoint expects raw strings. The client's
+        # default pre-tokenizes with tiktoken and sends token ids, which Ollama
+        # rejects with 400 "invalid input type" — and vector_search then silently
+        # falls back to keyword-only retrieval.
+        "check_embedding_ctx_length": False,
+    }
     if cfg.base_url:
         kwargs["base_url"] = cfg.base_url
     return OpenAIEmbeddings(**kwargs)

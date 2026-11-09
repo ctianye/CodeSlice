@@ -384,6 +384,34 @@ def test_a_python_module_alias_resolves_member_calls():
     assert ("run", "load") in _edges(graph, "calls")
 
 
+def test_an_external_dotted_import_does_not_match_a_short_tail_file():
+    """`langgraph.types` is not `frontend/src/types.ts`, and `langgraph.graph` is
+    not this project's `graph.py`.
+
+    Short-tail matching is only a fallback for languages without an import
+    parser. Applying it to Python made an external import look like a real
+    cross-file dependency and turned a library call into a project call.
+    """
+    graph = _build(
+        (
+            "backend/app/agent/loop.py",
+            "from langgraph.graph import StateGraph\n"
+            "from langgraph.types import interrupt\n"
+            "from types import SimpleNamespace\n\n"
+            "def run_one():\n"
+            "    StateGraph(None)\n"
+            "    interrupt({})\n",
+        ),
+        ("backend/app/agent/graph.py", "class StateGraph:\n    pass\n"),
+        ("frontend/src/types.ts", "export interface Interrupt { id: string }\n"),
+    )
+
+    assert ("loop.py", "graph.py") not in _edges(graph, "imports_from")
+    assert ("loop.py", "types.ts") not in _edges(graph, "imports_from")
+    assert ("run_one", "StateGraph") not in _edges(graph, "calls")
+    assert ("run_one", "Interrupt") not in _edges(graph, "calls")
+
+
 def test_an_external_import_becomes_an_external_node():
     graph = _build(("a.py", "import json\n"))
     external = [n for n in graph["nodes"] if n["kind"] == "external"]

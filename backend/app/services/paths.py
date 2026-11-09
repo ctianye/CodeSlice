@@ -35,6 +35,14 @@ DEFAULT_IGNORES = {
     ".codeslice",
     # Local app data (dev scratch dirs, job logs, sqlite copies).
     ".devdata",
+    # Generated in this repository: screenshots, graph previews, scratch trees.
+    # The graph builder already skips these; the retrieval index must agree or
+    # a project's top hits become debug artifacts instead of source.
+    ".shots",
+    ".tmp-preview-data",
+    ".acl-fix",
+    "acl-recovery",
+    "graphify-out",
     # Vendored Monaco editor bundle copied in by the frontend build.
     "monaco",
     # Installed/bundled app output — indexing these drowns real source in vendor code.
@@ -143,8 +151,12 @@ def is_ignored(name: str) -> bool:
 
 
 def skip_file(path_name: str) -> bool:
-    """True when a *file* should never be indexed (lockfiles, maps, certs…)."""
+    """True when a *file* should never be indexed (secrets, lockfiles, maps…)."""
     lowered = path_name.lower()
+    # Environment files hold credentials; neither the retrieval index nor the
+    # embedding provider should receive them. This also covers .env.local etc.
+    if lowered == ".env" or lowered.startswith(".env."):
+        return True
     if lowered in {n.lower() for n in IGNORED_FILENAMES}:
         return True
     return Path(lowered).suffix in IGNORED_SUFFIXES

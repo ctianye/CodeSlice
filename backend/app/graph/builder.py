@@ -42,7 +42,7 @@ _SKIP_DIRS = {
     ".vscode", ".next", ".nuxt", "target", "bin", "obj", "coverage", ".codeslice",
     ".devdata", "monaco", "release", "win-unpacked", "dist-backend", "_internal",
     "site-packages", "vendor", "third_party", "third-party", "graphify-out",
-    ".tmp-preview-data", ".shots", "acl-recovery",
+    ".tmp-preview-data", ".shots", ".acl-fix", "acl-recovery",
 }
 
 _SKIP_SUFFIX = {
