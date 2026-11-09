@@ -138,6 +138,13 @@
   line-height: 1.7;
 }
 
+.editor-placeholder .binary-path {
+  max-width: 72ch;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
 .editor-placeholder .hint-keys {
   display: flex;
   align-items: center;

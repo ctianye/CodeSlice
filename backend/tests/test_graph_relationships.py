@@ -48,6 +48,11 @@ def model(monkeypatch):
             calls.append(messages)
             return SimpleNamespace(content="## 核心作用\n中心调用 out，被 in 调用。", response_metadata={})
 
+        def stream(self, messages):
+            calls.append(messages)
+            yield SimpleNamespace(content="## 核心作用\n", response_metadata={})
+            yield SimpleNamespace(content="中心调用 out。", response_metadata={"finish_reason": "stop"})
+
     monkeypatch.setattr(relationships.model_config, "build_chat_model", lambda **kw: Model())
     return calls
 
@@ -76,6 +81,45 @@ def test_summary_never_slices_high_degree_hub(topology, model):
     result = relationships.summarize(topology, "center", "code")
     assert result["neighbor_count"] == 252
     assert len(json.loads(model[0][1].content)["neighbors"]) == 252
+
+
+def _frames(text: str) -> list[dict]:
+    return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
+
+
+def test_summary_stream_emits_deltas_then_done(client, project, topology, model):
+    response = client.post(
+        f"/api/projects/{project['id']}/graph/summary/stream",
+        json={"node_id": "center"},
+    )
+    assert response.status_code == 200
+    frames = _frames(response.text)
+    assert [frame["type"] for frame in frames] == ["delta", "delta", "done"]
+    assert "".join(frame.get("text", "") for frame in frames) == "## 核心作用\n中心调用 out。"
+    done = frames[-1]
+    assert done["scope"] == "code"
+    assert done["neighbor_count"] == 2
+    assert done["edge_count"] == 2
+    assert json.loads(model[0][1].content)["node"]["id"] == "center"
+
+
+def test_summary_stream_reports_model_failure_as_error_frame(client, project, topology, monkeypatch):
+    class Broken:
+        def stream(self, messages):
+            raise RuntimeError("provider failed")
+
+        def invoke(self, messages):
+            raise RuntimeError("provider failed")
+
+    monkeypatch.setattr(relationships.model_config, "build_chat_model", lambda **kw: Broken())
+    response = client.post(
+        f"/api/projects/{project['id']}/graph/summary/stream",
+        json={"node_id": "center"},
+    )
+    assert response.status_code == 200
+    frames = _frames(response.text)
+    assert frames[-1]["type"] == "error"
+    assert "AI 解读暂时失败" in frames[-1]["detail"]
 
 
 def test_missing_or_wrong_scope_node_does_not_call_model(client, project, topology, model):
@@ -201,5 +245,7 @@ def test_new_graph_routes_require_authentication(client, project):
     client.headers.pop("X-Session-Token")
     assert client.get("/api/graphs/notes").status_code == 401
     assert client.post("/api/graphs/notes/summary", json={"node_id": "note://1"}).status_code == 401
+    assert client.post("/api/graphs/notes/summary/stream", json={"node_id": "note://1"}).status_code == 401
     assert client.post(f"/api/projects/{project['id']}/graph/summary", json={"node_id": "x"}).status_code == 401
+    assert client.post(f"/api/projects/{project['id']}/graph/summary/stream", json={"node_id": "x"}).status_code == 401
     assert client.get("/api/conversations/x/graph-targets").status_code == 401

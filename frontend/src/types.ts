@@ -40,6 +40,8 @@ export interface FileContent {
   size: number
   mtime: number
   truncated: boolean
+  /** True for images/archives/databases; `content` is empty and Monaco is not mounted. */
+  binary: boolean
 }
 
 export interface GitStatus {
@@ -448,6 +450,12 @@ export interface GraphSummary {
   neighbor_count: number
   edge_count: number
 }
+
+/** One frame of the streaming relationship summary. */
+export type GraphSummaryEvent =
+  | { type: 'delta'; text: string }
+  | ({ type: 'done' } & GraphSummary)
+  | { type: 'error'; detail: string }
 
 export interface GraphCommunity {
   id: number

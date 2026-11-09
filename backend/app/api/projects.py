@@ -94,6 +94,27 @@ def get_tree(
     return _build_tree(directory, root, depth)
 
 
+def _looks_binary(raw: bytes) -> bool:
+    """True when the bytes are not text a reader should see.
+
+    Known binary suffixes are handled before this; this catches extension-less
+    data (``.dat``, objects sent without a suffix) and invalid UTF-8. Decoding
+    with ``errors="replace"`` is exactly what produced the wall of replacement
+    characters in the editor, so a failed strict decode is treated as binary.
+    """
+    if not raw:
+        return False
+    sample = raw[:8192]
+    if b"\x00" in sample:
+        return True
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    controls = sum(1 for byte in sample if byte < 9 or 13 < byte < 32)
+    return controls / len(sample) > 0.05
+
+
 @router.get("/{project_id}/file")
 def get_file(project: ProjectDep, _: TokenDep, path: str = Query(min_length=1)) -> dict[str, Any]:
     root = paths.resolve_root(project["path"])
@@ -102,17 +123,24 @@ def get_file(project: ProjectDep, _: TokenDep, path: str = Query(min_length=1)) 
         raise NotFound(f"file not found: {path}")
     stat = target.stat()
     truncated = stat.st_size > settings.max_file_bytes
-    with target.open("rb") as handle:
-        raw = handle.read(settings.max_file_bytes)
-    text = raw.decode("utf-8", errors="replace")
+    binary = target.suffix.lower() in paths.BINARY_SUFFIXES
+    raw = b""
+    text = ""
+    if not binary:
+        with target.open("rb") as handle:
+            raw = handle.read(settings.max_file_bytes)
+        binary = _looks_binary(raw)
+        if not binary:
+            text = raw.decode("utf-8", errors="replace")
     rel = target.relative_to(root).as_posix()
     return {
         "path": rel,
-        "language": detect_language(rel, text),
+        "language": "binary" if binary else detect_language(rel, text),
         "content": text,
         "size": stat.st_size,
         "mtime": stat.st_mtime,
         "truncated": truncated,
+        "binary": binary,
     }
 
 
@@ -137,6 +165,8 @@ def put_file(project: ProjectDep, _: TokenDep, body: FileWrite) -> dict[str, Any
         raise NotFound(f"file not found: {body.path}")
     if target.is_dir():
         raise InvalidInput(f"not a file: {body.path}")
+    if target.suffix.lower() in paths.BINARY_SUFFIXES:
+        raise InvalidInput("binary files are read-only")
 
     size = len(body.content.encode("utf-8"))
     if size > settings.max_file_bytes:
@@ -157,6 +187,7 @@ def put_file(project: ProjectDep, _: TokenDep, body: FileWrite) -> dict[str, Any
         "size": size,
         "mtime": stat.st_mtime,
         "truncated": False,
+        "binary": False,
     }
 
 

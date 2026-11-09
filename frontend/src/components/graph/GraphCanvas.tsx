@@ -38,6 +38,9 @@ interface Props {
   onActivate?: (id: string) => void
 }
 
+/** Zoom used when a search/citation/locate request focuses one node. */
+const FOCUS_SCALE = 0.7
+
 const LABEL_FACE = 'system-ui, "Microsoft YaHei UI", "Segoe UI", sans-serif'
 
 /** Relations with no direction; an arrowhead would imply a call that does not exist. */
@@ -149,6 +152,8 @@ export function GraphCanvas({
   varsRef.current = vars
   const selectedRef = useRef(selectedId)
   selectedRef.current = selectedId
+  const focusRef = useRef(focus)
+  focusRef.current = focus
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
   const labelFrame = useRef(0)
@@ -225,6 +230,15 @@ export function GraphCanvas({
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
       setSettling(false)
       fitVisible(network)
+      // A locate/search request can arrive before physics settles. fitVisible()
+      // would otherwise reset that camera to the whole graph, leaving the
+      // selected node in a corner; re-apply the requested focus last.
+      const wanted = focusRef.current
+      if (wanted && datasets.nodes.get(wanted.id)) {
+        network.focus(wanted.id, { scale: FOCUS_SCALE, animation: false, locked: false })
+        appliedFocus.current = wanted
+        applyLabels(network, datasets.nodes, nodesRef.current, varsRef.current, selectedRef.current, viewport())
+      }
     }
     network.once('stabilizationIterationsDone', settle)
     network.on('dragEnd', () => {
@@ -342,10 +356,18 @@ export function GraphCanvas({
   useEffect(() => {
     if (!focus) { appliedFocus.current = null; return }
     if (appliedFocus.current === focus || !datasets.nodes.get(focus.id)) return
-    networkRef.current?.focus(focus.id, { scale: 0.85, animation: false, locked: false })
+    networkRef.current?.focus(focus.id, { scale: FOCUS_SCALE, animation: false, locked: false })
     appliedFocus.current = focus
     if (networkRef.current) {
       applyLabels(networkRef.current, datasets.nodes, nodes, vars, selectedId, viewport())
+      // vis applies the camera on its next draw; make sure labels use the new
+      // scale even if that path does not emit a zoom event.
+      window.requestAnimationFrame(() => {
+        const current = networkRef.current
+        if (current) {
+          applyLabels(current, datasets.nodes, nodesRef.current, varsRef.current, selectedRef.current, viewport())
+        }
+      })
     }
   }, [focus, nodes, datasets, vars, selectedId])
 

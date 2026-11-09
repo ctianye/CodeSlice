@@ -13,23 +13,52 @@ is persisted and only builds when nothing is.
 
 from __future__ import annotations
 
+import json
+import logging
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.conversations import SSE_HEADERS
 from app.api.deps import ProjectDep, TokenDep
 from app.core.db import GRAPH_SCOPE_CODE
-from app.core.errors import NotFound
+from app.core.errors import AppError, NotFound
 from app.graph import notes, query, relationships, service, store
 from app.services import paths
 from app.storage import repo
 
 router = APIRouter(tags=["graph"])
+log = logging.getLogger(__name__)
 
 
 class SummaryRequest(BaseModel):
     node_id: str = Field(min_length=1, max_length=2048)
+
+
+def _sse(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+def _summary_frames(iterator: Iterator[dict[str, Any]]) -> Iterator[str]:
+    """Serialize summary frames, turning a failure into a readable error frame.
+
+    The stream has already started as HTTP 200 when the model fails, so this is
+    the only channel that can tell the panel what happened. A partial answer is
+    preserved on the client; the frame simply explains why it stopped.
+    """
+    try:
+        for event in iterator:
+            yield _sse(event)
+    except GeneratorExit:  # client disconnected / pressed 取消
+        raise
+    except AppError as exc:
+        yield _sse({"type": "error", "detail": exc.detail})
+    except Exception as exc:  # pragma: no cover - defensive
+        log.exception("graph summary stream failed")
+        yield _sse({"type": "error", "detail": f"AI 解读失败，请重试（{type(exc).__name__}）。"})
 
 
 @router.get("/graphs/notes")
@@ -40,6 +69,15 @@ def get_notes_graph(_: TokenDep) -> dict[str, Any]:
 @router.post("/graphs/notes/summary")
 def summarize_note(body: SummaryRequest, _: TokenDep) -> dict[str, Any]:
     return relationships.summarize(notes.build(), body.node_id, "notes")
+
+
+@router.post("/graphs/notes/summary/stream")
+def summarize_note_stream(body: SummaryRequest, _: TokenDep) -> StreamingResponse:
+    return StreamingResponse(
+        _summary_frames(relationships.summarize_stream(notes.build(), body.node_id, "notes")),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 def _cached_or_build(project: dict, root) -> dict[str, Any]:
@@ -61,6 +99,16 @@ def _cached_or_build(project: dict, root) -> dict[str, Any]:
 def summarize_code(project: ProjectDep, body: SummaryRequest, _: TokenDep) -> dict[str, Any]:
     graph = _cached_or_build(project, paths.resolve_root(project["path"]))
     return relationships.summarize(graph, body.node_id, "code")
+
+
+@router.post("/projects/{project_id}/graph/summary/stream")
+def summarize_code_stream(project: ProjectDep, body: SummaryRequest, _: TokenDep) -> StreamingResponse:
+    graph = _cached_or_build(project, paths.resolve_root(project["path"]))
+    return StreamingResponse(
+        _summary_frames(relationships.summarize_stream(graph, body.node_id, "code")),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 @router.get("/conversations/{conversation_id}/graph-targets")

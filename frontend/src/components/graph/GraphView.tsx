@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import * as api from '../../api'
 import type { GraphNode, GraphPayload } from '../../types'
+import { usePersistedState } from '../../hooks/useAsync'
 import { useApp } from '../../state/AppState'
 import { EmptyState, ErrorNote, Loading } from '../Feedback'
 import { Icon } from '../Icon'
@@ -32,6 +33,12 @@ const FAMILY_CHIPS: { family: RelationFamily; label: string; hint: string }[] = 
 /** Rows per group before the rail tells the user how many it hid. */
 const MAX_ROWS = 60
 
+/** Keep in sync with the `@container graph (max-width: 760px)` block in graph.css. */
+const NARROW_GRAPH_WIDTH = 760
+const DEFAULT_RAIL_PCT = 46
+const MIN_RAIL_PCT = 20
+const MAX_RAIL_PCT = 72
+
 /**
  * The knowledge-graph tab.
  *
@@ -54,10 +61,52 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filters, setFilters] = useState<GraphFilters>(defaultFilters)
   const [focus, setFocus] = useState<{ id: string; nonce: number } | null>(null)
+  const [railPct, setRailPct] = usePersistedState('codeslice.graphRailPct', DEFAULT_RAIL_PCT)
+  const [narrow, setNarrow] = useState(false)
+  const [draggingRail, setDraggingRail] = useState(false)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const focusCounter = useRef(0)
   const appliedFocus = useRef<string | null>(null)
   const operation = useRef<AbortController | null>(null)
   useEffect(() => () => operation.current?.abort(), [])
+
+  const railPercent = Math.min(
+    MAX_RAIL_PCT,
+    Math.max(MIN_RAIL_PCT, Number.isFinite(railPct) ? railPct : DEFAULT_RAIL_PCT),
+  )
+
+  /** The rail is a bottom sheet only while the graph body is too narrow for two columns. */
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    const measure = () => setNarrow(body.clientWidth <= NARROW_GRAPH_WIDTH)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [payload])
+
+  useEffect(() => {
+    if (!draggingRail) return
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    return () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [draggingRail])
+
+  const railPercentAt = (clientY: number): number => {
+    const body = bodyRef.current
+    if (!body) return railPercent
+    const rect = body.getBoundingClientRect()
+    if (!rect.height) return railPercent
+    const next = ((rect.bottom - clientY) / rect.height) * 100
+    return Math.min(MAX_RAIL_PCT, Math.max(MIN_RAIL_PCT, next))
+  }
+  const nudgeRail = (delta: number) => setRailPct(
+    Math.min(MAX_RAIL_PCT, Math.max(MIN_RAIL_PCT, railPercent + delta)),
+  )
 
   const adopt = useCallback((data: GraphPayload) => {
     setPayload(data)
@@ -247,7 +296,11 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
 
     {error && payload ? <div className="graph-banner"><ErrorNote message={error} onRetry={() => setRevision(revisionValue => revisionValue + 1)} /></div> : null}
 
-    <div className="graph-body">
+    <div className="graph-body" ref={bodyRef} data-dragging={draggingRail || undefined}
+      style={narrow ? {
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        gridTemplateRows: `minmax(0, 1fr) 7px minmax(0, ${railPercent}%)`,
+      } : undefined}>
       <div className="graph-stage">
         {!payload?.nodes.length
           ? <GraphBlank scope={scope} busy={loading} onRebuild={() => void rebuild()} />
@@ -259,6 +312,53 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
             }}
             onActivate={id => { const node = byId.get(id); if (node) void openNode(node) }} />}
       </div>
+
+      {narrow ? <div
+        className={'graph-splitter' + (draggingRail ? ' dragging' : '')}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="调整图谱检查器高度"
+        aria-valuemin={MIN_RAIL_PCT}
+        aria-valuemax={MAX_RAIL_PCT}
+        aria-valuenow={Math.round(railPercent)}
+        title="拖动调整检查器高度，双击恢复默认"
+        tabIndex={0}
+        onPointerDown={event => {
+          event.preventDefault()
+          event.currentTarget.setPointerCapture(event.pointerId)
+          setDraggingRail(true)
+        }}
+        onPointerMove={event => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            setRailPct(railPercentAt(event.clientY))
+          }
+        }}
+        onPointerUp={event => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          }
+          setDraggingRail(false)
+        }}
+        onPointerCancel={event => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          }
+          setDraggingRail(false)
+        }}
+        onDoubleClick={() => setRailPct(DEFAULT_RAIL_PCT)}
+        onKeyDown={event => {
+          if (event.key === 'ArrowUp') {
+            event.preventDefault()
+            nudgeRail(event.shiftKey ? 8 : 3)
+          } else if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            nudgeRail(event.shiftKey ? -8 : -3)
+          } else if (event.key === 'Home') {
+            event.preventDefault()
+            setRailPct(DEFAULT_RAIL_PCT)
+          }
+        }}
+      /> : null}
 
       <aside className="graph-rail" aria-label="图谱检查器">
         <div className="graph-rail-search">
@@ -288,7 +388,6 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
           theme={graphTheme}
           projectId={projectId}
           revision={revision}
-          refreshKey={refreshKey}
           onBack={() => { setSelectedId(null); setFocus(null) }}
           onSelect={id => choose(id, false)}
           onOpen={node => void openNode(node)}
@@ -310,7 +409,7 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
   </div>
 }
 
-function NodeInspector({ node, groups, hasCalls, neighborCount, scope, theme, projectId, revision, refreshKey,
+function NodeInspector({ node, groups, hasCalls, neighborCount, scope, theme, projectId, revision,
   onBack, onSelect, onOpen, onAsk }: {
   node: GraphNode
   groups: RelationGroup[]
@@ -320,7 +419,6 @@ function NodeInspector({ node, groups, hasCalls, neighborCount, scope, theme, pr
   theme: GraphTheme
   projectId: number
   revision: number
-  refreshKey: number
   onBack: () => void
   onSelect: (id: string) => void
   onOpen: (node: GraphNode) => void
@@ -357,7 +455,7 @@ function NodeInspector({ node, groups, hasCalls, neighborCount, scope, theme, pr
       onOpen={onOpen}
     />) : <p className="graph-empty-line">此节点没有直接关联。</p>}
 
-    <RelationshipSummary key={node.id + ':' + revision + ':' + refreshKey}
+    <RelationshipSummary key={node.id + ':' + revision}
       scope={scope} projectId={projectId} nodeId={node.id} neighborCount={neighborCount} />
   </section>
 }

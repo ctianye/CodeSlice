@@ -16,7 +16,7 @@ import type {
   GitStatus,
   GraphNodeDetail,
   GraphPayload,
-  GraphSummary,
+  GraphSummaryEvent,
   GraphNode,
   Health,
   IndexStatus,
@@ -228,12 +228,24 @@ export const getGraph = (projectId: number, signal?: AbortSignal): Promise<Graph
 export const getNotesGraph = (signal?: AbortSignal): Promise<GraphPayload> =>
   request<GraphPayload>('/api/graphs/notes', { signal })
 
-export const summarizeGraph = (
-  scope: 'code' | 'notes', projectId: number, nodeId: string, signal?: AbortSignal,
-): Promise<GraphSummary> => request<GraphSummary>(
-  scope === 'code' ? `/api/projects/${projectId}/graph/summary` : '/api/graphs/notes/summary',
-  { method: 'POST', body: { node_id: nodeId }, signal },
-)
+/**
+ * Streams the AI relationship summary as SSE frames.
+ *
+ * The first delta should paint immediately: a hub with dozens of neighbours can
+ * take a while to explain, and waiting for the whole JSON answer leaves the rail
+ * blank. The generic POST-SSE helper owns framing and abort handling.
+ */
+export async function* streamGraphSummary(
+  scope: 'code' | 'notes',
+  projectId: number,
+  nodeId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<GraphSummaryEvent> {
+  const path = scope === 'code'
+    ? `/api/projects/${projectId}/graph/summary/stream`
+    : '/api/graphs/notes/summary/stream'
+  yield* postJsonSse<GraphSummaryEvent>(path, { node_id: nodeId }, signal)
+}
 
 export const getConversationGraphTargets = (id: string, signal?: AbortSignal):
   Promise<{ project_id: number; targets: GraphNode[] }> =>

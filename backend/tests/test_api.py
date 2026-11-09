@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -59,9 +60,31 @@ def test_tree_and_file(client, project):
     assert body["language"] == "python"
     assert "def bar" in body["content"]
     assert body["truncated"] is False
+    assert body["binary"] is False
 
     escape = client.get(f"/api/projects/{project['id']}/file", params={"path": "../../x.txt"})
     assert escape.status_code == 400
+
+
+def test_binary_files_are_reported_without_decoding(client, project):
+    root = Path(project["path"])
+    (root / "checkpoints.db").write_bytes(b"SQLite format 3\x00" + bytes(range(64)))
+    db = client.get(f"/api/projects/{project['id']}/file", params={"path": "checkpoints.db"}).json()
+    assert db["binary"] is True
+    assert db["language"] == "binary"
+    assert db["content"] == ""
+
+    # No known suffix: a NUL byte or invalid UTF-8 is still data, not text.
+    (root / "blob.dat").write_bytes(b"\x00\x01\x02binary")
+    blob = client.get(f"/api/projects/{project['id']}/file", params={"path": "blob.dat"}).json()
+    assert blob["binary"] is True
+    assert blob["content"] == ""
+
+    write = client.put(
+        f"/api/projects/{project['id']}/file",
+        json={"path": "checkpoints.db", "content": "nope"},
+    )
+    assert write.status_code == 400
 
 
 def test_git_status_on_non_repo(client, project):

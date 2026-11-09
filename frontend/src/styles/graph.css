@@ -193,6 +193,47 @@
   min-width: 0;
 }
 
+/* Horizontal divider between the canvas and a bottom-sheet inspector. It only
+ * exists in the narrow layout; wide layouts keep the rail on the right. */
+.graph-splitter {
+  position: relative;
+  height: 7px;
+  flex: 0 0 7px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.graph-splitter::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  transform: translate(-50%, -50%);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.graph-splitter:hover::after,
+.graph-splitter.dragging::after {
+  background: var(--accent);
+}
+
+.graph-splitter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.graph-body[data-dragging] {
+  cursor: row-resize;
+}
+
 .graph-stage {
   position: relative;
   display: flex;
@@ -1253,38 +1294,23 @@
 @container graph (max-width: 760px) {
   .graph-body {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 46%);
+    /* 1fr canvas / 7px splitter / 46% rail. The component overrides the last
+     * row with the user's dragged height; this is the first-paint fallback. */
+    grid-template-rows: minmax(0, 1fr) 7px minmax(0, 46%);
   }
 
   .graph-rail {
     border-left: 0;
-    border-top: 1px solid var(--border);
-    overflow-y: auto;
+    border-top: 0;
+    overflow: hidden;
   }
 
-  .graph-rail-scroll {
-    flex: 0 0 auto;
+  /* Let the rail obey the dragged track height instead of its content's
+   * min-content size; the inner section owns the scrollbar. */
+  .graph-rail-scroll,
+  .graph-detail,
+  .graph-section {
     min-height: 0;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .graph-comm-list {
-    flex: 0 0 auto;
-    max-height: 132px;
-    overflow-y: auto;
-  }
-
-  .graph-detail {
-    flex: 0 0 auto;
-    min-height: 0;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .graph-summary-output {
-    max-height: 180px;
-    overflow-y: auto;
   }
 }
 

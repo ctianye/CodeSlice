@@ -282,15 +282,35 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         detachGutter()
       }
 
-      // The pane can be laid out before the mount box has its final height (the
-      // card strip above it renders a frame later); one explicit layout pass
-      // avoids a zero-sized editor in that case.
-      requestAnimationFrame(() => {
+      const layout = () => {
         if (!instance.getModel()) return
         instance.layout()
-      })
+      }
+      // Monaco can create itself at 5×5 while the pane is still settling (a tab
+      // switch unmounts the graph in the same frame). Its automaticLayout does
+      // not always recover from that initial size, so force a few passes and
+      // follow later pane resizes explicitly.
+      const layoutTimers = [0, 80, 300].map(delay => window.setTimeout(layout, delay))
+      const host = instance.getDomNode()?.parentElement ?? null
+      const layoutObserver = host ? new ResizeObserver(layout) : null
+      if (host) layoutObserver?.observe(host)
+      const disposeLayout = () => {
+        layoutTimers.forEach(window.clearTimeout)
+        layoutObserver?.disconnect()
+      }
+      const detach = detachRef.current
+      detachRef.current = () => {
+        detach?.()
+        disposeLayout()
+      }
+
+      // Monaco restores a file's previous selection (and view state) during
+      // creation, before this listener exists. Without this seed the editor
+      // shows a selection while the ask bar stays empty until the next cursor
+      // change.
+      updateSelection(instance)
     },
-    [scheduleSelection],
+    [scheduleSelection, updateSelection],
   )
 
   // Release Monaco listeners before the instance is disposed, otherwise a
@@ -452,10 +472,28 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
 
   const content = file.data
   const dirty = git.data?.dirty ?? false
+  const binary = Boolean(content?.binary)
   /** Markdown opens rendered; the toggle is the only way into the source. */
   const isDoc = content?.language === 'markdown'
   const docText = docDraft ?? content?.content ?? ''
   const docDirty = isDoc && docDraft !== null && docDraft !== content?.content
+
+  /**
+   * A citation outlines a range without moving Monaco's selection, so it never
+   * reached the ask bar. Treat the outlined range as an askable selection too:
+   * clicking a citation is exactly when a reader wants to ask about that code.
+   */
+  const citationRange = (() => {
+    if (!content || content.binary || !openFile || !citationHighlight || citationHighlight.path !== openFile.path) return null
+    const maxLine = Math.max(1, countLines(content.content))
+    const start = Math.max(1, Math.min(citationHighlight.start_line, maxLine))
+    const end = Math.max(start, Math.min(citationHighlight.end_line, maxLine))
+    return { start, end }
+  })()
+  const codeForRange = (start: number, end: number): string => {
+    if (!content) return ''
+    return content.content.split('\n').slice(start - 1, end).join('\n').replace(/\n+$/, '')
+  }
 
   const saveAnnotation = async () => {
     if (!annotationDraft || !annotationText.trim() || annotationSaving) return
@@ -650,9 +688,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         </span>
         {content ? (
           <>
-            <span className="tag accent">{content.language || languageFromPath(path)}</span>
+            {binary
+              ? <span className="tag">二进制</span>
+              : <span className="tag accent">{content.language || languageFromPath(path)}</span>}
             <span className="tag">{formatBytes(content.size)}</span>
-            {content.truncated ? <span className="tag warn">已截断</span> : null}
+            {content.truncated && !binary ? <span className="tag warn">已截断</span> : null}
             {docDirty ? <span className="tag warn">未保存</span> : null}
             {docNotice ? <span className="tag ok">{docNotice}</span> : null}
           </>
@@ -694,7 +734,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             {docSaving ? '保存中…' : '保存'}
           </button>
         ) : null}
-        <div className="toolbar-actions">
+        {!binary ? <div className="toolbar-actions">
           <button
             className="ghost icon"
             title="在知识图谱中定位当前行"
@@ -714,7 +754,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           >
             <Icon name="search" size={13} />
           </button>
-        </div>
+        </div> : null}
         {git.data?.is_repo ? (
           <>
             <span className="tag branch">
@@ -806,6 +846,49 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             取消选择
           </button>
         </div>
+      ) : citationRange ? (
+        <div className="selection-bar">
+          <span className="lines">
+            <span className="dot" />
+            引用第 {citationRange.start}–{citationRange.end} 行 · {citationRange.end - citationRange.start + 1} 行
+          </span>
+          <span className="spacer" />
+          <button
+            className="small primary"
+            onClick={() => {
+              if (!path) return
+              onAskSelection({
+                path,
+                start: citationRange.start,
+                end: citationRange.end,
+                code: codeForRange(citationRange.start, citationRange.end),
+              })
+            }}
+            type="button"
+          >
+            <Icon name="message-plus" size={11} />
+            就这段提问
+          </button>
+          <button className="small annotation-action" type="button" onClick={() => {
+            if (projectId === null || !path) return
+            setAnnotationText('')
+            setAnnotationDraft({
+              projectId,
+              path,
+              start: citationRange.start,
+              end: citationRange.end,
+              code: codeForRange(citationRange.start, citationRange.end),
+            })
+          }}>
+            <Icon name="pencil" size={11} />就这段批注
+          </button>
+          <button className="small ghost" type="button" onClick={() => void locateInGraph(citationRange.start)}>
+            <Icon name="network" size={11} />在图谱中定位
+          </button>
+          <button className="small ghost" type="button" onClick={() => clearCitation()}>
+            清除引用
+          </button>
+        </div>
       ) : null}
 
       {annotationDraft ? <div className="annotation-editor">
@@ -843,10 +926,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             </button>
           </div>
         ) : null}
-        {content && isDoc && !docEditing ? (
+        {content && binary ? <BinaryPlaceholder path={content.path} size={content.size} /> : null}
+        {content && !binary && isDoc && !docEditing ? (
           <MarkdownDoc path={content.path} projectId={projectId ?? 0} text={docText} />
         ) : null}
-        {content && (!isDoc || docEditing) ? (
+        {content && !binary && (!isDoc || docEditing) ? (
           <CodeViewer
             value={isDoc ? docText : content.content}
             language={languageFor(content)}
@@ -890,6 +974,16 @@ function saveErrorText(err: unknown): string {
 
 function languageFor(file: FileContent): string {
   return file.language && file.language !== 'plaintext' ? file.language : languageFromPath(file.path)
+}
+
+/** A database/archive/image has no meaningful text form; show a clear stop sign. */
+function BinaryPlaceholder({ path, size }: { path: string; size: number }): ReactNode {
+  return <div className="editor-placeholder binary-placeholder">
+    <span className="placeholder-icon"><Icon name="database" size={20} /></span>
+    <span className="big">二进制文件</span>
+    <p>{baseName(path)} 是二进制文件（{formatBytes(size)}），不会以文本方式打开，避免把原始字节显示成乱码。</p>
+    <p className="binary-path mono">{path}</p>
+  </div>
 }
 
 function countLines(code: string): number {

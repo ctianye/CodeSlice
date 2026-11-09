@@ -80,7 +80,11 @@ export const CodeViewer = memo(function CodeViewer({
         contextmenu: false,
         glyphMargin: false,
         folding: true,
-        unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false },
+        unicodeHighlight: {
+          ambiguousCharacters: false,
+          invisibleCharacters: false,
+          nonBasicASCII: false,
+        },
         padding: { top: 12, bottom: 24 },
         automaticLayout: true,
         scrollbar: {

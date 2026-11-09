@@ -35,12 +35,13 @@ def test_write_back_roundtrip(client, project):
     body = written.json()
 
     # 响应与 GET /file 完全同构。
-    assert set(body) == {"path", "language", "content", "size", "mtime", "truncated"}
+    assert set(body) == {"path", "language", "content", "size", "mtime", "truncated", "binary"}
     assert body["path"] == "README.md"
     assert body["language"] == "markdown"
     assert body["content"] == new_content
     assert body["size"] == len(new_content.encode("utf-8"))
     assert body["truncated"] is False
+    assert body["binary"] is False
     assert body["mtime"] >= before - 1
 
     again = client.get(_file_url(project["id"]), params={"path": "README.md"}).json()
