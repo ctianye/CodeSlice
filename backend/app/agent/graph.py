@@ -812,7 +812,7 @@ def start_turn(
     except ConfigMissing:
         raise
 
-    repo.add_message(conversation_id, "user", text)
+    repo.add_message(conversation_id, "user", text, meta={"graph_anchor": graph_anchor} if graph_anchor else None)
     user_message = HumanMessage(content=text)
 
     snapshot = build_graph().get_state(_config(conversation_id))

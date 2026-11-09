@@ -96,6 +96,20 @@ def test_plain_answer_streams_tokens_and_persists(project, conversation, scripte
     assert "解释" in saved[1]["content"]
 
 
+def test_graph_anchor_is_saved_for_later_navigation(project, conversation, scripted):
+    scripted([AIMessage(content="这是节点的解释。")])
+    list(agent_graph.start_turn(conversation["id"], "解释这个节点", graph_anchor="pkg/sample.py::__file__"))
+    saved = repo.list_messages(conversation["id"])
+    assert saved[0]["meta"]["graph_anchor"] == "pkg/sample.py::__file__"
+
+
+def test_note_anchor_context_reaches_chat_model(project, conversation, scripted):
+    note = repo.create_note(project["id"], "专属笔记主题", "仅笔记中存在的关系说明")
+    model = scripted([AIMessage(content="笔记解释。")])
+    list(agent_graph.start_turn(conversation["id"], "解释笔记", graph_anchor=f"note://{note['id']}"))
+    assert any("仅笔记中存在的关系说明" in str(message.content) for call in model.calls for message in call)
+
+
 def test_prompt_carries_selection_and_context(project, conversation, scripted):
     model = scripted([AIMessage(content="ok")])
     _drain(conversation["id"], "这段代码在做什么")

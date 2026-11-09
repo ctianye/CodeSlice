@@ -42,7 +42,7 @@ export type EditorTab =
    * separate views because they answer different questions and their edges mean
    * different things.
    */
-  | { kind: 'graph'; scope: 'code'; focusNodeId: string | null }
+  | { kind: 'graph'; scope: 'code'; focusNodeId: string | null; focusNonce?: number }
   | { kind: 'graph'; scope: 'notes'; focusNodeId: null }
 
 /** A node the user asked the agent about from a graph view. */
@@ -136,6 +136,7 @@ interface AppState {
   activeGraphScope: 'code' | 'notes' | null
   /** Open a graph tab (reusing it when already open), optionally focused on a node. */
   openGraph: (focusNodeId?: string | null, scope?: 'code' | 'notes') => void
+  openConversationGraph: (projectId: number, conversationId: string, nodeId: string) => boolean
   /**
    * Ask the agent about a graph node.
    *
@@ -384,7 +385,7 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
         const next = [...prev]
         next[existing] =
           scope === 'code'
-            ? { kind: 'graph', scope, focusNodeId }
+            ? { kind: 'graph', scope, focusNodeId, focusNonce: Date.now() }
             : { kind: 'graph', scope, focusNodeId: null }
         setActiveTabIndex(existing)
         return next
@@ -393,13 +394,26 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       return [
         ...prev,
         scope === 'code'
-          ? { kind: 'graph' as const, scope, focusNodeId }
+          ? { kind: 'graph' as const, scope, focusNodeId, focusNonce: Date.now() }
           : { kind: 'graph' as const, scope, focusNodeId: null },
       ]
     })
   }, [])
 
   const [graphAsk, setGraphAsk] = useState<GraphAsk | null>(null)
+  const openConversationGraph = useCallback((projectId: number, conversationId: string, nodeId: string) => {
+    const owner = project?.id === projectId ? project : projects.find(item => item.id === projectId)
+    if (!owner) return false
+    if (project?.id !== projectId) {
+      setProjectState(owner)
+      setTabs([{ kind: 'graph', scope: 'code', focusNodeId: nodeId, focusNonce: Date.now() }])
+      setActiveTabIndex(0)
+      setCitationHighlight(null)
+    } else openGraph(nodeId, 'code')
+    setActiveConversationIdState(conversationId)
+    setGraphAsk(null)
+    return true
+  }, [projects, project?.id, openGraph, setActiveConversationIdState])
   const askAboutNode = useCallback((ask: GraphAsk) => setGraphAsk(ask), [])
   const clearGraphAsk = useCallback(() => setGraphAsk(null), [])
 
@@ -434,6 +448,7 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       graphFocusNodeId,
       activeGraphScope,
       openGraph,
+      openConversationGraph,
       askAboutNode,
       graphAsk,
       clearGraphAsk,
@@ -469,6 +484,7 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       graphFocusNodeId,
       activeGraphScope,
       openGraph,
+      openConversationGraph,
       askAboutNode,
       graphAsk,
       clearGraphAsk,

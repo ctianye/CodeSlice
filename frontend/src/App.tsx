@@ -2,14 +2,12 @@ import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import * as api from './api'
 import { usePersistedState } from './hooks/useAsync'
-import { useAsync } from './hooks/useAsync'
 import { ChatPane } from './components/ChatPane'
 import { CodePane } from './components/CodePane'
 import type { SnippetSelection } from './components/CodePane'
 import { EditorTabs } from './components/EditorTabs'
 import { NoteReader } from './components/NoteReader'
 import { GraphView } from './components/graph/GraphView'
-import { NotesGraphView } from './components/NotesGraphView'
 import { SettingsModal } from './components/SettingsModal'
 import { ReleaseNotice } from './components/ReleaseNotice'
 import { checkForRelease } from './lib/releases'
@@ -142,9 +140,10 @@ export function App(): ReactNode {
                 place, everything else is the code editor. The two graphs are
                 distinct tabs because their edges mean different things. */}
             {graphTabActive && activeGraphScope === 'code' ? (
-              <GraphView initialNodeId={graphFocusNodeId} />
+              <GraphView key={`${project.id}:code`} initialNodeId={graphFocusNodeId}
+                focusNonce={tabs[activeTabIndex]?.kind === 'graph' ? (tabs[activeTabIndex] as { focusNonce?: number }).focusNonce : 0} />
             ) : graphTabActive && activeGraphScope === 'notes' ? (
-              <NotesGraphTab />
+              <GraphView key={`${project.id}:notes`} scope="notes" />
             ) : noteView ? (
               <NoteReader />
             ) : (
@@ -180,28 +179,8 @@ export function App(): ReactNode {
   )
 }
 
-/**
- * Data container for the notes graph tab.
- *
- * The view itself is pure presentation; this wrapper owns the two fetches and the
- * refresh signal so the graph does not have to know about API wiring or the global
- * refresh counter.
- */
-function NotesGraphTab(): ReactNode {
-  const { refreshKey, openNoteView } = useApp()
-  const folders = useAsync((signal) => api.listNoteFolders(signal), [refreshKey])
-  const notes = useAsync((signal) => api.listNotes({}, signal), [refreshKey])
-  return (
-    <NotesGraphView
-      notes={notes.data ?? []}
-      folders={folders.data ?? []}
-      loading={notes.loading && !notes.data}
-      onOpen={(note) => openNoteView(note)}
-    />
-  )
-}
-
-function readLastProjectId(): number | null {  try {
+function readLastProjectId(): number | null {
+  try {
     const raw = localStorage.getItem('codeslice.lastProjectId')
     if (!raw) return null
     const parsed = Number(raw)

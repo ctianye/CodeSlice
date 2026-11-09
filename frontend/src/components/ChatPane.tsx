@@ -11,6 +11,7 @@ import { EmptyState, ErrorNote, Loading } from './Feedback'
 import { Icon } from './Icon'
 import { MessageBubble } from './MessageBubble'
 import { StreamingBubble } from './StreamingBubble'
+import { ConversationGraphLink } from './graph/ConversationGraphLink'
 
 interface ChatPaneProps {
   /** Set when the user asked about a code selection; creates a snippet conversation. */
@@ -45,6 +46,12 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
   const pendingAnchorRef = useRef<string | null>(null)
 
   const chat = useChatStream(activeConversationId, () => bumpRefresh())
+
+  useEffect(() => {
+    pendingAnchorRef.current = null
+    clearGraphAsk()
+    setDraft(null)
+  }, [activeConversationId, project?.id, clearGraphAsk])
 
   // "Ask about this node" from the graph view: put a ready-made question in the
   // composer and remember which node it is about. Marking the anchor here (rather
@@ -314,6 +321,8 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
 
       {createError ? <ErrorNote message={createError} /> : null}
       {noteError ? <ErrorNote message={noteError} /> : null}
+
+      {activeConversationId && <ConversationGraphLink key={activeConversationId} conversationId={activeConversationId} />}
 
       <div className="chat-scroll" ref={scrollRef}>
         {!activeConversationId ? (

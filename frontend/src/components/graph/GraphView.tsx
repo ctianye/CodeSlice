@@ -1,542 +1,257 @@
-/**
- * Code knowledge graph view: canvas + search + community legend + node detail.
- *
- * Layout follows the same shape the user already knows from graphify: the graph
- * fills the pane, a sidebar holds search, the community legend and the selected
- * node's connections.
- *
- * One rule this view enforces everywhere: an inferred edge is always *visually*
- * different from an extracted one (dotted line, "推断" tag). The graph is used to
- * decide what to read next, so a guess must not look like a fact.
- */
-
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import * as api from '../../api'
-import type { GraphNode, GraphNodeDetail, GraphPayload } from '../../types'
+import type { GraphNode, GraphPayload } from '../../types'
 import { useApp } from '../../state/AppState'
 import { EmptyState, ErrorNote, Loading } from '../Feedback'
 import { Icon } from '../Icon'
 import { GraphCanvas } from './GraphCanvas'
-import type { CanvasEdge, CanvasNode } from './GraphCanvas'
+import { communityGraph, communityId, GRAPH_PALETTE } from './communityGraph'
 import { confidenceLabel, kindLabel, relationColor, relationLabel } from './graphMeta'
+import { RelationshipSummary } from './RelationshipSummary'
 
-/** Palette shared with the notes graph so the two views feel like one product. */
-const PALETTE = [
-  '#44c2b1', '#e2a64f', '#e7798e', '#75a9ee', '#9c86dc',
-  '#83bd73', '#dc83c2', '#58b8d6', '#c9a227', '#7fa6a0',
-]
-
-/**
- * Above this node count the canvas becomes a hairball, so the view opens on the
- * communities instead of every symbol. This is graphify's aggregated-view idea:
- * degrade to a coarser picture rather than refuse to draw.
- */
-const AGGREGATE_THRESHOLD = 700
-
-/**
- * Kind filters offered in the legend.
- *
- * Rationale and external nodes are both numerous and non-structural. Showing them
- * by default is right - they are the point of the AST rewrite - but a reader who
- * wants the architecture picture needs one click to get it back.
- */
-const KIND_FILTERS: Array<{ kind: string; label: string; hint: string }> = [
-  { kind: 'rationale', label: '说明', hint: '隐藏/显示 docstring 与标记注释生成的说明节点' },
-  { kind: 'external', label: '外部依赖', hint: '隐藏/显示项目之外的依赖与基类' },
-]
-
-interface GraphViewProps {
-  /** Node to open with, when the user arrived by clicking a citation or a node. */
+interface Props {
+  scope?: 'code' | 'notes'
   initialNodeId?: string | null
+  focusNonce?: number
 }
 
-export function GraphView({ initialNodeId }: GraphViewProps): ReactNode {
-  const { project, reveal, askAboutNode } = useApp()
+export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Props): ReactNode {
+  const { project, reveal, openNoteView, askAboutNode, openGraph, refreshKey } = useApp()
   const projectId = project?.id ?? null
-
   const [payload, setPayload] = useState<GraphPayload | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
   const [rebuilding, setRebuilding] = useState(false)
-
   const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(initialNodeId ?? null)
-  const [hiddenCommunities, setHiddenCommunities] = useState<Set<number>>(() => new Set())
-  /** Node kinds the user filtered out (rationale / external). */
-  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(() => new Set())
-  const [detail, setDetail] = useState<GraphNodeDetail | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [aggregate, setAggregate] = useState<boolean | null>(null)
-
-  const load = useCallback(
-    (signal?: AbortSignal) => {
-      if (projectId === null) return
-      setLoading(true)
-      setError(null)
-      api
-        .getGraph(projectId, signal)
-        .then((data) => {
-          if (signal?.aborted) return
-          setPayload(data)
-        })
-        .catch((err: unknown) => {
-          if (signal?.aborted) return
-          setError(err instanceof Error ? err.message : String(err))
-        })
-        .finally(() => {
-          if (!signal?.aborted) setLoading(false)
-        })
-    },
-    [projectId],
-  )
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  const [hidden, setHidden] = useState<Set<number>>(new Set())
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set())
+  const [focus, setFocus] = useState<{ id: string; nonce: number } | null>(null)
+  const focusCounter = useRef(0)
+  const appliedFocus = useRef<string | null>(null)
+  const firstLoad = useRef(true)
+  const operation = useRef<AbortController | null>(null)
+  useEffect(() => () => operation.current?.abort(), [])
 
   useEffect(() => {
+    if (projectId === null) return
     const controller = new AbortController()
-    load(controller.signal)
-    return () => controller.abort()
-  }, [load])
-
-  // Opening on a specific node (from a citation) should also reveal it.
-  useEffect(() => {
-    if (initialNodeId) setSelectedId(initialNodeId)
-  }, [initialNodeId])
-
-  // Fetch the connection list for the selected node. Done server-side rather than
-  // filtered from the full edge list so one click does not walk every edge in the
-  // browser on a large graph.
-  useEffect(() => {
-    if (projectId === null || !selectedId) {
-      setDetail(null)
-      return
-    }
-    const controller = new AbortController()
-    setDetailLoading(true)
-    api
-      .getGraphNode(projectId, selectedId, 1, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setDetail(data)
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setDetail(null)
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setDetailLoading(false)
-      })
-    return () => controller.abort()
-  }, [projectId, selectedId])
-
-  const nodes = payload?.nodes ?? []
-  const edges = payload?.edges ?? []
-  const communities = payload?.communities ?? []
-
-  /** Whether to draw communities instead of symbols. */
-  const isAggregated = useMemo(() => {
-    if (aggregate !== null) return aggregate
-    return nodes.length > AGGREGATE_THRESHOLD
-  }, [aggregate, nodes.length])
-
-  /** Nodes hidden by the community legend or the kind filters. */
-  const visibleIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (isAggregated) {
-      // Aggregated nodes are keyed ``community:<id>``, *not* by symbol id. Building
-      // this set from symbol ids would filter every community node out and leave a
-      // blank canvas — the id spaces are different and must not be mixed.
-      for (const community of communities) {
-        if (!hiddenCommunities.has(community.id)) ids.add(`community:${community.id}`)
+    setLoading(true)
+    setError(null)
+    const request = scope === 'code' ? api.getGraph(projectId, controller.signal) : api.getNotesGraph(controller.signal)
+    void request.then(data => {
+      if (controller.signal.aborted) return
+      setPayload(data)
+      if (firstLoad.current) {
+        setExpanded(new Set(data.nodes.length <= 120 ? data.communities.map(c => c.id) : []))
+        firstLoad.current = false
       }
-      return ids
-    }
-    for (const node of nodes) {
-      if (hiddenCommunities.has(node.community)) continue
-      if (hiddenKinds.has(node.kind)) continue
-      ids.add(node.id)
-    }
-    return ids
-  }, [isAggregated, nodes, communities, hiddenCommunities, hiddenKinds])
-
-  /**
-   * Canvas input.
-   *
-   * In aggregated mode each community collapses into one node whose degree is its
-   * member count, so the user still sees which subsystem is biggest.
-   */
-  const canvasNodes = useMemo<CanvasNode[]>(() => {
-    if (!isAggregated) {
-      return nodes.map((node) => ({
-        id: node.id,
-        label: node.label,
-        degree: node.degree,
-        community: node.community,
-        communityLabel: node.community_label,
-        kind: node.kind,
-        start_line: node.start_line,
-        path: node.path,
-        // Carried through so the canvas can mark a rationale as a docstring or a
-        // comment in its tooltip, and style an external node as a reference.
-        origin: node.origin,
-        tooltip: node.external ? '外部依赖' : undefined,
-      }))
-    }
-    return communities.map((community) => ({
-      id: `community:${community.id}`,
-      label: `${community.label} (${community.size})`,
-      degree: community.size,
-      community: community.id,
-      kind: 'community',
-      start_line: 0,
-      path: '',
-    }))
-  }, [isAggregated, nodes, communities])
-
-  const canvasEdges = useMemo<CanvasEdge[]>(() => {
-    if (!isAggregated) {
-      return edges.map((edge) => ({
-        source: edge.source,
-        target: edge.target,
-        confidence: edge.confidence,
-        relation: edge.relation,
-      }))
-    }
-    // Collapse symbol edges into community edges, counting how many cross each
-    // boundary so the meta-graph shows real coupling strength.
-    const nodeCommunity = new Map(nodes.map((node) => [node.id, node.community]))
-    const counts = new Map<string, number>()
-    for (const edge of edges) {
-      const a = nodeCommunity.get(edge.source)
-      const b = nodeCommunity.get(edge.target)
-      if (a === undefined || b === undefined || a === b) continue
-      const key = a < b ? `${a}-${b}` : `${b}-${a}`
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-    return [...counts.entries()].map(([key, count]) => {
-      const [a, b] = key.split('-')
-      return {
-        source: `community:${a}`,
-        target: `community:${b}`,
-        confidence: 'EXTRACTED',
-        relation: `${count} 条跨社区关系`,
-      }
+    }).catch((err: unknown) => {
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err))
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false)
     })
-  }, [isAggregated, nodes, edges])
+    return () => controller.abort()
+  }, [projectId, scope, revision, refreshKey])
 
-  /** Search matches across label and path, so a file name finds its symbols. */
+  const byId = useMemo(() => new Map(payload?.nodes.map(node => [node.id, node]) ?? []), [payload])
+  const choose = useCallback((id: string, zoom = true) => {
+    const node = byId.get(id)
+    if (!node) return
+    setSelectedId(id)
+    setExpanded(current => new Set(current).add(node.community))
+    setHidden(current => { const next = new Set(current); next.delete(node.community); return next })
+    setHiddenKinds(current => { const next = new Set(current); next.delete(node.kind); return next })
+    if (zoom) setFocus({ id, nonce: ++focusCounter.current })
+    else setFocus(null)
+  }, [byId])
+
+  useEffect(() => {
+    if (!initialNodeId) { appliedFocus.current = null; return }
+    if (!payload) return
+    const requestKey = initialNodeId + ':' + focusNonce
+    if (appliedFocus.current === requestKey) return
+    if (byId.has(initialNodeId)) {
+      appliedFocus.current = requestKey
+      choose(initialNodeId)
+    }
+    else setError('要定位的节点已不存在，请重建图谱或重新选择对话中的代码引用。')
+  }, [initialNodeId, focusNonce, payload, byId, choose])
+
+  const selected = selectedId ? byId.get(selectedId) ?? null : null
+  const activeCommunity = payload?.communities.find(c => communityId(c.id) === selectedId) ?? null
+  const view = useMemo(() => payload ? communityGraph(payload, expanded, hidden, hiddenKinds)
+    : { nodes: [], edges: [] }, [payload, expanded, hidden, hiddenKinds])
+  const connections = useMemo(() => {
+    if (!selected || !payload) return []
+    return payload.edges.filter(edge => edge.source === selected.id || edge.target === selected.id).flatMap(edge => {
+      const other = byId.get(edge.source === selected.id ? edge.target : edge.source)
+      return other ? [{ edge, other, outgoing: edge.source === selected.id }] : []
+    })
+  }, [selected, payload, byId])
+  const neighborCount = new Set(connections.map(c => c.other.id)).size
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    if (!needle) return []
-    return nodes
-      .filter((node) => `${node.label} ${node.path}`.toLowerCase().includes(needle))
-      .slice(0, 12)
-  }, [nodes, query])
+    return needle ? (payload?.nodes ?? []).filter(node =>
+      [node.label, node.path, node.content_md ?? ''].join(' ').toLowerCase().includes(needle)).slice(0, 30) : []
+  }, [query, payload])
 
-  const selectedNode = useMemo(
-    () => nodes.find((node) => node.id === selectedId) ?? null,
-    [nodes, selectedId],
-  )
-
-  const selectedCommunity = selectedNode
-    ? communities.find((community) => community.id === selectedNode.community)
-    : null
-
-  const toggleCommunity = (id: number) => {
-    setHiddenCommunities((current) => {
+  const toggleCluster = (id: number) => {
+    setExpanded(current => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+    setHidden(current => { const next = new Set(current); next.delete(id); return next })
+    setSelectedId(communityId(id))
+    setFocus(null)
   }
-
-  const toggleKind = (kind: string) => {
-    setHiddenKinds((current) => {
-      const next = new Set(current)
-      if (next.has(kind)) next.delete(kind)
-      else next.add(kind)
-      return next
-    })
+  const openNode = async (node: GraphNode) => {
+    if (node.note_id !== undefined) {
+      operation.current?.abort()
+      const controller = new AbortController()
+      operation.current = controller
+      try {
+        const note = await api.getNote(node.note_id, controller.signal)
+        if (!controller.signal.aborted) openNoteView(note)
+      } catch (err) {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err))
+      }
+    } else if (node.path) reveal(node.path, node.start_line, node.end_line)
   }
-
   const rebuild = async () => {
     if (projectId === null) return
     setRebuilding(true)
     setError(null)
     try {
-      await api.rebuildGraph(projectId)
-      load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRebuilding(false)
-    }
+      if (scope === 'code') await api.rebuildGraph(projectId)
+      setRevision(v => v + 1)
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    finally { setRebuilding(false) }
   }
 
-  /** Ask the agent about this node, with the node's neighbourhood as context. */
-  const ask = (node: GraphNode) => {
-    askAboutNode({
-      label: node.label,
-      node_id: node.id,
-      path: node.path,
-      start_line: node.start_line,
-      community_label: node.community_label,
-    })
-  }
+  if (projectId === null) return <EmptyState icon="folder" title="还没有打开项目" hint="选择项目后查看图谱。" />
+  if (loading && !payload) return <Loading text="正在加载图谱…" />
+  if (error && !payload) return <ErrorNote message={error} onRetry={() => setRevision(v => v + 1)} />
 
-  if (projectId === null) {
-    return <EmptyState icon="folder" title="还没有打开项目" hint="先选择一个项目，再查看它的知识图谱。" />
-  }
-
-  if (loading && !payload) return <Loading text="正在加载知识图谱…" />
-  if (error && !payload) return <ErrorNote message={error} onRetry={() => load()} />
-
-  const stats = payload?.stats
-  const empty = nodes.length === 0
-
-  return (
-    <div className="graph-view">
-      <header className="graph-view-head">
-        <div className="graph-view-title">
-          <Icon name="network" size={14} />
-          <strong>知识图谱</strong>
-          {stats ? (
-            <span className="graph-view-stats">
-              {stats.files} 文件 · {stats.symbols} 符号 · {stats.edges} 关系 · {stats.communities} 社区
-              {stats.rationale ? ` · ${stats.rationale} 条说明` : ''}
-              {stats.rebuilt ? ' · 已重建' : ''}
-            </span>
-          ) : null}
-        </div>
-        <div className="graph-view-actions">
-          {nodes.length > AGGREGATE_THRESHOLD ? (
-            <button
-              type="button"
-              className="small ghost"
-              onClick={() => setAggregate((current) => !(current ?? isAggregated))}
-              title={isAggregated ? '展开到单个符号' : '折叠到社区视图'}
-            >
-              <Icon name={isAggregated ? 'maximize' : 'minimize'} size={12} />
-              {isAggregated ? '展开符号' : '社区视图'}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="small ghost"
-            onClick={() => void rebuild()}
-            disabled={rebuilding}
-            title="按当前索引重新生成图谱"
-          >
-            <Icon name="refresh" size={12} />
-            {rebuilding ? '重建中…' : '重建'}
-          </button>
-        </div>
-      </header>
-
-      {error ? <ErrorNote message={error} /> : null}
-
-      {/* Canvas takes the whole width and height above the dock. Nothing is placed
-          beside it: a graph is a spatial object, and every pixel of width it keeps
-          makes a dense one easier to read than the same pixels given to a side
-          column. Search and node detail live in the dock below. */}
-      <div className="graph-view-stage">
-        {empty ? (
-          <EmptyState
-            icon="network"
-            title="这个项目还没有图谱"
-            hint="先建立索引，再点右上角「重建」生成知识图谱。"
-          />
-        ) : (
-          <GraphCanvas
-            nodes={canvasNodes}
-            edges={canvasEdges}
-            colors={PALETTE}
-            selectedId={selectedId}
-            visibleIds={visibleIds}
-            onSelect={(id) => setSelectedId(id)}
-            onActivate={(id) => {
-              // Double click: in aggregated mode focus that community; in node
-              // mode jump to the code the symbol lives in.
-              if (id.startsWith('community:')) {
-                const cid = Number(id.split(':')[1])
-                setAggregate(false)
-                const hub = communities.find((community) => community.id === cid)?.hub
-                if (hub) setSelectedId(hub)
-                return
-              }
-              const node = nodes.find((item) => item.id === id)
-              if (node && node.path) reveal(node.path, node.start_line, node.end_line)
-            }}
-          />
-        )}
+  return <div className="graph-view" data-graph-scope={scope}>
+    <header className="graph-view-head">
+      <nav className="graph-scope-switch" aria-label="切换图谱">
+        <button aria-pressed={scope === 'code'} onClick={() => openGraph(null, 'code')}>代码图谱</button>
+        <button aria-pressed={scope === 'notes'} onClick={() => openGraph(null, 'notes')}>笔记图谱</button>
+      </nav>
+      <span className="graph-view-stats">{payload?.nodes.length ?? 0} 节点 · {payload?.edges.length ?? 0} 关系 · {payload?.communities.length ?? 0} 社区</span>
+      <div className="graph-view-actions">
+        <button className="small ghost" onClick={() => { setExpanded(new Set()); setSelectedId(null); setFocus(null) }}>全部收起</button>
+        <button className="small ghost" onClick={() => { setExpanded(new Set(payload?.communities.map(c => c.id))); setFocus(null) }}>全部展开</button>
+        <button className="small ghost" disabled={rebuilding || loading} onClick={() => void rebuild()}>
+          <Icon name="refresh" size={12} />{rebuilding ? '处理中…' : scope === 'code' ? '重建' : '刷新'}
+        </button>
       </div>
-
-      {/* The dock: search + selected node's connections + community legend, all in
-          one horizontal band. Kept as a fixed-height strip so the canvas above does
-          not jump when the selection changes. */}
-      <footer className="graph-dock">
-        <div className="graph-dock-search">
-          <div className="graph-search-field">
-            <Icon name="search" size={12} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="按名称、文件或目录搜索"
-              aria-label="搜索图谱节点"
-            />
-            {query ? (
-              <button type="button" className="icon" onClick={() => setQuery('')} title="清除搜索">
-                <Icon name="x" size={11} />
-              </button>
-            ) : null}
-          </div>
-          {matches.length > 0 ? (
-            <div className="graph-match-list">
-              {matches.map((node) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  className="graph-match"
-                  onClick={() => setSelectedId(node.id)}
-                  title={`${node.path}:${node.start_line}`}
-                >
-                  <span className="graph-match-dot" style={{ background: PALETTE[node.community % PALETTE.length] }} />
-                  <span className="graph-match-label">{node.label}</span>
-                  <small>{node.kind === 'file' ? '文件' : '符号'}</small>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="graph-dock-hint">
-              拖动平移 · 滚轮缩放 · 点节点看关系 · 双击打开代码
-            </div>
-          )}
-        </div>
-
-        <div className="graph-dock-detail">
-          {detailLoading ? (
-            <div className="graph-dock-empty">读取关系…</div>
-          ) : selectedNode ? (
-            <>
-              <div className="graph-dock-detail-head">
-                <strong title={selectedNode.id}>{selectedNode.label}</strong>
-                <span className="graph-dock-meta">
-                  {kindLabel(selectedNode.kind)} · {selectedNode.path}:{selectedNode.start_line}
-                </span>
-                {selectedCommunity ? (
-                  <span
-                    className="graph-dock-community"
-                    style={{ color: PALETTE[selectedCommunity.id % PALETTE.length] }}
-                  >
-                    {selectedCommunity.label}
-                  </span>
-                ) : null}
-                <span className="spacer" />
-                <button type="button" className="small primary" onClick={() => ask(selectedNode)} title="就这个节点向 AI 提问">
-                  <Icon name="sparkles" size={11} />
-                  提问
-                </button>
-                {selectedNode.path ? (
-                  <button
-                    type="button"
-                    className="small ghost"
-                    onClick={() => reveal(selectedNode.path, selectedNode.start_line, selectedNode.end_line)}
-                  >
-                    <Icon name="code" size={11} />
-                    打开代码
-                  </button>
-                ) : null}
-              </div>
-              {/* Relations run horizontally: a function usually has a handful of
-                  callers, and a row of chips scans faster than a stacked list.
-                  Each chip carries its relation's colour so a "why" edge is
-                  distinguishable from a call at a glance. */}
-              {detail && detail.edges.length > 0 ? (
-                <div className="graph-relations-row">
-                  {detail.edges.map((edge, index) => (
-                    <button
-                      key={`${edge.id}-${edge.relation}-${index}`}
-                      type="button"
-                      className="graph-relation-chip"
-                      onClick={() => setSelectedId(edge.id)}
-                      style={{ borderLeftColor: relationColor(edge.relation) }}
-                      title={`${edge.path}:${edge.start_line} · ${relationLabel(edge.relation)}`}
-                    >
-                      <span className={`graph-relation-arrow ${edge.direction}`}>
-                        {edge.direction === 'out' ? '→' : '←'}
-                      </span>
-                      <span className="graph-relation-rel">{relationLabel(edge.relation)}</span>
-                      <span className="graph-relation-label">{edge.label}</span>
-                      <span className={`graph-tag ${edge.confidence.toLowerCase()}`}>
-                        {confidenceLabel(edge.confidence)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="graph-dock-empty">这个节点没有已建立的关系。</div>
-              )}
-            </>
-          ) : (
-            <div className="graph-dock-empty">点击画布上的节点查看它的关系。</div>
-          )}
-        </div>
-
-        {communities.length > 0 ? (
-          <div className="graph-dock-legend">
-            {/* Kind filters come first: rationale and external nodes are numerous
-                and, while useful, they are not the code's structure. One click to
-                hide them turns a busy canvas back into an architecture picture. */}
-            <div className="graph-kind-filters">
-              {KIND_FILTERS.map((filter) => (
-                <button
-                  key={filter.kind}
-                  type="button"
-                  className={`graph-kind-chip${hiddenKinds.has(filter.kind) ? ' off' : ''}`}
-                  onClick={() => toggleKind(filter.kind)}
-                  title={filter.hint}
-                  aria-pressed={!hiddenKinds.has(filter.kind)}
-                >
-                  <span className={`graph-kind-swatch ${filter.kind}`} />
-                  {filter.label}
-                </button>
-              ))}
-            </div>
-            <div className="graph-legend-items">
-              {communities.map((community) => {
-                const hidden = hiddenCommunities.has(community.id)
-                return (
-                  <button
-                    key={community.id}
-                    type="button"
-                    className={`graph-legend-chip${hidden ? ' off' : ''}`}
-                    onClick={() => toggleCommunity(community.id)}
-                    title={`${community.label} · ${community.size} 个节点（点击${hidden ? '显示' : '隐藏'}）`}
-                    aria-pressed={!hidden}
-                  >
-                    <span
-                      className="graph-legend-dot"
-                      style={{ background: PALETTE[community.id % PALETTE.length] }}
-                    />
-                    <span className="graph-legend-label">{community.label}</span>
-                    <span className="graph-legend-count">{community.size}</span>
-                  </button>
-                )
-              })}
-            </div>
-            <button
-              type="button"
-              className="graph-legend-all"
-              onClick={() =>
-                setHiddenCommunities(
-                  hiddenCommunities.size === 0 ? new Set(communities.map((c) => c.id)) : new Set(),
-                )
-              }
-              title={hiddenCommunities.size === 0 ? '隐藏全部社区' : '显示全部社区'}
-            >
-              {hiddenCommunities.size === 0 ? '全隐藏' : '全显示'}
-            </button>
-          </div>
-        ) : null}
-      </footer>
+    </header>
+    {error && <ErrorNote message={error} onRetry={() => setRevision(v => v + 1)} />}
+    <div className="graph-view-stage">
+      {!payload?.nodes.length
+        ? <EmptyState icon="network" title={scope === 'code' ? '项目还没有代码图谱' : '还没有笔记'}
+          hint={scope === 'code' ? '建立项目索引后，点击重建。' : '保存阅读笔记后即可在这里查看关联。'} />
+        : <GraphCanvas nodes={view.nodes} edges={view.edges} colors={GRAPH_PALETTE}
+          selectedId={selectedId} focus={focus}
+          onSelect={id => {
+            if (id?.startsWith('community:')) toggleCluster(Number(id.slice(10)))
+            else if (id) choose(id, false)
+            else { setSelectedId(null); setFocus(null) }
+          }}
+          onActivate={id => { const node = byId.get(id); if (node) void openNode(node) }} />}
     </div>
-  )
+    <footer className="graph-dock">
+      <section className="graph-dock-search" aria-label="图谱索引">
+        <div className="graph-search-field">
+          <Icon name="search" size={12} />
+          <input value={query} onChange={event => setQuery(event.target.value)}
+            placeholder={scope === 'code' ? '搜索名称 / 文件' : '搜索笔记 / 内容'} aria-label="搜索图谱节点" />
+          {query && <button className="icon" onClick={() => setQuery('')} title="清除搜索"><Icon name="x" size={11} /></button>}
+        </div>
+        {query.trim() ? <div className="graph-match-list">
+          {!matches.length && <div className="graph-dock-empty">没有匹配的节点。</div>}
+          {matches.map(node => <button className="graph-match" key={node.id} onClick={() => choose(node.id)}
+            title={node.path} aria-pressed={selectedId === node.id}>
+            <span className="graph-match-dot" style={{ background: GRAPH_PALETTE[node.community % GRAPH_PALETTE.length] }} />
+            <span className="graph-match-label">{node.label}</span><small>{kindLabel(node.kind)}</small>
+          </button>)}
+        </div> : <div className="graph-dock-hint">选择社区查看成员；选择节点查看关系。搜索结果会自动展开并定位。</div>}
+        <div className="graph-index-title">社区目录 <small>展开 / 收起 · 显示 / 隐藏</small></div>
+        {scope === 'code' && <div className="graph-kind-filters">
+          {['rationale', 'external'].map(kind => <button className={'graph-kind-chip' + (hiddenKinds.has(kind) ? ' off' : '')}
+            key={kind} aria-pressed={!hiddenKinds.has(kind)} onClick={() => {
+              setHiddenKinds(current => { const next = new Set(current); if (next.has(kind)) next.delete(kind); else next.add(kind); return next })
+              if (selected?.kind === kind) { setSelectedId(null); setFocus(null) }
+            }}>{kindLabel(kind)}</button>)}
+        </div>}
+        <div className="graph-community-directory">
+          {payload?.communities.map(c => <div className="graph-community-row" key={c.id}>
+            <button className="graph-community-toggle" aria-expanded={expanded.has(c.id)} onClick={() => toggleCluster(c.id)}
+              title={(expanded.has(c.id) ? '收起 ' : '展开 ') + c.label}>
+              <span style={{ color: GRAPH_PALETTE[c.id % GRAPH_PALETTE.length] }}>{expanded.has(c.id) ? '▾' : '▸'}</span>
+              <span className="graph-match-label">{c.label}</span><small>{c.size}</small>
+            </button>
+            <input type="checkbox" checked={!hidden.has(c.id)} aria-label={'显示社区 ' + c.label} onChange={() => {
+              setHidden(current => { const next = new Set(current); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next })
+              if (selected?.community === c.id || activeCommunity?.id === c.id) { setSelectedId(null); setFocus(null) }
+            }} />
+          </div>)}
+        </div>
+      </section>
+      <section className="graph-dock-detail" aria-label="节点信息">
+        {selected ? <>
+          <div className="graph-dock-detail-head">
+            <strong title={selected.label}>{selected.label}</strong>
+            <span className="graph-dock-community">{selected.community_label}</span>
+            <span className="spacer" />
+            <button className="small ghost" onClick={() => askAboutNode({
+              label: selected.label, node_id: selected.id, path: selected.path,
+              start_line: selected.start_line, community_label: selected.community_label,
+            })}><Icon name="message" size={12} />继续提问</button>
+            {selected.path && !selected.external && <button className="small ghost" onClick={() => void openNode(selected)}>
+              {scope === 'code' ? '打开代码' : '打开笔记'}
+            </button>}
+          </div>
+          <div className="graph-dock-meta">{kindLabel(selected.kind)} · {scope === 'code'
+            ? selected.path + ':' + selected.start_line : selected.project_name} · {neighborCount} 个直接邻点 · {connections.length} 条关系</div>
+          {selected.content_md && <p className="graph-note-body">{selected.content_md.slice(0, 250)}</p>}
+          <div className="graph-relations-row">
+            {connections.length ? connections.map(({ edge, other, outgoing }, index) =>
+              <button className="graph-relation-chip" key={index} onClick={() => choose(other.id)}
+                title={[other.path, ...(edge.evidence ?? [])].join(' · ')} style={{ borderLeftColor: relationColor(edge.relation) }}>
+                <span>{scope === 'notes' ? '↔' : outgoing ? '→' : '←'}</span>
+                <span className="graph-relation-rel">{relationLabel(edge.relation)}</span>
+                <span className="graph-relation-label">{other.label}</span>
+                {scope === 'code' && <span className={'graph-tag ' + edge.confidence.toLowerCase()}>{confidenceLabel(edge.confidence)}</span>}
+              </button>) : <span className="graph-dock-empty">此节点没有直接关联。</span>}
+          </div>
+          <RelationshipSummary key={scope + ':' + selected.id + ':' + revision + ':' + refreshKey}
+            scope={scope} projectId={projectId} nodeId={selected.id} neighborCount={neighborCount} />
+        </> : activeCommunity ? <>
+          <div className="graph-dock-detail-head"><strong>{activeCommunity.label}</strong>
+            <span className="graph-dock-meta">{activeCommunity.size} 个成员</span>
+            <button className="small ghost" onClick={() => toggleCluster(activeCommunity.id)}>
+              {expanded.has(activeCommunity.id) ? '收起社区' : '展开社区'}</button>
+          </div>
+          <div className="graph-dock-hint">选择成员后，可查看基础信息并使用 AI 总结它与全部直接邻点的关系。</div>
+          <div className="graph-community-members">
+            {payload?.nodes.filter(n => n.community === activeCommunity.id).map(node =>
+              <button className="graph-match" key={node.id} onClick={() => choose(node.id)}>
+                <span className="graph-match-label">{node.label}</span><small>{kindLabel(node.kind)}</small>
+              </button>)}
+          </div>
+        </> : <div className="graph-dock-empty graph-selection-placeholder">
+          <Icon name="network" size={24} /><strong>从一个节点开始探索</strong>
+          <span>点选节点查看信息，再点「AI 总结关系」。普通节点的信息只在悬浮和这里显示。</span>
+        </div>}
+      </section>
+    </footer>
+  </div>
 }

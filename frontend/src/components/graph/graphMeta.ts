@@ -10,6 +10,10 @@ import type { GraphConfidence, GraphNodeKind, GraphRelation } from '../../types'
 
 /** Chinese label for each relation kind. */
 export const RELATION_LABEL: Record<string, string> = {
+  same_folder: '同一笔记目录',
+  same_project: '同项目未分类',
+  shared_reference: '共同引用文件',
+  community_member: '社区成员（布局索引）',
   contains: '包含',
   imports: '导入模块',
   imports_from: '导入符号',
@@ -26,6 +30,8 @@ export const RELATION_LABEL: Record<string, string> = {
 
 /** Short label for a node kind. */
 export const KIND_LABEL: Record<string, string> = {
+  community: '社区',
+  note: '笔记',
   file: '文件',
   class: '类',
   function: '函数',

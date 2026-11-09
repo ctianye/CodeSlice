@@ -14,13 +14,78 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import ProjectDep, TokenDep
-from app.graph import query, service, store
+from app.core.errors import NotFound
+from app.graph import notes, query, relationships, service, store
 from app.services import paths
+from app.storage import repo
 
 router = APIRouter(tags=["graph"])
+
+
+class SummaryRequest(BaseModel):
+    node_id: str = Field(min_length=1, max_length=2048)
+
+
+@router.get("/graphs/notes")
+def get_notes_graph(_: TokenDep) -> dict[str, Any]:
+    return notes.build()
+
+
+@router.post("/graphs/notes/summary")
+def summarize_note(body: SummaryRequest, _: TokenDep) -> dict[str, Any]:
+    return relationships.summarize(notes.build(), body.node_id, "notes")
+
+
+@router.post("/projects/{project_id}/graph/summary")
+def summarize_code(project: ProjectDep, body: SummaryRequest, _: TokenDep) -> dict[str, Any]:
+    graph = service.load(project["id"], paths.resolve_root(project["path"]))
+    return relationships.summarize(graph, body.node_id, "code")
+
+
+@router.get("/conversations/{conversation_id}/graph-targets")
+def conversation_graph_targets(conversation_id: str, _: TokenDep) -> dict[str, Any]:
+    conversation = repo.get_conversation(conversation_id)
+    if conversation is None:
+        raise NotFound("conversation not found")
+    project = repo.get_project(conversation["project_id"])
+    if project is None:
+        raise NotFound("project not found")
+    graph = service.load(project["id"], paths.resolve_root(project["path"]))
+    nodes = graph.get("nodes", [])
+    by_id = {node["id"]: node for node in nodes}
+    targets: dict[str, dict] = {}
+    messages = list(reversed(repo.list_messages(conversation_id)))
+    for message in messages:
+        anchor = (message.get("meta") or {}).get("graph_anchor")
+        if anchor in by_id:
+            targets.setdefault(anchor, by_id[anchor])
+
+    locations = [conversation] if conversation.get("file_path") else []
+    locations += [citation for message in messages for citation in (message.get("citations") or [])]
+    for location in locations:
+        path = str(location.get("file_path") or location.get("path") or "").replace("\\", "/").removeprefix("./")
+        line = int(location.get("start_line") or 1)
+        candidates = [
+            node for node in nodes if node.get("path") == path and node.get("kind") not in {"external", "rationale"}
+        ]
+        enclosing = [node for node in candidates if node.get("start_line", 1) <= line <= node.get("end_line", 1)]
+        enclosing.sort(
+            key=lambda node: (
+                node.get("kind") == "file",
+                node.get("end_line", 1) - node.get("start_line", 1),
+                node["id"],
+            )
+        )
+        target = next(iter(enclosing), None) or next(
+            (node for node in candidates if node.get("kind") == "file"),
+            None,
+        )
+        if target:
+            targets.setdefault(target["id"], target)
+    return {"project_id": project["id"], "targets": list(targets.values())}
 
 
 class GraphBuildResult(BaseModel):

@@ -146,7 +146,7 @@ export function EditorTabs({ onToggleTerminal, terminalOpen }: EditorTabsProps):
                             ? tab.note.title
                             : tab.scope === 'notes'
                               ? '笔记图谱'
-                              : '知识图谱'
+                              : '代码图谱'
                       void navigator.clipboard?.writeText(value)
                       setMenuIndex(null)
                     }}
@@ -185,7 +185,7 @@ function keyOf(tab: EditorTab): string {
 function titleOf(tab: EditorTab): string {
   if (tab.kind === 'file') return baseName(tab.path)
   if (tab.kind === 'note') return tab.note.title
-  return tab.scope === 'notes' ? '笔记图谱' : '知识图谱'
+  return tab.scope === 'notes' ? '笔记图谱' : '代码图谱'
 }
 
 /** Full path or note origin, shown on hover. */

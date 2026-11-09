@@ -330,6 +330,8 @@ data: {"type": "error", "detail": "已拒绝执行：该命令命中内置的危
 `editable` 就是表单 schema，前端按它渲染字段，后端加一个开关不需要改前端。
 `stats` 是**进程内**的上一轮数字，不持久化。
 
+知识图谱的独立代码 / 笔记接口、关系总结及对话定位接口见 [图谱交互与验证](GRAPH_EXPLORER.md#api)。
+
 ### PUT /api/agent/graph/nodes/{node_id}
 body `{"config": {<部分字段>}}` → 单节点（形状同上）。只提交想改的键，其余保持已存值。
 - 未知节点 → 404 `{"detail": "unknown node: xxx"}`

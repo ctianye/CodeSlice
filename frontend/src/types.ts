@@ -394,6 +394,9 @@ export interface GraphNode {
   external?: boolean
   /** Set on `rationale` nodes: whether it came from a docstring or a comment. */
   origin?: string
+  note_id?: number
+  content_md?: string
+  project_name?: string
 }
 
 /**
@@ -404,6 +407,9 @@ export interface GraphNode {
  * (a class owns a function) is not the same as `contains` (lexical nesting).
  */
 export type GraphRelation =
+  | 'same_folder'
+  | 'same_project'
+  | 'shared_reference'
   | 'contains'
   | 'imports'
   | 'imports_from'
@@ -432,6 +438,15 @@ export interface GraphEdge {
   relation: GraphRelation
   confidence: GraphConfidence
   line?: number | null
+  evidence?: string[]
+}
+
+export interface GraphSummary {
+  node_id: string
+  scope: 'code' | 'notes'
+  summary: string
+  neighbor_count: number
+  edge_count: number
 }
 
 export interface GraphCommunity {

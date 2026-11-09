@@ -65,6 +65,10 @@ def context_for_node(
     token_budget: int = 1200,
 ) -> str:
     """Neighbourhood of one node, for the chat panel's selected-node prompt."""
+    if anchor.startswith("note://"):
+        from app.graph import notes, relationships
+
+        return relationships.context(notes.build(), anchor)
     graph = load(project_id, root)
     return query.node_context(graph, anchor, depth=depth, token_budget=token_budget)
 

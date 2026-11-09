@@ -16,6 +16,8 @@ import type {
   GitStatus,
   GraphNodeDetail,
   GraphPayload,
+  GraphSummary,
+  GraphNode,
   Health,
   IndexStatus,
   Job,
@@ -222,6 +224,20 @@ export const searchProject = (
  */
 export const getGraph = (projectId: number, signal?: AbortSignal): Promise<GraphPayload> =>
   request<GraphPayload>(`/api/projects/${projectId}/graph`, { signal })
+
+export const getNotesGraph = (signal?: AbortSignal): Promise<GraphPayload> =>
+  request<GraphPayload>('/api/graphs/notes', { signal })
+
+export const summarizeGraph = (
+  scope: 'code' | 'notes', projectId: number, nodeId: string, signal?: AbortSignal,
+): Promise<GraphSummary> => request<GraphSummary>(
+  scope === 'code' ? `/api/projects/${projectId}/graph/summary` : '/api/graphs/notes/summary',
+  { method: 'POST', body: { node_id: nodeId }, signal },
+)
+
+export const getConversationGraphTargets = (id: string, signal?: AbortSignal):
+  Promise<{ project_id: number; targets: GraphNode[] }> =>
+  request(`/api/conversations/${encodeURIComponent(id)}/graph-targets`, { signal })
 
 /** Force a rebuild, for when the user changed ignore rules or wants a fresh view. */
 export const rebuildGraph = (

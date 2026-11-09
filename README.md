@@ -46,16 +46,18 @@ you back to the original source.
 
 ![Browse saved CodeSlice knowledge-base notes](docs/screenshots/knowledge-base.png)
 
-### Explore saved knowledge in 3D
+### Explore code and notes in separate graphs
 
-Open the knowledge graph to explore saved notes as a rotatable 3D network.
-Category colors, search, filters, and a note details panel make a large library
-easy to browse. Links show shared folders or code-file references, not inferred
-semantic facts; select a node to read or open its note.
+Switch between independent code and note graphs with the same static canvas.
+Expand individual communities, search and focus a node, or hover to inspect it;
+only community centers carry labels. The bottom panel can summarize the selected
+node and every direct neighbor using your configured model. Conversations can
+jump to their related code nodes. Note links record shared folders, projects or
+file references; they do not assert semantic similarity.
 
 ![Explore related saved notes in the CodeSlice knowledge graph](docs/screenshots/knowledge-graph.png)
 
-知识库可切换到 3D 图谱，按分类着色并支持旋转、搜索和筛选；节点关系来自共同文件夹或代码文件引用，点击后可查看并打开笔记。
+代码图谱与笔记图谱独立切换，共用静态画布和底部白色面板。支持社区逐簇收起 / 展开、搜索定位、悬浮详情、AI 总结全部直接邻点，以及从对话定位到对应代码节点。详见 [图谱交互与验证](docs/GRAPH_EXPLORER.md)。
 
 ## Getting started
 
@@ -80,8 +82,8 @@ handling policies apply. API keys are saved in Windows Credential Manager.
 - Requires per-action approval before writing a file or running a command.
 - Turns conversations into indexed, searchable notes that can be reused across
   projects.
-- Visualizes saved notes in a rotatable, searchable 3D knowledge graph with
-  category filters and note details.
+- Visualizes code and notes in separate static graphs with expandable communities,
+  focused relationship summaries, and conversation-to-code navigation.
 - Saves conversations, indexes, and application data locally.
 
 Application updates install over the existing app. Notes, annotations,

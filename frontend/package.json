@@ -8,7 +8,8 @@
     "dev": "vite",
     "prebuild": "node scripts/copy-monaco.mjs",
     "build": "node scripts/copy-monaco.mjs && tsc -b && vite build",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test:graph": "node --test tests/graph.test.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
