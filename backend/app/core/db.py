@@ -181,12 +181,88 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at  TEXT NOT NULL
 );
 
+-- Derived knowledge graphs, persisted so a click never re-walks the source tree.
+-- project_id 0 is the global notes graph (see GRAPH_SCOPE_NOTES); every other
+-- value is a projects.id. No foreign key on purpose: 0 is not a project.
+CREATE TABLE IF NOT EXISTS graphs (
+    project_id     INTEGER NOT NULL DEFAULT 0,
+    scope          TEXT    NOT NULL,
+    payload        TEXT    NOT NULL,
+    built_hash     TEXT,
+    schema_version INTEGER NOT NULL,
+    node_count     INTEGER NOT NULL DEFAULT 0,
+    edge_count     INTEGER NOT NULL DEFAULT 0,
+    built_at       TEXT    NOT NULL,
+    PRIMARY KEY (project_id, scope)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 """
+
+# Scope keys for the ``graphs`` table, shared by the store, the notes builder and
+# the storage layer so the invalidation rules cannot drift apart.
+GRAPH_SCOPE_CODE = "code"
+"""The AST knowledge graph of one project (``graphs.project_id`` = projects.id)."""
+
+GRAPH_SCOPE_NOTES = "notes"
+"""The global knowledge-base graph, stored once under ``NOTES_GRAPH_PROJECT_ID``."""
+
+NOTES_GRAPH_PROJECT_ID = 0
+"""``graphs.project_id`` used for the cross-project notes graph."""
+
+
+def drop_graph_cache(conn: sqlite3.Connection, project_id: int, scope: str) -> None:
+    """Delete one persisted graph row on a caller-supplied connection.
+
+    Lives here rather than in ``app.graph.store`` so that ``app.storage.repo`` can
+    invalidate a graph inside the transaction that mutates its source data,
+    without importing ``app.graph`` (which would be a cycle). SQL only — no
+    behaviour to duplicate.
+    """
+    conn.execute("DELETE FROM graphs WHERE project_id = ? AND scope = ?", (project_id, scope))
+    bump_graph_epoch(conn, project_id)
+
+
+def _epoch_key(project_id: int) -> str:
+    return f"graph_epoch:{project_id}"
+
+
+def bump_graph_epoch(conn: sqlite3.Connection, project_id: int) -> None:
+    """Record that "something invalidated this project's graph" happened.
+
+    A rebuild reads the source tree for seconds. If an index run finishes in the
+    middle, the freshly computed graph may describe files that no longer exist,
+    and persisting it would label stale data as fresh — the one failure this
+    design is supposed to make impossible. ``store.build_and_store`` therefore
+    snapshots this counter before reading and only writes if it did not move.
+    Cheap: one upsert on the settings table, inside the caller's transaction.
+    """
+    conn.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, '1', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT), "
+        "updated_at = excluded.updated_at",
+        (_epoch_key(project_id), utcnow()),
+    )
+
+
+def graph_epoch(project_id: int) -> int:
+    """Current epoch for a project's graph; see :func:`bump_graph_epoch`."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (_epoch_key(project_id),)).fetchone()
+    try:
+        return int(row["value"]) if row is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def drop_notes_graph_cache(conn: sqlite3.Connection) -> None:
+    """Invalidate the global knowledge-base graph (see ``app.graph.notes``)."""
+    drop_graph_cache(conn, NOTES_GRAPH_PROJECT_ID, GRAPH_SCOPE_NOTES)
+
 
 def utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

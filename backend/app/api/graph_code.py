@@ -2,11 +2,13 @@
 
 The graph endpoint returns the whole payload because the UI needs it to draw. A
 project with a few thousand symbols is a megabyte or two of JSON, which is fine
-over localhost and far simpler than paginating a structure the layout algorithm
-needs end to end.
+over localhost (and GZip'd by ``main.py``) and far simpler than paginating a
+structure the layout algorithm needs end to end. It is read from the persisted
+copy in SQLite, so a click is one primary-key lookup.
 
 Only the node-detail endpoint is intentionally small: clicking a node must not
-re-send the graph.
+re-send the graph, and it must not trigger a rebuild either — it serves whatever
+is persisted and only builds when nothing is.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from app.api.deps import ProjectDep, TokenDep
+from app.core.db import GRAPH_SCOPE_CODE
 from app.core.errors import NotFound
 from app.graph import notes, query, relationships, service, store
 from app.services import paths
@@ -39,9 +42,24 @@ def summarize_note(body: SummaryRequest, _: TokenDep) -> dict[str, Any]:
     return relationships.summarize(notes.build(), body.node_id, "notes")
 
 
+def _cached_or_build(project: dict, root) -> dict[str, Any]:
+    """Persisted graph for read-only callers, building only when absent.
+
+    Node detail, summary and conversation targets already know which project
+    they want; the user has not asked for a refresh, so a stale-by-edges graph is
+    still preferable to stalling a click. ``store.ensure_fresh`` is the endpoint
+    that actually opens the graph view and therefore does validate.
+    """
+    cached = store.load_cached(project["id"], GRAPH_SCOPE_CODE)
+    if cached is not None:
+        return cached
+    graph, _rebuilt = store.ensure_fresh(project["id"], root)
+    return graph
+
+
 @router.post("/projects/{project_id}/graph/summary")
 def summarize_code(project: ProjectDep, body: SummaryRequest, _: TokenDep) -> dict[str, Any]:
-    graph = service.load(project["id"], paths.resolve_root(project["path"]))
+    graph = _cached_or_build(project, paths.resolve_root(project["path"]))
     return relationships.summarize(graph, body.node_id, "code")
 
 
@@ -53,7 +71,7 @@ def conversation_graph_targets(conversation_id: str, _: TokenDep) -> dict[str, A
     project = repo.get_project(conversation["project_id"])
     if project is None:
         raise NotFound("project not found")
-    graph = service.load(project["id"], paths.resolve_root(project["path"]))
+    graph = _cached_or_build(project, paths.resolve_root(project["path"]))
     nodes = graph.get("nodes", [])
     by_id = {node["id"]: node for node in nodes}
     targets: dict[str, dict] = {}
@@ -98,10 +116,11 @@ class GraphBuildResult(BaseModel):
 
 @router.get("/projects/{project_id}/graph")
 def get_graph(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
-    """The project's knowledge graph, rebuilt first when the index moved on.
+    """The project's knowledge graph, served from the persisted copy.
 
-    Rebuilding on read rather than on a schedule means the graph is never stale,
-    which matters because the agent cites its edges as fact.
+    This is the one endpoint that validates freshness, because it is the "open
+    the graph" action: if the corpus changed since the last build, the rebuild
+    happens here and ``stats.rebuilt`` says so. Everything else reads the cache.
     """
     root = paths.resolve_root(project["path"])
     graph, rebuilt = store.ensure_fresh(project["id"], root)
@@ -137,10 +156,11 @@ def get_node_detail(
     """One node plus its immediate connections.
 
     Depth stays at 1 by default: the UI shows a focused neighbourhood on click,
-    and a depth-2 walk on a hub node can return most of the graph.
+    and a depth-2 walk on a hub node can return most of the graph. The graph comes
+    from the persisted copy — clicking a node never re-walks the source tree.
     """
     root = paths.resolve_root(project["path"])
-    graph = store.ensure_fresh(project["id"], root)[0]
+    graph = _cached_or_build(project, root)
     nodes = graph.get("nodes") or []
     edges = graph.get("edges") or []
     nodes_by_id = {node["id"]: node for node in nodes}

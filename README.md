@@ -50,14 +50,14 @@ you back to the original source.
 
 Switch between independent code and note graphs with the same static canvas.
 Expand individual communities, search and focus a node, or hover to inspect it;
-only community centers carry labels. The bottom panel can summarize the selected
-node and every direct neighbor using your configured model. Conversations can
-jump to their related code nodes. Note links record shared folders, projects or
-file references; they do not assert semantic similarity.
+only community centers carry labels. The inspector rail can summarize the
+selected node and every direct neighbor using your configured model.
+Conversations can jump to their related code nodes. Note links record shared
+folders, projects or file references; they do not assert semantic similarity.
 
 ![Explore related saved notes in the CodeSlice knowledge graph](docs/screenshots/knowledge-graph.png)
 
-代码图谱与笔记图谱独立切换，共用静态画布和底部白色面板。支持社区逐簇收起 / 展开、搜索定位、悬浮详情、AI 总结全部直接邻点，以及从对话定位到对应代码节点。详见 [图谱交互与验证](docs/GRAPH_EXPLORER.md)。
+代码图谱与笔记图谱独立切换，共用静态画布和右侧检查器栏，跟随浅色 / 深色主题。图谱构建一次即持久化到本地数据库，再次打开瞬时呈现。支持社区逐簇收起 / 展开、搜索定位、悬浮详情、AI 总结全部直接邻点，以及从对话定位到对应代码节点。详见 [图谱交互与验证](docs/GRAPH_EXPLORER.md)。
 
 ## Getting started
 

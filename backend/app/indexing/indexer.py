@@ -18,7 +18,7 @@ from typing import Any
 
 from watchfiles import DefaultFilter, watch
 
-from app.core.db import get_conn, utcnow, write_conn
+from app.core.db import GRAPH_SCOPE_CODE, drop_graph_cache, get_conn, utcnow, write_conn
 from app.indexing.chunker import chunk_file
 from app.indexing.languages import detect_language
 from app.models import embeddings as emb
@@ -95,6 +95,8 @@ def clear_index(project_id: int) -> None:
         )
         conn.execute("DELETE FROM chunks WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM indexed_files WHERE project_id = ?", (project_id,))
+        # The persisted graph describes the corpus that was just deleted.
+        drop_graph_cache(conn, project_id, GRAPH_SCOPE_CODE)
 
 
 def _existing_files(project_id: int) -> dict[str, tuple[int, float, int, str | None]]:
@@ -282,6 +284,21 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
         stats["notes"] = int(note_stats.get("notes", 0))
     except Exception as exc:  # note indexing must not fail the file index
         log.warning("note index sync failed: %s", exc)
+
+    # The persisted code graph is only invalidated when this run actually changed
+    # the corpus. A background scan that skipped every file must not throw away a
+    # perfectly good graph — the whole point is that a click never rebuilds it.
+    # Note that notes are chunks but never graph sources: a note edit does not
+    # touch the code graph (it invalidates the notes graph instead, in repo).
+    if stats["files"] > 0 or stale:
+        with write_conn() as conn:
+            drop_graph_cache(conn, project_id, GRAPH_SCOPE_CODE)
+        log.debug(
+            "invalidated code graph for project %s after index run (%d file(s) re-chunked, %d pruned)",
+            project_id,
+            stats["files"],
+            len(stale),
+        )
 
     repo.mark_project_indexed(project_id)
     progress(100, "索引完成", stats, status="done")

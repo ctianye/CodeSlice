@@ -4,6 +4,14 @@ import type { GraphSummary } from '../../types'
 import { Markdown } from '../Markdown'
 import { Icon } from '../Icon'
 
+/**
+ * "Explain this node's relations" panel.
+ *
+ * Owned by the rail and keyed by the selection: switching nodes remounts it, so
+ * a summary can never be shown next to a node it does not describe. The abort
+ * controller is also the stale-response guard — a cancelled request resolves
+ * after the node changed, and the signal check keeps it out of the panel.
+ */
 export function RelationshipSummary({ scope, projectId, nodeId, neighborCount }: {
   scope: 'code' | 'notes'; projectId: number; nodeId: string; neighborCount: number
 }) {
@@ -28,16 +36,21 @@ export function RelationshipSummary({ scope, projectId, nodeId, neighborCount }:
   }
   return <section className="graph-summary" aria-label="AI 关系总结">
     <div className="graph-summary-head">
-      <button className="small primary" disabled={busy} onClick={() => void summarize()}>
+      <button className="graph-act primary graph-summary-run" disabled={busy} onClick={() => void summarize()}>
         <Icon name="sparkles" size={12} />{busy ? '正在总结…' : error ? '重试 AI 总结关系' : 'AI 总结关系'}
       </button>
-      <span>以所选节点为核心 · 全部 {result?.neighbor_count ?? neighborCount} 个直接邻点</span>
-      {busy && <button className="small ghost" onClick={() => { request.current?.abort(); setBusy(false) }}>取消</button>}
+      {busy
+        ? <button className="graph-act" onClick={() => { request.current?.abort(); setBusy(false) }}>取消</button>
+        : <span className="graph-summary-scope">全部 {result?.neighbor_count ?? neighborCount} 个直接邻点</span>}
     </div>
     <div className="graph-summary-output" aria-live="polite" aria-busy={busy}>
-      {error ? <span role="alert">{error}</span> : result ? <Markdown text={result.summary} />
-        : <span className="graph-dock-hint">{busy ? '正在梳理核心节点与所有直接邻点的关联逻辑…'
-          : '点击按钮生成关系说明；社区收起和显示筛选不会缩减总结范围。'}</span>}
+      {error
+        ? <p className="graph-summary-error" role="alert">{error}</p>
+        : result
+          ? <Markdown text={result.summary} />
+          : busy
+            ? <p className="graph-hint">正在梳理核心节点与全部直接邻点的关联逻辑…</p>
+            : <p className="graph-hint">以所选节点为核心生成关系说明；社区的收起与筛选不会缩减总结范围。</p>}
     </div>
   </section>
 }

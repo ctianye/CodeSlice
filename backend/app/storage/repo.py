@@ -11,7 +11,7 @@ import sqlite3
 import uuid
 from typing import Any
 
-from app.core.db import get_conn, utcnow, write_conn
+from app.core.db import GRAPH_SCOPE_CODE, drop_graph_cache, drop_notes_graph_cache, get_conn, utcnow, write_conn
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -75,6 +75,11 @@ def delete_project(project_id: int) -> None:
             (project_id,),
         )
         conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        # Deleting the project cascades to its notes, so the global notes graph
+        # (a projection of the notes table) is stale from this moment on, and this
+        # project's own graph row is dead weight. Both go in the same transaction.
+        drop_notes_graph_cache(conn)
+        drop_graph_cache(conn, project_id, GRAPH_SCOPE_CODE)
     for conv_id in old:
         cleanup_thread(conv_id)
 
@@ -467,6 +472,9 @@ def create_note(
             (project_id, conversation_id, folder_id, title, file_name or title, content_md, now, now),
         )
         note_id = int(cur.lastrowid or 0)
+        # The notes graph is a projection of this table; drop it in the same
+        # transaction so a concurrent reader cannot serve the pre-insert shape.
+        drop_notes_graph_cache(conn)
     return get_note(note_id)  # type: ignore[return-value]
 
 
@@ -498,6 +506,7 @@ def update_note(
                 note_id,
             ),
         )
+        drop_notes_graph_cache(conn)
     return get_note(note_id)
 
 
@@ -523,6 +532,7 @@ def create_note_folder(name: str, parent_id: int | None = None) -> dict[str, Any
             (parent_id, name, now),
         )
         folder_id = int(cur.lastrowid or 0)
+        drop_notes_graph_cache(conn)
         row = conn.execute("SELECT * FROM note_folders WHERE id = ?", (folder_id,)).fetchone()
     return dict(row)  # type: ignore[arg-type]
 
@@ -538,6 +548,7 @@ def rename_note_folder(
         if row is None:
             return None
         folder = dict(row)
+    with write_conn() as conn:
         conn.execute(
             "UPDATE note_folders SET name = ?, parent_id = ? WHERE id = ?",
             (
@@ -546,6 +557,8 @@ def rename_note_folder(
                 folder_id,
             ),
         )
+        # A folder label appears on every community of the notes graph.
+        drop_notes_graph_cache(conn)
         row = conn.execute("SELECT * FROM note_folders WHERE id = ?", (folder_id,)).fetchone()
     return dict(row)  # type: ignore[arg-type]
 
@@ -555,11 +568,13 @@ def delete_note_folder(folder_id: int) -> None:
     with write_conn() as conn:
         conn.execute("UPDATE notes SET folder_id = NULL WHERE folder_id = ?", (folder_id,))
         conn.execute("DELETE FROM note_folders WHERE id = ?", (folder_id,))
+        drop_notes_graph_cache(conn)
 
 
 def delete_note(note_id: int) -> None:
     with write_conn() as conn:
         conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+        drop_notes_graph_cache(conn)
 
 
 def list_annotations(project_id: int, file_path: str) -> list[dict[str, Any]]:

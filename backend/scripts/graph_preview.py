@@ -113,7 +113,9 @@ store.write_graph(
     root,
     {
         "schema_version": SCHEMA_VERSION,
-        "built_hash": store.index_fingerprint(project["id"]),
+        # The graph is persisted in SQLite now; the marker is what the read path
+        # compares, so the fixture is a cache *hit* rather than a one-off rebuild.
+        "built_hash": store.freshness_token(project["id"]),
         "nodes": nodes,
         "edges": edges,
         "communities": communities,
@@ -138,7 +140,7 @@ store.write_graph(
     foreign_root,
     {
         "schema_version": SCHEMA_VERSION,
-        "built_hash": store.index_fingerprint(foreign["id"]),
+        "built_hash": store.freshness_token(foreign["id"]),
         "nodes": [foreign_node],
         "edges": [],
         "communities": [{**communities[0], "size": 1, "hub": "foreign:entry"}],

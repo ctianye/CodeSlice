@@ -21,6 +21,12 @@ export type IconName =
   | 'plus'
   | 'trash'
   | 'refresh'
+  | 'minus'
+  | 'fit'
+  | 'eye'
+  | 'eye-off'
+  | 'layers'
+  | 'locate'
   | 'settings'
   | 'sun'
   | 'moon'
@@ -106,6 +112,41 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M4 4v4h4" />
       <path d="M4 13a8 8 0 0 0 13.6 5.3L20 16" />
       <path d="M20 20v-4h-4" />
+    </>
+  ),
+  minus: <path d="M5 12h14" />,
+  /** "Fit to window": four corner arrows pointing outward. */
+  fit: (
+    <>
+      <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.75" />
+    </>
+  ),
+  'eye-off': (
+    <>
+      <path d="M4 4l16 16" />
+      <path d="M9.5 6.2A9.6 9.6 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-2.8 3.4" />
+      <path d="M6.3 8.6A16.6 16.6 0 0 0 2.5 12S6 18 12 18a9.4 9.4 0 0 0 3.2-.55" />
+      <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+    </>
+  ),
+  layers: (
+    <>
+      <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
+      <path d="m3 12.5 9 4.5 9-4.5" />
+      <path d="m3 17 9 4.5 9-4.5" />
+    </>
+  ),
+  locate: (
+    <>
+      <circle cx="12" cy="12" r="6.5" />
+      <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
+      <circle cx="12" cy="12" r="1.8" />
     </>
   ),
   settings: (

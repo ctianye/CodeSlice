@@ -85,33 +85,47 @@ export function isInferred(relation: string, confidence: GraphConfidence | strin
 }
 
 /**
- * Colour for an edge by relation family.
+ * Relation family, used to pick an edge colour.
  *
- * Grouped rather than one colour per relation: with twelve kinds a per-kind palette
- * becomes unreadable, but four families (structure / dependency / call / meaning)
- * stay distinguishable.
+ * Grouped rather than one colour per relation: with a dozen kinds a per-kind
+ * palette becomes unreadable, but five families (structure / dependency /
+ * behaviour / hierarchy / meaning) stay distinguishable. The family is resolved
+ * here, the actual shade per theme in graphTheme.ts.
  */
-export function relationColor(relation: string): string {
+export type RelationFamily = 'structure' | 'dependency' | 'behaviour' | 'hierarchy' | 'meaning' | 'other'
+
+export function relationFamily(relation: string): RelationFamily {
   switch (relation) {
     case 'contains':
     case 'method':
     case 'declares':
-      return '#5f7a99' // structure: containment
+      return 'structure'
     case 'imports':
     case 'imports_from':
     case 'uses':
-      return '#7c8fa8' // dependency: imports
+      return 'dependency'
     case 'calls':
     case 'indirect_call':
-      return '#6f9fd0' // behaviour: calls
+    case 'references':
+      return 'behaviour'
     case 'inherits':
     case 'implements':
-      return '#9d8ac4' // type hierarchy
+      return 'hierarchy'
     case 'rationale_for':
-      return '#c9a227' // meaning: why
+      return 'meaning'
     default:
-      return '#8794a6'
+      return 'other'
   }
+}
+
+/** Colour family label, for the legend rows in the inspector rail. */
+export const FAMILY_LABEL: Record<RelationFamily, string> = {
+  structure: '结构',
+  dependency: '依赖',
+  behaviour: '行为',
+  hierarchy: '继承',
+  meaning: '说明',
+  other: '其他',
 }
 
 /** Node kinds that carry no code and should not be traversed into. */

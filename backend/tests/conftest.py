@@ -53,6 +53,9 @@ def conn_reset():
             "chunks",
             "indexed_files",
             "jobs",
+            # Persisted graph caches are keyed by project id; a direct table wipe
+            # would otherwise leave a graph that a later test could be served.
+            "graphs",
             "projects",
         ):
             conn.execute(f"DELETE FROM {table}")

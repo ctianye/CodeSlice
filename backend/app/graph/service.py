@@ -2,7 +2,13 @@
 
 The tool layer wants one call per question ("give me context for this text",
 "give me the path between A and B") and does not care where the graph came from.
-This module binds a project to its freshest graph and forwards to ``query``.
+This module binds a project to its graph and forwards to ``query``.
+
+Reads are served from the persisted copy (``store.load_cached``) and never walk
+the source tree: a turn already validated the graph in its ``ensure_graph`` node
+(``load_fresh``), and a tool call inside that turn must not redo the work. When no
+graph has ever been built the first call builds it, so the tools keep working in
+a fresh project.
 """
 
 from __future__ import annotations
@@ -10,17 +16,25 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.core.db import GRAPH_SCOPE_CODE
 from app.graph import query, store
 
 
 def load(project_id: int, root: Path) -> dict[str, Any]:
-    """Freshest graph for a project (rebuilding if the index moved on)."""
+    """The persisted graph, building it only if this project has none yet."""
+    cached = store.load_cached(project_id, GRAPH_SCOPE_CODE)
+    if cached is not None:
+        return cached
     graph, _rebuilt = store.ensure_fresh(project_id, root)
     return graph
 
 
 def load_fresh(project_id: int, root: Path) -> tuple[dict[str, Any], bool]:
-    """Freshest graph plus whether this call had to rebuild it."""
+    """Freshest graph plus whether this call had to rebuild it.
+
+    Only the agent's ``ensure_graph`` node should use this: it is the point in a
+    turn where a rebuild is both cheap to hide behind a status stage and correct.
+    """
     return store.ensure_fresh(project_id, root)
 
 
