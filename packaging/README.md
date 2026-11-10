@@ -158,7 +158,40 @@ electron-builder 把它包装成 `cannot execute cause=exit status 2`。
 
 ---
 
-## 4. 数据与凭据的位置
+## 4. Linux 打包
+
+Linux 安装包（AppImage / deb / rpm）**不能**在 Windows 上打：后端要由 PyInstaller
+在 Linux 上编译，electron-builder 也只允许在 Linux 宿主上构建 Linux 目标。两条可用路径：
+
+**A. 在 WSL / 原生 Linux 上手动构建**
+
+```bash
+./packaging/build_linux.sh              # 完整构建
+./packaging/build_linux.sh --skip-backend   # 复用 packaging/dist-backend-linux
+```
+
+脚本依次做四件事：
+
+1. 用 `python3 -m venv packaging/build/linux-venv` 建独立环境（不碰 Windows 的
+   `backend/.venv`），安装 `backend` 与 `requirements-packaging.txt`；
+2. PyInstaller 输出到 `packaging/dist-backend-linux`，并压平为
+   `codeslice-backend` + `_internal/`（与 `electron-builder-linux.yml` 的
+   `extraResources` 对应）；
+3. 跑一次 `codeslice-backend --selftest`，语法库或 keyring 缺失会直接失败；
+4. `frontend` 构建 → `desktop/scripts/copy-renderer.mjs` → `electron-builder --linux`。
+
+产物在 `desktop/release-linux/`：`CodeSlice-<ver>-x86_64.AppImage`、
+`CodeSlice-<ver>-amd64.deb`、`CodeSlice-<ver>-x86_64.rpm`。
+
+**B. 推 tag 走 GitHub Actions**
+
+`.github/workflows/release.yml` 在推送 `v*` 标签（或手动触发）时并行构建 Windows 与
+Linux，把安装包和 `SHA256SUMS-<tag>.txt` 一并挂到对应的 GitHub Release。这是唯一
+不依赖本机 WSL/Docker 的双平台出包方式。
+
+---
+
+## 5. 数据与凭据的位置
 
 **安装版**的数据目录由 `desktop/electron/main.ts` 显式指定为
 `app.getPath('userData')`，而 `userData` 取自 `desktop/package.json` 的 `name`
@@ -183,7 +216,7 @@ API Key **永远不会**写入 SQLite；`GET /api/settings` 只返回 `api_key_c
 
 ---
 
-## 5. 故障排查
+## 6. 故障排查
 
 ### 安装器被杀毒软件报毒 / SmartScreen 拦截
 
@@ -319,7 +352,7 @@ PyInstaller 默认产出**嵌套**目录 `dist-backend\codeslice-backend\codesli
 
 ---
 
-## 6. 目录内容
+## 7. 目录内容
 
 | 文件 | 作用 |
 | --- | --- |
@@ -328,6 +361,7 @@ PyInstaller 默认产出**嵌套**目录 `dist-backend\codeslice-backend\codesli
 | `requirements-packaging.txt` | 仅构建期依赖（PyInstaller 等） |
 | `build_backend.ps1` | 后端构建 + 自检 + 冒烟测试 + 扁平化产物布局 |
 | `build_desktop.ps1` | 前端构建 + 三步安装器构建 + 布局/图标/前端版本校验 |
+| `build_linux.sh` | Linux 后端 + AppImage / deb / rpm（在 Linux 或 WSL 中运行） |
 | `README.md` | 本文件 |
 
 运行时产物（均被 `.gitignore` 忽略，不入库）：
@@ -337,10 +371,11 @@ PyInstaller 默认产出**嵌套**目录 `dist-backend\codeslice-backend\codesli
 | `packaging\build\` | PyInstaller 中间产物，可随时删除 |
 | `packaging\dist-backend\` | 后端成品（`codeslice-backend.exe` + `_internal\`） |
 | `desktop\release\` | 安装器与 `win-unpacked\` |
+| `desktop\release-linux\` | Linux 安装包与 `linux-unpacked\` |
 
 ---
 
-## 7. 交付验收清单
+## 8. 交付验收清单
 
 一次成功的打包应满足：
 

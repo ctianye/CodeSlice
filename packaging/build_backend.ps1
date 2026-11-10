@@ -294,11 +294,10 @@ $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
 $psi.CreateNoWindow = $true
-$psi.EnvironmentVariables['CODESLICE_PORT'] = '0'
-$psi.EnvironmentVariables['CODESLICE_DATA_DIR'] = $tempDataDir
-$psi.EnvironmentVariables['CODESLICE_HOST'] = '127.0.0.1'
-$psi.EnvironmentVariables['CODESLICE_TOKEN'] = ''
-$psi.EnvironmentVariables['CODESLICE_LOG_LEVEL'] = 'warning'
+# The child inherits this process' environment, which the $env: block above just
+# set. Poking $psi.EnvironmentVariables directly threw "cannot index into a null
+# array" on hosts where that property is not materialised, which aborted the
+# smoke test (and the whole build) right after a passing selftest.
 
 $proc = $null
 $ready = $null

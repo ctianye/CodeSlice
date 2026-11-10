@@ -103,6 +103,7 @@ $RECYCLE.BIN/
 logs/
 
 # --- Local verification artifacts (screenshots, backend stderr, ACL repair) --
+.workbuddy/
 .shots/
 acl-recovery/
 
