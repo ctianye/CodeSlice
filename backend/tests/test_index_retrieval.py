@@ -154,6 +154,27 @@ def test_missing_file_is_pruned(project: dict):
     assert "extra.py" not in paths
 
 
+def test_unreadable_entry_does_not_abort_scan(project: dict, monkeypatch):
+    from app.core.db import get_conn
+
+    root = Path(project["path"])
+    (root / "unreadable.py").write_text("value = 1\n", encoding="utf-8")
+    original_is_dir = Path.is_dir
+
+    def is_dir(self):
+        if self.name == "unreadable.py":
+            raise OSError(1920, "cannot access", str(self))
+        return original_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    stats = indexer.index_project(project["id"])
+    assert stats["files"] >= 2
+    with get_conn() as conn:
+        indexed = {r["path"] for r in conn.execute("SELECT path FROM indexed_files")}
+    assert "unreadable.py" not in indexed
+    assert "pkg/sample.py" in indexed
+
+
 def test_force_reindex_prunes_files_that_became_ignored(project: dict):
     """A forced rebuild must still drop rows it no longer indexes.
 

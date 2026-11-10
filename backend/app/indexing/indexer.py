@@ -57,18 +57,21 @@ class _ProjectWatchFilter(DefaultFilter):
 
 def _iter_files(root: Path):
     for path in root.rglob("*"):
-        if path.is_dir():
-            continue
         rel_parts = path.relative_to(root).parts
+        # Check ignored parts before touching the entry. Build bundles can contain
+        # symlinks that Windows cannot stat (WinError 1920), and an unreadable
+        # ignored artifact must not abort the scan of real source.
         if any(part in paths.DEFAULT_IGNORES for part in rel_parts):
+            continue
+        try:
+            if path.is_dir():
+                continue
+            stat = path.stat()
+        except OSError:
             continue
         if path.suffix.lower() in paths.BINARY_SUFFIXES:
             continue
         if paths.skip_file(path.name):
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
             continue
         if stat.st_size > MAX_FILE_BYTES or stat.st_size == 0:
             continue

@@ -46,4 +46,7 @@ def test_relative_to_roundtrip(tmp_path: Path):
 def test_is_ignored_matches_default_set():
     assert paths.is_ignored("node_modules")
     assert paths.is_ignored(".git")
+    assert paths.is_ignored("dist-backend-linux")
+    assert paths.is_ignored("release-linux")
+    assert paths.is_ignored("release-clean")
     assert not paths.is_ignored("src")

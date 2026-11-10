@@ -96,7 +96,7 @@ references; they do not assert semantic similarity.
 ## 目录
 
 - [实战演示](#实战演示)
-- [v0.2 更新](#v02-更新)
+- [v0.2.1 更新](#v021-更新)
 - [快速开始](#快速开始)
 - [功能一览](#功能一览)
 - [运行要求](#运行要求)
@@ -117,8 +117,10 @@ references; they do not assert semantic similarity.
 
 ---
 
-## v0.2 更新
+## v0.2.1 更新
 
+- **索引容错**：跳过 WSL / Linux 打包产物与无法访问的文件，不再因单个符号链接
+  （如 `_internal` 里的 `libgfortran*.so`）导致整次索引失败。
 - **知识图谱**：代码与笔记各有一张本地图谱。代码图谱由 Tree-sitter AST 与显式
   import 证据构建，结果持久化到 SQLite；画布支持关系族筛选、按社区显示 / 隐藏、
   搜索定位和悬浮详情，双击节点直接打开代码或笔记。
@@ -130,12 +132,14 @@ references; they do not assert semantic similarity.
   不再解码成乱码。
 - **检索与图谱准确性**：修正跨语言误连，跨文件调用必须有 AST / import 证据；
   完善向量检索与相关测试。
-- **发布**：版本号统一到 0.2.0，新增 Linux 打包（AppImage / deb / rpm），
-  README 截图更新，并补充 Graphify 署名与 NOTICE。
+- **发布**：版本号统一到 0.2.1，Windows 与 Linux（AppImage / deb / rpm）安装包
+  同步重建。
 
 <details>
 <summary>English</summary>
 
+- **Index robustness.** Linux/WSL build bundles and unreadable files are
+  skipped instead of failing the whole index scan.
 - **Knowledge graphs for code and notes.** Each project gets a local graph built
   from Tree-sitter AST evidence and persisted in SQLite, rendered on a static
   canvas with community colours, relation-family filters, search and focus.
@@ -150,8 +154,7 @@ references; they do not assert semantic similarity.
   prompts, and binary files reported as binary instead of decoded to mojibake.
 - **More accurate retrieval and edges.** Cross-language false links were
   removed; cross-file calls now require AST and explicit import evidence.
-- Refreshed screenshots, Linux packaging, and Graphify attribution with a NOTICE
-  and third-party license copy.
+- Windows and Linux (AppImage, deb, rpm) packages rebuilt at 0.2.1.
 
 </details>
 
@@ -160,7 +163,7 @@ references; they do not assert semantic similarity.
 ## 快速开始
 
 1. 从 [最新 GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest)
-   下载对应平台的安装包：Windows 使用 `CodeSlice-0.2.0-Setup.exe`；Linux 使用
+   下载对应平台的安装包：Windows 使用 `CodeSlice-0.2.1-Setup.exe`；Linux 使用
    AppImage、`.deb` 或 `.rpm`（x86_64）。
 2. 启动 CodeSlice，点击添加项目并选择本地代码仓库所在的文件夹。
 3. 打开源文件，选中你想理解的代码，在对话面板提问。
@@ -180,7 +183,7 @@ API Key 保存在系统凭据管理器中。
 
 1. Download the package for your platform from the
    [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest):
-   `CodeSlice-0.2.0-Setup.exe` for Windows, or the AppImage, `.deb`, or `.rpm`
+   `CodeSlice-0.2.1-Setup.exe` for Windows, or the AppImage, `.deb`, or `.rpm`
    (x86_64) for Linux.
 2. Start CodeSlice and add a local repository by selecting its folder.
 3. Open a source file, select the code you want to understand, and ask a
@@ -380,7 +383,7 @@ please explain the problem, reproduction steps, and expected behavior.
 **启动握手**：后端在真正开始监听之后，向 stdout 打印一行
 
 ```
-CODESLICE_READY {"port": 54746, "token": "xN-Nxo...", "version": "0.2.0"}
+CODESLICE_READY {"port": 54746, "token": "xN-Nxo...", "version": "0.2.1"}
 ```
 
 Electron 主进程读到这一行才知道该连哪个端口、用什么 Token。
@@ -509,7 +512,7 @@ cd desktop; npm run dev
 # 1) 后端 → packaging\dist-backend\codeslice-backend.exe（扁平布局）
 pwsh -File packaging\build_backend.ps1
 
-# 2) 前端 + Electron → desktop\release\CodeSlice-0.2.0-Setup.exe
+# 2) 前端 + Electron → desktop\release\CodeSlice-0.2.1-Setup.exe
 pwsh -File packaging\build_desktop.ps1
 ```
 
@@ -844,9 +847,9 @@ PyInstaller 产出的 exe 没有代码签名，属于典型误报。点「更多
 
 **Q：Linux 上怎么安装？**
 
-- AppImage：`chmod +x CodeSlice-0.2.0-x86_64.AppImage` 后直接运行，不需要安装。
-- deb：`sudo apt install ./CodeSlice-0.2.0-amd64.deb`。
-- rpm：`sudo dnf install ./CodeSlice-0.2.0-x86_64.rpm`（或 `sudo rpm -i ...`）。
+- AppImage：`chmod +x CodeSlice-0.2.1-x86_64.AppImage` 后直接运行，不需要安装。
+- deb：`sudo apt install ./CodeSlice-0.2.1-amd64.deb`。
+- rpm：`sudo dnf install ./CodeSlice-0.2.1-x86_64.rpm`（或 `sudo rpm -i ...`）。
 
 deb / rpm 默认安装到 `/opt/CodeSlice`，启动项会出现在应用菜单中。安装包未做代码签名，
 系统可能提示来源未知；确认文件来自本仓库 Release 后可继续安装。
@@ -905,7 +908,7 @@ uv run fastapi dev app/main.py --port 8123
 **Q：安装后 `CodeSlice.exe` 是 Electron 的默认图标？**
 
 说明打包时 rcedit 那一步没生效。正常的打包输出里应该有
-`[ok] icon verified: ...` 与 `[ok] version info: CodeSlice 0.2.0.0`。
+`[ok] icon verified: ...` 与 `[ok] version info: CodeSlice 0.2.1.0`。
 原因是 `desktop/electron-builder.yml` 里 `signAndEditExecutable: false`（本地不签名），
 electron-builder 因此跳过写图标/版本；而打开它的替代路径需要解压含符号链接的
 winCodeSign 包，非管理员做不到。`packaging\build_desktop.ps1` 改为

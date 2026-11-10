@@ -40,9 +40,10 @@ _SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "dist", "build", "out", ".venv", "venv",
     "env", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea",
     ".vscode", ".next", ".nuxt", "target", "bin", "obj", "coverage", ".codeslice",
-    ".devdata", "monaco", "release", "win-unpacked", "dist-backend", "_internal",
-    "site-packages", "vendor", "third_party", "third-party", "graphify-out",
-    ".tmp-preview-data", ".shots", ".acl-fix", "acl-recovery",
+    ".devdata", "monaco", "release", "win-unpacked", "release-linux", "release-clean",
+    "dist-backend", "dist-backend-linux", "_internal", "site-packages", "vendor",
+    "third_party", "third-party", "graphify-out", ".tmp-preview-data", ".shots",
+    ".acl-fix", "acl-recovery",
 }
 
 _SKIP_SUFFIX = {
@@ -65,8 +66,6 @@ def collect_sources(root: Path) -> list[tuple[str, bytes]]:
     """
     out: list[tuple[str, bytes]] = []
     for path in root.rglob("*"):
-        if not path.is_file():
-            continue
         try:
             relative = path.relative_to(root)
         except ValueError:
@@ -79,6 +78,8 @@ def collect_sources(root: Path) -> list[tuple[str, bytes]]:
         if config_for(rel) is None:
             continue
         try:
+            if not path.is_file():
+                continue
             if path.stat().st_size > MAX_FILE_BYTES:
                 continue
             out.append((rel, path.read_bytes()))

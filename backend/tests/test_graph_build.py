@@ -11,6 +11,8 @@ wrong graph, which is worse than an obviously broken one:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.graph.ast.engine import extract_file
 from app.graph.ast.languages import PYTHON, by_suffix_config
 from app.graph.ast.resolve import SymbolTable, resolve
@@ -502,6 +504,37 @@ def test_an_empty_file_still_yields_its_node():
     graph = _build(("empty.py", ""))
     labels = _labels(graph)
     assert "empty.py" in labels
+
+
+def test_collect_sources_ignores_platform_build_outputs(tmp_path: Path):
+    from app.graph import builder
+
+    build = tmp_path / "packaging" / "dist-backend-linux" / "_internal"
+    build.mkdir(parents=True)
+    (build / "vendor.py").write_text("def vendor():\n    pass\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("def app():\n    pass\n", encoding="utf-8")
+
+    sources = builder.collect_sources(tmp_path)
+
+    assert [rel for rel, _ in sources] == ["app.py"]
+
+
+def test_collect_sources_skips_unreadable_files(tmp_path: Path, monkeypatch):
+    from app.graph import builder
+
+    (tmp_path / "app.py").write_text("def app():\n    pass\n", encoding="utf-8")
+    (tmp_path / "broken.py").write_text("def broken():\n    pass\n", encoding="utf-8")
+    original_is_file = Path.is_file
+
+    def is_file(self):
+        if self.name == "broken.py":
+            raise OSError(1920, "cannot access", str(self))
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", is_file)
+    sources = builder.collect_sources(tmp_path)
+
+    assert [rel for rel, _ in sources] == ["app.py"]
 
 
 def test_stats_count_rationale_and_relations():

@@ -48,7 +48,10 @@ DEFAULT_IGNORES = {
     # Installed/bundled app output — indexing these drowns real source in vendor code.
     "release",
     "win-unpacked",
+    "release-linux",
+    "release-clean",
     "dist-backend",
+    "dist-backend-linux",
     "_internal",
     "site-packages",
     "vendor",

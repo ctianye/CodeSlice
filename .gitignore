@@ -108,4 +108,5 @@ acl-recovery/
 
 # --- Release build outputs ---------------------------------------------------
 desktop/release-linux/
+desktop/release-*/
 packaging/dist-backend-linux/
