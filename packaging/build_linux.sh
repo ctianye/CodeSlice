@@ -39,7 +39,19 @@ if [ "$SKIP_BACKEND" -eq 0 ]; then
   # A throwaway venv keeps the developer's backend/.venv (a Windows one) intact.
   VENV="$REPO_ROOT/packaging/build/linux-venv"
   rm -rf "$VENV"
-  "$PYTHON" -m venv "$VENV"
+  if ! "$PYTHON" -m venv "$VENV" 2>/dev/null; then
+    # Debian/Ubuntu ship without ensurepip until python3-venv is installed, and
+    # that needs root. Bootstrap pip by hand instead of giving up.
+    rm -rf "$VENV"
+    "$PYTHON" -m venv --without-pip "$VENV" \
+      || fail "cannot create a venv; install python3-venv (sudo apt install python3-venv)"
+    curl -fsSL --retry 2 --max-time 120 https://bootstrap.pypa.io/get-pip.py -o "$VENV/get-pip.py" \
+      || fail "cannot download get-pip.py"
+    "$VENV/bin/python" "$VENV/get-pip.py" --no-warn-script-location >/dev/null \
+      || fail "cannot bootstrap pip into the venv"
+    rm -f "$VENV/get-pip.py"
+    ok "venv created without ensurepip"
+  fi
   "$VENV/bin/python" -m pip install --upgrade pip >/dev/null
   "$VENV/bin/python" -m pip install -e "$BACKEND_DIR" -r "$REPO_ROOT/packaging/requirements-packaging.txt" >/dev/null
   ok "dependencies installed"
