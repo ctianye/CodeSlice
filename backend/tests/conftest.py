@@ -56,6 +56,7 @@ def conn_reset():
             # Persisted graph caches are keyed by project id; a direct table wipe
             # would otherwise leave a graph that a later test could be served.
             "graphs",
+            "graph_layouts",
             "projects",
         ):
             conn.execute(f"DELETE FROM {table}")

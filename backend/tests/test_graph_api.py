@@ -90,6 +90,41 @@ def test_get_graph_reports_whether_it_rebuilt(client, graph_project):
     assert body["stats"]["rebuilt"] is False
 
 
+def test_graph_layout_roundtrip_is_keyed_by_topology(client, graph_project):
+    first = client.get(f"/api/projects/{graph_project['id']}/graph").json()
+    assert first["layout_key"]
+    assert first["layout"] == {}
+
+    positions = {
+        "a.py::run::function::1": {"x": 12.5, "y": -8},
+        "a.py::__file__": {"x": 1, "y": 2},
+    }
+    saved = client.put(
+        f"/api/projects/{graph_project['id']}/graph/layout",
+        json={"layout_key": first["layout_key"], "positions": positions},
+    )
+    assert saved.status_code == 200
+    assert saved.json() == {"ok": True}
+
+    second = client.get(f"/api/projects/{graph_project['id']}/graph").json()
+    assert second["layout_key"] == first["layout_key"]
+    assert second["layout"] == positions
+
+
+def test_notes_graph_layout_roundtrip(client, project):
+    from app.storage import repo
+
+    repo.create_note(project["id"], "布局笔记", "正文")
+    first = client.get("/api/graphs/notes").json()
+    assert first["layout_key"]
+    positions = {first["nodes"][0]["id"]: {"x": 3.25, "y": 4.5}}
+    assert client.put(
+        "/api/graphs/notes/layout",
+        json={"layout_key": first["layout_key"], "positions": positions},
+    ).json() == {"ok": True}
+    assert client.get("/api/graphs/notes").json()["layout"] == positions
+
+
 def test_node_detail_lists_outgoing_connections(client, graph_project):
     resp = client.get(
         f"/api/projects/{graph_project['id']}/graph/node",

@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.api.conversations import SSE_HEADERS
 from app.api.deps import ProjectDep, TokenDep
-from app.core.db import GRAPH_SCOPE_CODE
+from app.core.db import GRAPH_SCOPE_CODE, GRAPH_SCOPE_NOTES, NOTES_GRAPH_PROJECT_ID
 from app.core.errors import AppError, NotFound
 from app.graph import notes, query, relationships, service, store
 from app.services import paths
@@ -36,6 +36,11 @@ log = logging.getLogger(__name__)
 
 class SummaryRequest(BaseModel):
     node_id: str = Field(min_length=1, max_length=2048)
+
+
+class GraphLayoutRequest(BaseModel):
+    layout_key: str = Field(min_length=1, max_length=128)
+    positions: dict[str, dict[str, float]]
 
 
 def _sse(event: dict[str, Any]) -> str:
@@ -61,9 +66,21 @@ def _summary_frames(iterator: Iterator[dict[str, Any]]) -> Iterator[str]:
         yield _sse({"type": "error", "detail": f"AI 解读失败，请重试（{type(exc).__name__}）。"})
 
 
+def _layout_payload(graph: dict[str, Any], project_id: int, scope: str) -> dict[str, Any]:
+    key = store.topology_key(graph)
+    return {"layout_key": key, "layout": store.load_layout(project_id, scope, key)}
+
+
 @router.get("/graphs/notes")
 def get_notes_graph(_: TokenDep) -> dict[str, Any]:
-    return notes.build()
+    graph = notes.build()
+    return {**graph, **_layout_payload(graph, NOTES_GRAPH_PROJECT_ID, GRAPH_SCOPE_NOTES)}
+
+
+@router.put("/graphs/notes/layout")
+def save_notes_layout(body: GraphLayoutRequest, _: TokenDep) -> dict[str, bool]:
+    store.save_layout(NOTES_GRAPH_PROJECT_ID, GRAPH_SCOPE_NOTES, body.layout_key, body.positions)
+    return {"ok": True}
 
 
 @router.post("/graphs/notes/summary")
@@ -177,7 +194,14 @@ def get_graph(project: ProjectDep, _: TokenDep) -> dict[str, Any]:
         "edges": graph.get("edges") or [],
         "communities": graph.get("communities") or [],
         "stats": {**service.summary(graph), "rebuilt": rebuilt},
+        **_layout_payload(graph, project["id"], GRAPH_SCOPE_CODE),
     }
+
+
+@router.put("/projects/{project_id}/graph/layout")
+def save_code_layout(project: ProjectDep, body: GraphLayoutRequest, _: TokenDep) -> dict[str, bool]:
+    store.save_layout(project["id"], GRAPH_SCOPE_CODE, body.layout_key, body.positions)
+    return {"ok": True}
 
 
 @router.post("/projects/{project_id}/graph/build")

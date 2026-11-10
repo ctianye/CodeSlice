@@ -270,7 +270,9 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
   if (error && !payload) return <ErrorNote message={error} onRetry={() => setRevision(revisionValue => revisionValue + 1)} />
 
   const graphTheme: GraphTheme = theme
-  const layoutKey = `${cacheKey}:${revision}:${payload?.nodes.length ?? 0}:${payload?.edges.length ?? 0}`
+  const layoutKey = payload
+    ? `${cacheKey}:${payload.layout_key ?? `legacy:${payload.nodes.length}:${payload.edges.length}`}`
+    : cacheKey
   const communities = payload?.communities ?? []
 
   return <div className="graph-view" data-graph-scope={scope}>
@@ -306,6 +308,13 @@ export function GraphView({ scope = 'code', initialNodeId, focusNonce = 0 }: Pro
           ? <GraphBlank scope={scope} busy={loading} onRebuild={() => void rebuild()} />
           : <GraphCanvas nodes={view.nodes} edges={view.edges} theme={graphTheme} scope={scope}
             selectedId={selectedId} focus={focus} layoutKey={layoutKey}
+            initialPositions={payload.layout}
+            onSettled={positions => {
+              if (!payload.layout_key) return
+              void api.saveGraphLayout(scope, projectId, payload.layout_key, positions).catch(() => {
+                /* layout persistence is best effort; the in-memory cache still works */
+              })
+            }}
             onSelect={id => {
               if (id) choose(id, false)
               else { setSelectedId(null); setFocus(null) }

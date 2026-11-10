@@ -107,7 +107,7 @@ def test_second_read_is_a_cache_hit_and_the_builder_is_not_called(client, projec
 
     # Same content, and the shape the frontend depends on survives the cache.
     assert [n["label"] for n in second["nodes"]] == ["built"]
-    assert set(second) == {"nodes", "edges", "communities", "stats"}
+    assert set(second) == {"nodes", "edges", "communities", "stats", "layout_key", "layout"}
     assert second["stats"]["schema_version"] == SCHEMA_VERSION
 
 

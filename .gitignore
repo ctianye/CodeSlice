@@ -105,3 +105,7 @@ logs/
 # --- Local verification artifacts (screenshots, backend stderr, ACL repair) --
 .shots/
 acl-recovery/
+
+# --- Release build outputs ---------------------------------------------------
+desktop/release-linux/
+packaging/dist-backend-linux/

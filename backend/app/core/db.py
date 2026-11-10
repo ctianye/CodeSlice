@@ -197,6 +197,19 @@ CREATE TABLE IF NOT EXISTS graphs (
     PRIMARY KEY (project_id, scope)
 );
 
+-- Settled force-layout coordinates, keyed by a topology fingerprint. The graph
+-- itself is persisted in ``graphs``; this table only remembers where the reader
+-- saw its nodes, so reopening a view does not repeat a multi-second layout.
+CREATE TABLE IF NOT EXISTS graph_layouts (
+    project_id INTEGER NOT NULL,
+    scope      TEXT    NOT NULL,
+    layout_key TEXT    NOT NULL,
+    positions  TEXT    NOT NULL,
+    node_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT    NOT NULL,
+    PRIMARY KEY (project_id, scope, layout_key)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,

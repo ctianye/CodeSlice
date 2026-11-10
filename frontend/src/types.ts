@@ -487,11 +487,20 @@ export interface GraphStats {
   rebuilt?: boolean
 }
 
+export interface GraphPosition {
+  x: number
+  y: number
+}
+
 export interface GraphPayload {
   nodes: GraphNode[]
   edges: GraphEdge[]
   communities: GraphCommunity[]
   stats: GraphStats
+  /** Stable topology fingerprint used to find the saved layout. */
+  layout_key?: string
+  /** Last settled node positions, loaded from the local database. */
+  layout?: Record<string, GraphPosition>
 }
 
 /** One connection of a node, as returned by the node-detail endpoint. */

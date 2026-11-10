@@ -80,6 +80,7 @@ def delete_project(project_id: int) -> None:
         # project's own graph row is dead weight. Both go in the same transaction.
         drop_notes_graph_cache(conn)
         drop_graph_cache(conn, project_id, GRAPH_SCOPE_CODE)
+        conn.execute("DELETE FROM graph_layouts WHERE project_id = ?", (project_id,))
     for conv_id in old:
         cleanup_thread(conv_id)
 

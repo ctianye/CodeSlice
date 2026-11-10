@@ -228,6 +228,20 @@ export const getGraph = (projectId: number, signal?: AbortSignal): Promise<Graph
 export const getNotesGraph = (signal?: AbortSignal): Promise<GraphPayload> =>
   request<GraphPayload>('/api/graphs/notes', { signal })
 
+/** Persist settled coordinates so the next visit can skip force-atlas entirely. */
+export const saveGraphLayout = (
+  scope: 'code' | 'notes',
+  projectId: number,
+  layoutKey: string,
+  positions: Record<string, { x: number; y: number }>,
+): Promise<{ ok: boolean }> =>
+  request<{ ok: boolean }>(
+    scope === 'code'
+      ? `/api/projects/${projectId}/graph/layout`
+      : '/api/graphs/notes/layout',
+    { method: 'PUT', body: { layout_key: layoutKey, positions } },
+  )
+
 /**
  * Streams the AI relationship summary as SSE frames.
  *

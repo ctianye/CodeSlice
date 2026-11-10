@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "CodeSlice desktop shell (Electron main process + packager)",
+  "homepage": "https://github.com/ctianye/CodeSlice",
   "author": "CodeSlice",
   "license": "MIT",
   "main": "electron/build/main.js",

@@ -3,7 +3,9 @@ productName: CodeSlice
 copyright: Copyright © 2026 CodeSlice
 
 directories:
-  output: release
+  # Keep Linux artifacts separate from the Windows release directory; this also
+  # avoids a Windows file lock on an interrupted linux-unpacked build.
+  output: release-linux
   buildResources: build-assets
 
 # Renderer bundle + compiled Electron main/preload + manifest.
@@ -36,6 +38,9 @@ linux:
       arch:
         - x64
     - target: deb
+      arch:
+        - x64
+    - target: rpm
       arch:
         - x64
   icon: build-assets/icon.png

@@ -34,6 +34,10 @@ interface Props {
   focus: { id: string; nonce: number } | null
   /** Identifies one build so settled coordinates survive a tab switch. */
   layoutKey: string
+  /** Coordinates restored from SQLite for this topology. */
+  initialPositions?: Record<string, { x: number; y: number }>
+  /** Called after the first settle and after the user drags a node. */
+  onSettled?: (positions: Record<string, { x: number; y: number }>) => void
   onSelect: (id: string | null) => void
   onActivate?: (id: string) => void
 }
@@ -134,7 +138,7 @@ function applyLabels(
 }
 
 export function GraphCanvas({
-  nodes, edges, theme, scope, selectedId, focus, layoutKey, onSelect, onActivate,
+  nodes, edges, theme, scope, selectedId, focus, layoutKey, initialPositions, onSettled, onSelect, onActivate,
 }: Props): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null)
   const networkRef = useRef<Network | null>(null)
@@ -142,9 +146,15 @@ export function GraphCanvas({
   const fitted = useRef(false)
   const selectRef = useRef(onSelect)
   const activateRef = useRef(onActivate)
+  const settledRef = useRef(onSettled)
   selectRef.current = onSelect
   activateRef.current = onActivate
+  settledRef.current = onSettled
   const [settling, setSettling] = useState(false)
+  const persistedPositions = useMemo(
+    () => new Map(Object.entries(initialPositions ?? {})),
+    [initialPositions],
+  )
 
   const datasets = useMemo(() => ({ nodes: new DataSet<Node>(), edges: new DataSet<Edge>() }), [])
   const vars = useMemo(() => canvasTheme(theme), [theme])
@@ -177,7 +187,11 @@ export function GraphCanvas({
   // a remount can skip a multi-second stabilisation entirely.
   const seeded = useRef<Map<string, { x: number; y: number }> | null>(null)
   if (seeded.current === null && !fitted.current) {
-    seeded.current = recallPositions(layoutKey, nodes.map(node => node.id))
+    const ids = nodes.map(node => node.id)
+    const cached = recallPositions(layoutKey, ids)
+    const hits = ids.reduce((count, id) => count + (persistedPositions.has(id) ? 1 : 0), 0)
+    seeded.current = cached
+      ?? (ids.length && hits / ids.length >= 0.8 ? persistedPositions : null)
   }
 
   useEffect(() => {
@@ -195,7 +209,15 @@ export function GraphCanvas({
           damping: 0.4,
           avoidOverlap: 0.8,
         },
-        stabilization: { enabled: true, iterations: nodes.length > 2600 ? 120 : 200, fit: false },
+        // The settled result is persisted, so this is the only expensive pass.
+        // Large graphs get a shorter pass: 200 iterations took ~20s on a 2k-node
+        // graph, while 80 still produces a readable community layout.
+        stabilization: {
+          enabled: true,
+          iterations: nodes.length > 1200 ? 80 : 140,
+          updateInterval: 25,
+          fit: false,
+        },
       },
       layout: { improvedLayout: false, randomSeed: 42 },
       interaction: {
@@ -228,6 +250,7 @@ export function GraphCanvas({
       network.setOptions({ physics: { enabled: false } })
       const positions = network.getPositions()
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
+      settledRef.current?.(positions)
       setSettling(false)
       fitVisible(network)
       // A locate/search request can arrive before physics settles. fitVisible()
@@ -244,6 +267,7 @@ export function GraphCanvas({
     network.on('dragEnd', () => {
       const positions = network.getPositions()
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
+      settledRef.current?.(positions)
     })
     return () => {
       if (labelFrame.current) window.cancelAnimationFrame(labelFrame.current)
@@ -386,7 +410,8 @@ export function GraphCanvas({
   const visibleCount = nodes.reduce((count, node) => count + (node.hidden ? 0 : 1), 0)
 
   return <div className="graph-canvas-wrap" data-graph-theme={theme}>
-    <div className="graph-canvas" ref={hostRef} aria-label="知识图谱画布" />
+    <div className="graph-canvas" ref={hostRef} aria-label="知识图谱画布"
+      data-settling={settling ? 'true' : undefined} />
     {settling ? <div className="graph-settling"><span className="spinner" />正在排布图谱…</div> : null}
     {!visibleCount && <div className="graph-canvas-empty">
       <Icon name="layers" size={15} />

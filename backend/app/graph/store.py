@@ -70,6 +70,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -92,6 +93,111 @@ TOKEN_VERSION = 1
 # drives both requests.
 _BUILD_LOCKS: dict[int, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+
+# Layouts are a client-provided projection of the persisted graph. A wide graph
+# is still only a few hundred KB of coordinates; the cap keeps a malformed
+# request from filling the business database.
+MAX_LAYOUT_BYTES = 8 * 1024 * 1024
+MAX_LAYOUT_POSITIONS = 50_000
+
+
+def topology_key(graph: dict[str, Any]) -> str:
+    """Stable fingerprint for one graph topology.
+
+    Node ids and resolved edges are enough: a community recolor or a note title
+    edit does not invalidate a perfectly good layout, while an added/removed
+    relationship does. The same key is used by code and notes graphs.
+    """
+    digest = hashlib.sha256()
+    for node in sorted(graph.get("nodes") or [], key=lambda item: str(item.get("id") or "")):
+        digest.update(str(node.get("id") or "").encode("utf-8"))
+        digest.update(b"\x00")
+    def edge_key(item: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(item.get("source") or ""),
+            str(item.get("target") or ""),
+            str(item.get("relation") or ""),
+        )
+
+    for edge in sorted(graph.get("edges") or [], key=edge_key):
+        digest.update(str(edge.get("source") or "").encode("utf-8"))
+        digest.update(b"\x01")
+        digest.update(str(edge.get("target") or "").encode("utf-8"))
+        digest.update(b"\x01")
+        digest.update(str(edge.get("relation") or "").encode("utf-8"))
+        digest.update(b"\x00")
+    return digest.hexdigest()[:32]
+
+
+def _valid_position(value: Any) -> tuple[float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        x = float(value["x"])
+        y = float(value["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(x) or not math.isfinite(y):
+        return None
+    return x, y
+
+
+def load_layout(project_id: int, scope: str, layout_key: str) -> dict[str, dict[str, float]]:
+    """Coordinates saved for this exact topology, or an empty mapping."""
+    if not layout_key:
+        return {}
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT positions FROM graph_layouts WHERE project_id = ? AND scope = ? AND layout_key = ?",
+            (project_id, scope, layout_key),
+        ).fetchone()
+    if row is None:
+        return {}
+    try:
+        raw = json.loads(row["positions"])
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, float]] = {}
+    for node_id, value in raw.items():
+        position = _valid_position(value)
+        if position is not None:
+            out[str(node_id)] = {"x": position[0], "y": position[1]}
+    return out
+
+
+def save_layout(project_id: int, scope: str, layout_key: str, positions: dict[str, Any]) -> None:
+    """Persist one settled layout, replacing older keys of the same graph.
+
+    Only the newest topology is useful once it changes. Keeping the table small
+    also makes the next read predictable instead of accumulating every rebuild.
+    """
+    if not layout_key or not positions:
+        return
+    clean: dict[str, dict[str, float]] = {}
+    for node_id, value in positions.items():
+        position = _valid_position(value)
+        if position is not None:
+            clean[str(node_id)] = {"x": position[0], "y": position[1]}
+        if len(clean) >= MAX_LAYOUT_POSITIONS:
+            break
+    if not clean:
+        return
+    body = json.dumps(clean, ensure_ascii=False, separators=(",", ":"))
+    if len(body.encode("utf-8")) > MAX_LAYOUT_BYTES:
+        raise ValueError("graph layout is too large")
+    with write_conn() as conn:
+        conn.execute(
+            "DELETE FROM graph_layouts WHERE project_id = ? AND scope = ? AND layout_key <> ?",
+            (project_id, scope, layout_key),
+        )
+        conn.execute(
+            "INSERT INTO graph_layouts (project_id, scope, layout_key, positions, node_count, updated_at) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(project_id, scope, layout_key) DO UPDATE SET "
+            "positions = excluded.positions, node_count = excluded.node_count, updated_at = excluded.updated_at",
+            (project_id, scope, layout_key, body, len(clean), utcnow()),
+        )
 
 
 def _build_lock(project_id: int) -> threading.Lock:

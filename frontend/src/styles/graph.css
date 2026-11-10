@@ -275,6 +275,10 @@
   outline: none;
 }
 
+/* A click during the first force-atlas pass used to poke the solver and make
+   the whole graph jump. Until it has settled, the canvas is read-only. */
+.graph-canvas[data-settling='true'] { pointer-events: none; }
+
 /* vis-network paints its tooltip with its own stock light theme; align it with
  * the app surface so hovering a node does not flash a white box. */
 .graph-canvas .vis-tooltip {
