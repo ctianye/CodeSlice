@@ -524,14 +524,16 @@ def test_collect_sources_skips_unreadable_files(tmp_path: Path, monkeypatch):
 
     (tmp_path / "app.py").write_text("def app():\n    pass\n", encoding="utf-8")
     (tmp_path / "broken.py").write_text("def broken():\n    pass\n", encoding="utf-8")
-    original_is_file = Path.is_file
+    original_stat = Path.stat
 
-    def is_file(self):
+    # The scan stat-s every candidate; a locked file (WinError 1920) must be
+    # skipped instead of aborting the whole build.
+    def stat(self, *args, **kwargs):
         if self.name == "broken.py":
             raise OSError(1920, "cannot access", str(self))
-        return original_is_file(self)
+        return original_stat(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "is_file", is_file)
+    monkeypatch.setattr(Path, "stat", stat)
     sources = builder.collect_sources(tmp_path)
 
     assert [rel for rel, _ in sources] == ["app.py"]

@@ -241,6 +241,12 @@ function IndexCard({ job, totals }: IndexCardProps): ReactNode {
         </div>
       ) : null}
 
+      {job.stats?.embedding_error ? (
+        <p className="index-warn" title={job.stats.embedding_error}>
+          向量化未完成：{job.stats.embedding_error}
+        </p>
+      ) : null}
+
       {job.error ? <ErrorNote message={job.error} /> : null}
     </div>
   )

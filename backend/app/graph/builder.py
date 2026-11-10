@@ -24,6 +24,7 @@ gives exact line ranges, exact containment, and docstrings.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,28 +32,15 @@ from app.graph.ast import Extraction
 from app.graph.ast.engine import extract_file
 from app.graph.ast.languages import config_for
 from app.graph.ast.resolve import resolve
+from app.services import paths
 
 log = logging.getLogger(__name__)
 
-# Directories that are never source: mirrors the indexer's ignore list so the
-# graph and the retrieval index describe the same corpus.
-_SKIP_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", "dist", "build", "out", ".venv", "venv",
-    "env", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea",
-    ".vscode", ".next", ".nuxt", "target", "bin", "obj", "coverage", ".codeslice",
-    ".devdata", "monaco", "release", "win-unpacked", "release-linux", "release-clean",
-    "dist-backend", "dist-backend-linux", "_internal", "site-packages", "vendor",
-    "third_party", "third-party", "graphify-out", ".tmp-preview-data", ".shots",
-    ".acl-fix", "acl-recovery",
-}
-
-_SKIP_SUFFIX = {
-    ".lock", ".map", ".pak", ".pem", ".crt", ".der", ".pfx", ".blockmap", ".log",
-    ".snap", ".patch", ".diff", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
-    ".pdf", ".zip", ".gz", ".7z", ".rar", ".exe", ".dll", ".so", ".dylib", ".pyc",
-    ".class", ".jar", ".woff", ".woff2", ".ttf", ".otf", ".mp3", ".mp4", ".wav",
-    ".sqlite", ".db", ".wasm",
-}
+# Directories that are never source. Shared with the indexer through
+# ``paths.is_ignored_dir`` so a stray ``release-021`` tree cannot make the graph
+# and the retrieval index describe different corpora (that mismatch is how 1.5k
+# bundled files became graph nodes).
+_SKIP_SUFFIX = paths.BINARY_SUFFIXES | paths.IGNORED_SUFFIXES
 
 MAX_FILE_BYTES = 1_500_000
 
@@ -65,26 +53,30 @@ def collect_sources(root: Path) -> list[tuple[str, bytes]]:
     symbols says nothing and only adds noise to the canvas.
     """
     out: list[tuple[str, bytes]] = []
-    for path in root.rglob("*"):
-        try:
-            relative = path.relative_to(root)
-        except ValueError:
-            continue
-        if any(part in _SKIP_DIRS for part in relative.parts):
-            continue
-        if path.suffix.lower() in _SKIP_SUFFIX:
-            continue
-        rel = relative.as_posix()
-        if config_for(rel) is None:
-            continue
-        try:
-            if not path.is_file():
+    # os.walk so ignored trees are never entered: rglob stats every entry, and a
+    # locked binary in a build-output folder raised OSError mid-scan.
+    for current, dirnames, filenames in os.walk(root, onerror=lambda _: None):
+        dirnames[:] = [name for name in dirnames if not paths.is_ignored_dir(name)]
+        base = Path(current)
+        for name in filenames:
+            path = base / name
+            if path.suffix.lower() in _SKIP_SUFFIX:
                 continue
-            if path.stat().st_size > MAX_FILE_BYTES:
+            try:
+                rel = path.relative_to(root).as_posix()
+            except ValueError:
                 continue
-            out.append((rel, path.read_bytes()))
-        except OSError:
-            continue
+            if config_for(rel) is None:
+                continue
+            try:
+                if path.stat().st_size > MAX_FILE_BYTES:
+                    continue
+                data = path.read_bytes()
+            except OSError:
+                continue
+            if paths.looks_binary(data):
+                continue
+            out.append((rel, data))
     out.sort(key=lambda item: item[0])
     return out
 

@@ -89,3 +89,46 @@ def test_embedding_requests_send_text_not_token_ids(fake_embeddings: type[_Embed
         payload = request["input"]
         values = [payload] if isinstance(payload, str) else payload
         assert all(isinstance(value, str) for value in values), request
+
+
+class _PickyClient:
+    """Rejects a whole batch when any input is too long — Ollama's 413 behaviour."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if any(len(text) > self.limit for text in texts):
+            raise RuntimeError("Error code: 413 - the input length exceeds the context length")
+        return [[float(len(text)), 1.0] for text in texts]
+
+
+def test_one_oversized_input_does_not_drop_the_whole_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rejected chunk must cost that chunk, not the project's entire index.
+
+    The old all-or-nothing call raised on the first bad batch, so zero vectors
+    were written and the next run retried the same set forever.
+    """
+    from app.models import embeddings
+
+    monkeypatch.setattr(model_config, "build_embeddings", lambda: _PickyClient(limit=4))
+    progress: list[tuple[int, int]] = []
+    vectors = embeddings.embed_texts(
+        ["abc", "abcdefgh", "ab"],
+        batch_size=3,
+        on_batch=lambda done, total: progress.append((done, total)),
+    )
+
+    assert vectors is not None
+    assert [vector is not None for vector in vectors] == [True, False, True]
+    assert progress == [(3, 3)]
+
+
+def test_oversized_input_is_retried_with_a_shorter_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.models import embeddings
+
+    monkeypatch.setattr(model_config, "build_embeddings", lambda: _PickyClient(limit=3000))
+    vectors = embeddings.embed_texts(["x" * 7000], batch_size=1)
+
+    assert vectors is not None and vectors[0] is not None
+    assert vectors[0][0] == 3000.0, "the fallback should keep the longest prefix the model accepts"

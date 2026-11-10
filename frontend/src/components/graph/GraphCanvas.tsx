@@ -167,6 +167,11 @@ export function GraphCanvas({
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
   const labelFrame = useRef(0)
+  /** vis emits `stabilizationIterationsDone` only for a pass it started itself. */
+  const settleDone = useRef(false)
+  const settleRef = useRef<(() => void) | null>(null)
+  const settleTimer = useRef(0)
+  const stabilizePending = useRef(false)
   const viewport = () => ({
     width: hostRef.current?.clientWidth ?? 1200,
     height: hostRef.current?.clientHeight ?? 800,
@@ -184,19 +189,26 @@ export function GraphCanvas({
   }
 
   // Seed coordinates from the last settled layout before the network exists, so
-  // a remount can skip a multi-second stabilisation entirely.
-  const seeded = useRef<Map<string, { x: number; y: number }> | null>(null)
-  if (seeded.current === null && !fitted.current) {
+  // a remount can skip a multi-second stabilisation entirely. Recomputed once per
+  // build: a new `layoutKey` means a different topology, so the previous build's
+  // coordinates (and cached map) do not apply to it.
+  const seed = useRef<{ key: string; positions: Map<string, { x: number; y: number }> | null }>({
+    key: '',
+    positions: null,
+  })
+  if (seed.current.key !== layoutKey) {
     const ids = nodes.map(node => node.id)
     const cached = recallPositions(layoutKey, ids)
     const hits = ids.reduce((count, id) => count + (persistedPositions.has(id) ? 1 : 0), 0)
-    seeded.current = cached
-      ?? (ids.length && hits / ids.length >= 0.8 ? persistedPositions : null)
+    seed.current = {
+      key: layoutKey,
+      positions: cached ?? (ids.length && hits / ids.length >= 0.8 ? persistedPositions : null),
+    }
   }
 
   useEffect(() => {
     if (!hostRef.current) return
-    const usePhysics = !seeded.current
+    const usePhysics = !seed.current.positions
     const options: Options = {
       physics: {
         enabled: usePhysics,
@@ -234,7 +246,14 @@ export function GraphCanvas({
     networkRef.current = network
     fitted.current = false
     appliedFocus.current = null
-    if (usePhysics) setSettling(true)
+    settleDone.current = false
+    stabilizePending.current = usePhysics
+    setSettling(usePhysics)
+    if (usePhysics) {
+      // Backstop for a build that never receives nodes: without it the overlay
+      // would stay up and the simulation would keep running on an empty canvas.
+      settleTimer.current = window.setTimeout(() => settleRef.current?.(), 15_000)
+    }
     network.on('zoom', () => {
       if (labelFrame.current) return
       labelFrame.current = window.requestAnimationFrame(() => {
@@ -247,6 +266,13 @@ export function GraphCanvas({
       if (typeof event.nodes[0] === 'string') activateRef.current?.(event.nodes[0])
     })
     const settle = () => {
+      if (settleDone.current) return
+      settleDone.current = true
+      stabilizePending.current = false
+      if (settleTimer.current) {
+        window.clearTimeout(settleTimer.current)
+        settleTimer.current = 0
+      }
       network.setOptions({ physics: { enabled: false } })
       const positions = network.getPositions()
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
@@ -263,7 +289,14 @@ export function GraphCanvas({
         applyLabels(network, datasets.nodes, nodesRef.current, varsRef.current, selectedRef.current, viewport())
       }
     }
+    settleRef.current = settle
+    // The event only fires for a stabilization pass vis started itself. The
+    // network is constructed empty on purpose (data arrives in the next effect),
+    // and `stabilize()` bails out on an empty body without emitting — which is
+    // exactly how the canvas used to spin forever with physics running. The
+    // explicit pass below plus `stabilized` and the timer make settling certain.
     network.once('stabilizationIterationsDone', settle)
+    network.once('stabilized', settle)
     network.on('dragEnd', () => {
       const positions = network.getPositions()
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
@@ -272,6 +305,10 @@ export function GraphCanvas({
     return () => {
       if (labelFrame.current) window.cancelAnimationFrame(labelFrame.current)
       labelFrame.current = 0
+      if (settleTimer.current) window.clearTimeout(settleTimer.current)
+      settleTimer.current = 0
+      settleRef.current = null
+      settleDone.current = true
       network.destroy()
       networkRef.current = null
     }
@@ -286,7 +323,7 @@ export function GraphCanvas({
     const ids = new Set(nodes.map(node => node.id))
     datasets.nodes.remove(datasets.nodes.getIds().filter(id => !ids.has(String(id))))
     const maxDegree = Math.max(1, ...nodes.map(node => node.degree))
-    const positions = seeded.current ?? new Map(Object.entries(network.getPositions()))
+    const positions = seed.current.positions ?? new Map(Object.entries(network.getPositions()))
     datasets.nodes.update(nodes.map((node, index): Node => {
       const color = communityColor(theme, node.community)
       const title = document.createElement('div')
@@ -348,8 +385,26 @@ export function GraphCanvas({
       fitVisible(network)
       fitted.current = true
     }
+    // The network was built before any node existed, so the stabilization pass
+    // vis ran at construction had nothing to move and never reported back. Ask
+    // for a real pass now that the data is in. The timer is the safety net: if
+    // vis swallows the event (or the graph is too big to finish), physics still
+    // gets switched off instead of drifting for the rest of the session.
+    if (stabilizePending.current && nodes.length) {
+      stabilizePending.current = false
+      const iterations = nodes.length > 1200 ? 80 : 140
+      window.requestAnimationFrame(() => {
+        if (settleDone.current) return
+        networkRef.current?.stabilize(iterations)
+      })
+      if (settleTimer.current) window.clearTimeout(settleTimer.current)
+      settleTimer.current = window.setTimeout(
+        () => settleRef.current?.(),
+        Math.min(30_000, 8_000 + nodes.length * 5),
+      )
+    }
     applyLabels(network, datasets.nodes, nodes, vars, selectedId, viewport())
-    seeded.current = null
+    seed.current = { key: layoutKey, positions: null }
   }, [nodes, edges, theme, vars, selectedId, datasets])
 
   // Dim everything except the selected node's one-hop neighbourhood.

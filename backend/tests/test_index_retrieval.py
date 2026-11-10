@@ -159,14 +159,17 @@ def test_unreadable_entry_does_not_abort_scan(project: dict, monkeypatch):
 
     root = Path(project["path"])
     (root / "unreadable.py").write_text("value = 1\n", encoding="utf-8")
-    original_is_dir = Path.is_dir
+    original_stat = Path.stat
 
-    def is_dir(self):
+    # A locked artifact raises when the scan touches it (WinError 1920). Patching
+    # ``stat`` rather than ``is_dir`` keeps this test honest for any traversal:
+    # every candidate file is stat-ed, directories are pruned before that.
+    def stat(self, *args, **kwargs):
         if self.name == "unreadable.py":
             raise OSError(1920, "cannot access", str(self))
-        return original_is_dir(self)
+        return original_stat(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "is_dir", is_dir)
+    monkeypatch.setattr(Path, "stat", stat)
     stats = indexer.index_project(project["id"])
     assert stats["files"] >= 2
     with get_conn() as conn:
@@ -219,6 +222,80 @@ def test_lockfiles_and_vendor_dirs_are_skipped(project: dict):
         paths = {r["path"] for r in conn.execute("SELECT path FROM indexed_files")}
     assert {"package-lock.json", "uv.lock", "bundle.js.map"} & paths == set()
     assert not any(p.startswith("_internal/") for p in paths)
+
+
+def test_renamed_build_output_and_binaries_never_reach_the_index(project: dict):
+    """A ``release-linux-021`` tree is not ``release``; binaries are rejected anyway.
+
+    Bundled blobs decode into thousands of U+FFFD, and one such chunk is enough
+    to make an embedding batch exceed the model context (HTTP 413) — which used
+    to fail every run while the sidebar kept re-embedding the same thousands of
+    chunks.
+    """
+    from app.core.db import get_conn
+
+    root = Path(project["path"])
+    packed = root / "desktop" / "release-linux-021" / "linux-unpacked"
+    (packed / "resources" / "frontend").mkdir(parents=True)
+    (packed / "resources" / "frontend" / "chunk-abc.js").write_text("export const a = 1\n", encoding="utf-8")
+    (packed / "v8_context_snapshot.bin").write_bytes(b"\x00\x01snapshot\x00\xff" * 200)
+    (packed / "chrome-sandbox").write_bytes(b"\x7fELF\x00\x00binary")
+    (root / "blob.dat").write_bytes(b"\x00\x00\x00binary payload")
+    (root / "src").mkdir()
+    (root / "src" / "real.py").write_text("def real():\n    return 1\n", encoding="utf-8")
+
+    indexer.index_project(project["id"], force=True)
+
+    with get_conn() as conn:
+        paths = {r["path"] for r in conn.execute("SELECT path FROM indexed_files")}
+        contents = [r["content"] for r in conn.execute("SELECT content FROM chunks")]
+    assert not any(p.startswith("desktop/release-linux-021/") for p in paths)
+    assert "blob.dat" not in paths
+    assert "src/real.py" in paths
+    assert not any("\ufffd" in content for content in contents), "binary garbage became a chunk"
+
+
+def test_graph_builder_reads_the_same_corpus_as_the_indexer(project: dict):
+    """When the two disagree, bundled files become graph nodes (2.6k-node canvases)."""
+    from app.graph import builder
+
+    root = Path(project["path"])
+    packed = root / "desktop" / "release-clean" / "linux-unpacked"
+    packed.mkdir(parents=True)
+    (packed / "main.js").write_text("function main() {}\n", encoding="utf-8")
+    (packed / "icudtl.dat").write_bytes(b"\x00icu data")
+
+    rels = {rel for rel, _ in builder.collect_sources(root)}
+    assert not any(rel.startswith("desktop/") for rel in rels)
+
+
+def test_progress_write_failure_does_not_abort_the_index(project: dict, monkeypatch):
+    """Reporting progress must never kill the run it reports on.
+
+    A transient SQLite error ("attempt to write a readonly database" while another
+    process checkpointed the file) used to surface as a failed index job even
+    though the corpus was fine, and the next run succeeded.
+    """
+    import sqlite3
+
+    from app.storage import repo
+
+    job_id = repo.create_job("index", project["id"])
+    real_update = repo.update_job
+    calls = {"n": 0}
+
+    def flaky_update(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise sqlite3.OperationalError("attempt to write a readonly database")
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(indexer.repo, "update_job", flaky_update)
+    stats = indexer.index_project(project["id"], job_id=job_id, force=True)
+
+    assert stats["files"] > 0
+    job = repo.get_job(job_id)
+    assert job is not None and job["status"] == "done"
 
 
 def test_configured_embeddings_backfill_vectors_without_rechunking(project: dict, monkeypatch):

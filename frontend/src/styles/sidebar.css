@@ -578,6 +578,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A run can finish with the corpus indexed but vectors missing (an embedding
+ * provider rejected some chunks). Hiding that behind a green "已完成" badge made
+ * the failure look like a stuck progress bar, so the card states it. */
+.index-card .index-warn {
+  margin: 6px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--danger);
+}
+
 /* --------------------------------- notes --------------------------------- */
 
 .sidebar-scroll.padded {
