@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
 from watchfiles import DefaultFilter, watch
 
+from app.core.config import settings
 from app.core.db import GRAPH_SCOPE_CODE, drop_graph_cache, get_conn, utcnow, write_conn
 from app.indexing.chunker import chunk_file
 from app.indexing.languages import detect_language
@@ -50,41 +51,60 @@ class _ProjectWatchFilter(DefaultFilter):
             relative = target.relative_to(self.root)
         except ValueError:
             return False
-        if any(part in paths.DEFAULT_IGNORES for part in relative.parts):
+        if any(paths.is_ignored_dir(part) for part in relative.parts):
             return False
         return not paths.skip_file(target.name) and target.suffix.lower() not in paths.BINARY_SUFFIXES
 
 
 def _iter_files(root: Path):
-    for path in root.rglob("*"):
-        if path.is_dir():
-            continue
-        rel_parts = path.relative_to(root).parts
-        if any(part in paths.DEFAULT_IGNORES for part in rel_parts):
-            continue
-        if path.suffix.lower() in paths.BINARY_SUFFIXES:
-            continue
-        if paths.skip_file(path.name):
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        if stat.st_size > MAX_FILE_BYTES or stat.st_size == 0:
-            continue
-        yield path, stat
+    """Candidate source files, pruning ignored directories during the walk.
+
+    ``Path.rglob`` descends into every directory, including ``release-*`` build
+    output, and a single ``stat`` failure there (WinError 1920 on a locked binary)
+    aborted the whole index run. Walking with ``os.walk`` lets ignored trees be
+    skipped instead of merely filtered.
+    """
+    for current, dirnames, filenames in os.walk(root, onerror=lambda _: None):
+        dirnames[:] = [name for name in dirnames if not paths.is_ignored_dir(name)]
+        base = Path(current)
+        for name in filenames:
+            path = base / name
+            if path.suffix.lower() in paths.BINARY_SUFFIXES or paths.skip_file(name):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if stat.st_size > MAX_FILE_BYTES or stat.st_size == 0:
+                continue
+            yield path, stat
 
 
 def _read_text(path: Path) -> str | None:
+    """Decoded source text, or ``None`` when the file is not really text.
+
+    The index used to accept anything that decoded with ``errors="replace"``, so
+    bundled binaries (``app.asar``, ``v8_context_snapshot.bin``, extension-less
+    executables) became chunks of U+FFFD. A single such chunk is enough to blow an
+    embedding batch past the model's context and fail the whole run, so they are
+    rejected here instead of downstream.
+    """
     try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        try:
-            return path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return None
+        data = path.read_bytes()
     except OSError:
         return None
+    if paths.looks_binary(data):
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = data.decode("utf-8", "replace")
+        bad = text.count("\ufffd")
+        # A legacy-encoded source file has a handful of stray replacements; a
+        # binary blob is mostly garbage. Only the latter is dropped.
+        if bad and bad > max(8, len(text) // 100):
+            return None
+        return text
 
 
 def clear_index(project_id: int) -> None:
@@ -115,8 +135,17 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
     root = paths.resolve_root(project["path"])
 
     def progress(pct: int, msg: str, stats: dict | None = None, status: str = "running") -> None:
-        if job_id:
+        if not job_id:
+            return
+        try:
             repo.update_job(job_id, status=status, progress=max(0, min(100, pct)), message=msg, stats=stats)
+        except Exception:
+            # Reporting progress must never abort the work it reports on. A
+            # momentary SQLite hiccup ("database is locked", a transient readonly
+            # handle after another process touched the file) used to fail the whole
+            # run at the very first checkpoint, leaving "索引失败" for a corpus that
+            # was actually fine one retry later.
+            log.warning("job %s progress update failed", job_id, exc_info=True)
 
     progress(1, "扫描文件…")
     files = list(_iter_files(root))
@@ -152,6 +181,10 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
 
         text = _read_text(path)
         if text is None:
+            # Binary or undecodable. Leaving it in ``seen_paths`` would protect
+            # chunks a previous release created for it, so mark it stale instead
+            # and let the prune pass below remove them.
+            seen_paths.discard(rel)
             continue
         language = detect_language(rel, text)
         digest = f"chunk-v{CHUNK_FORMAT_VERSION}:" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
@@ -254,27 +287,41 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
             pending_vectors.setdefault(int(row["id"]), str(row["content"]))
 
     if pending_vectors and model_name:
-        progress(92, f"生成向量 {len(pending_vectors)} 段…", stats)
         items = list(pending_vectors.items())
-        texts = [content for _, content in items]
-        for attempt in range(3):
+        total = len(items)
+        batch = max(1, settings.index_batch_size)
+        written = 0
+        failed = 0
+        progress(92, f"生成向量 0/{total} 段…", stats)
+        # Persist batch by batch. The previous single all-or-nothing call meant a
+        # failure at chunk 3000 discarded the work done on the first 2999, and the
+        # UI showed "文件 0 片段 0 向量 0" for the whole run.
+        for start in range(0, total, batch):
+            slice_ = items[start : start + batch]
             try:
-                vectors = emb.embed_texts(texts)
-                if vectors:
-                    with write_conn() as conn:
-                        for (chunk_id, _), vector in zip(items, vectors, strict=False):
-                            conn.execute(
-                                "UPDATE chunks SET vector = ?, embed_model = ? WHERE id = ?",
-                                (emb.pack(vector), model_name, chunk_id),
-                            )
-                    stats["vectors"] = len(vectors)
-                break
-            except Exception as exc:  # keyword search remains available while vectors retry
-                if attempt == 2:
-                    log.warning("embedding failed after retries: %s", exc)
-                    stats["embedding_error"] = f"{type(exc).__name__}: {exc}"[:300]
-                else:
-                    time.sleep(1 + attempt * 2)
+                vectors = emb.embed_texts([content for _, content in slice_], batch_size=batch)
+            except Exception as exc:  # keyword search stays available either way
+                log.warning("embedding batch failed: %s", exc)
+                vectors = None
+            if not vectors:
+                failed += len(slice_)
+            else:
+                with write_conn() as conn:
+                    for (chunk_id, _), vector in zip(slice_, vectors, strict=False):
+                        if not vector:
+                            failed += 1
+                            continue
+                        conn.execute(
+                            "UPDATE chunks SET vector = ?, embed_model = ? WHERE id = ?",
+                            (emb.pack(vector), model_name, chunk_id),
+                        )
+                        written += 1
+            stats["vectors"] = written
+            done = min(start + batch, total)
+            progress(92 + int(done / total * 7), f"生成向量 {done}/{total} 段…", stats)
+        if failed:
+            stats["embedding_error"] = f"{failed}/{total} 段无法生成向量（可能超出嵌入模型上下文）"
+            log.warning("embedding: %d/%d chunk(s) have no vector", failed, total)
 
     # Notes are chunks too (path = note://<id>), so a rebuild must put them back:
     # the file scan above only knows about files on disk, and clear_index wipes
@@ -301,7 +348,10 @@ def index_project(project_id: int, job_id: int | None = None, force: bool = Fals
         )
 
     repo.mark_project_indexed(project_id)
-    progress(100, "索引完成", stats, status="done")
+    if stats.get("embedding_error"):
+        progress(100, "索引完成（部分向量化失败）", stats, status="done")
+    else:
+        progress(100, "索引完成", stats, status="done")
     return stats
 
 

@@ -47,3 +47,26 @@ def test_is_ignored_matches_default_set():
     assert paths.is_ignored("node_modules")
     assert paths.is_ignored(".git")
     assert not paths.is_ignored("src")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["release", "release-021", "release-linux-021", "release-clean", "linux-unpacked", "dist-electron"],
+)
+def test_build_output_dirs_are_ignored(name: str):
+    """electron-builder renames its output dir; an exact match on "release" misses it.
+
+    Bundled binaries under those trees used to enter the corpus and broke
+    embedding for the whole project (see test_index_retrieval).
+    """
+    assert paths.is_ignored_dir(name)
+
+
+@pytest.mark.parametrize("name", ["release-notes", "releases", "src", "desktop", "docs"])
+def test_source_dirs_are_not_mistaken_for_build_output(name: str):
+    assert not paths.is_ignored_dir(name)
+
+
+def test_looks_binary_detects_blobs():
+    assert paths.looks_binary(b"\x7fELF\x00\x00\x00")
+    assert not paths.looks_binary(b"def main():\n    return 0\n")

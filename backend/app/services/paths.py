@@ -4,6 +4,7 @@ the project root. Symlinks are resolved before the check.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from app.core.errors import InvalidInput
@@ -55,6 +56,27 @@ DEFAULT_IGNORES = {
     "third_party",
     "third-party",
 }
+
+# electron-builder does not only write ``release``: it writes versioned and
+# renamed copies next to it (``release-021``, ``release-linux-021``,
+# ``release-clean``) plus a ``*-unpacked`` tree per platform. An exact-name match
+# misses every one of them, which is how bundled binaries (``app.asar``,
+# ``v8_context_snapshot.bin``, ``chrome-sandbox``) ended up in the retrieval
+# index — and eventually broke embedding for the whole project.
+IGNORED_DIR_PATTERNS = (
+    # electron-builder output: release-021, release-linux-021, release-win-x64-021
+    re.compile(r"^release(?:[-_.][a-z0-9]+)*[-_.]\d+$", re.IGNORECASE),
+    # renamed copies that carry no version stamp
+    re.compile(r"^release[-_.](?:clean|unpacked|build|temp|test)$", re.IGNORECASE),
+    re.compile(
+        r"^release[-_.](?:linux|win|win32|win64|mac|darwin|macos|arm64|x64|armv7l)(?:[-_.].*)?$",
+        re.IGNORECASE,
+    ),
+    # <platform>-unpacked trees, and dist-* variants of the same thing
+    re.compile(r".*-unpacked$", re.IGNORECASE),
+    re.compile(r"^unpacked$", re.IGNORECASE),
+    re.compile(r"^dist-.*$", re.IGNORECASE),
+)
 
 # Files that are technically text but never useful as reading material.
 IGNORED_FILENAMES = {
@@ -120,6 +142,21 @@ BINARY_SUFFIXES = {
     ".mov",
     ".sqlite",
     ".db",
+    # Electron / native bundles: snapshots, asar archives, ICU data, addons.
+    # They decode "successfully" via errors="replace" into thousands of U+FFFD,
+    # which is exactly what makes an embedding batch exceed the model context.
+    ".bin",
+    ".asar",
+    ".dat",
+    ".node",
+    ".wasm",
+    ".pdb",
+    ".blob",
+    ".snapshot",
+    ".o",
+    ".obj",
+    ".a",
+    ".lib",
 }
 
 
@@ -147,7 +184,24 @@ def relative_to(root: Path, path: Path) -> str:
 
 
 def is_ignored(name: str) -> bool:
-    return name in DEFAULT_IGNORES
+    """True for a directory that is never source (exact name or build output)."""
+    if name in DEFAULT_IGNORES:
+        return True
+    return any(pattern.match(name) for pattern in IGNORED_DIR_PATTERNS)
+
+
+# Aliases used across the indexer and the graph builder; both must describe the
+# same corpus or the graph and the retrieval index disagree about what a project is.
+is_ignored_dir = is_ignored
+
+
+def looks_binary(data: bytes) -> bool:
+    """True when a file head looks like a blob rather than text.
+
+    Extension-less executables (``chrome-sandbox``) and ``.bin`` snapshots slip
+    past a suffix blacklist. A NUL byte in the head is a reliable, cheap signal.
+    """
+    return b"\x00" in data[:8192]
 
 
 def skip_file(path_name: str) -> bool:

@@ -70,7 +70,14 @@ export interface Job {
   progress: number
   message: string
   /** `skipped` and `project_id` are returned but not part of the contract. */
-  stats: { files: number; chunks: number; vectors: number; skipped?: number } | null
+  stats: {
+    files: number
+    chunks: number
+    vectors: number
+    skipped?: number
+    /** Present when some chunks could not be embedded, e.g. context overflow. */
+    embedding_error?: string
+  } | null
   error: string | null
 }
 

@@ -66,7 +66,7 @@ def _embed(text: str) -> tuple[str | None, bytes | None]:
     for attempt in range(3):
         try:
             vectors = emb.embed_texts([text])
-            if vectors:
+            if vectors and vectors[0]:
                 return model, emb.pack(vectors[0])
             return None, None
         except Exception as exc:  # saving and keyword search must survive model outages

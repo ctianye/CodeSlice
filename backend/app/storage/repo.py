@@ -8,10 +8,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from typing import Any
 
 from app.core.db import GRAPH_SCOPE_CODE, drop_graph_cache, drop_notes_graph_cache, get_conn, utcnow, write_conn
+
+# SQLite reports contention as "database is locked"/"database is busy", and a
+# transient handle (another process checkpointing, a virus scanner holding the
+# file) as "attempt to write a readonly database". Both clear on their own.
+_TRANSIENT_SQLITE = ("locked", "busy", "readonly")
+
+
+def _retryable(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return any(word in message for word in _TRANSIENT_SQLITE)
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -370,8 +381,18 @@ def update_job(
     sets.append("updated_at = ?")
     params.append(utcnow())
     params.append(job_id)
-    with write_conn() as conn:
-        conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?", params)
+    statement = f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?"
+    # A background job updating its own progress is the least important write in
+    # the app; it should survive a momentary lock instead of failing the run.
+    for attempt in range(3):
+        try:
+            with write_conn() as conn:
+                conn.execute(statement, params)
+            return
+        except sqlite3.OperationalError as exc:
+            if attempt == 2 or not _retryable(exc):
+                raise
+            time.sleep(0.15 * (attempt + 1))
 
 
 def get_job(job_id: int) -> dict[str, Any] | None:
@@ -380,6 +401,24 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     if row:
         row["stats"] = _json(row.get("stats"))
     return row
+
+
+def interrupt_stale_jobs() -> int:
+    """Close jobs a previous process left running.
+
+    ``_ACTIVE_JOBS`` lives in memory, so killing the backend (or the app) in the
+    middle of an index run leaves the row at ``running`` with its last message and
+    progress. The sidebar then polls forever and shows "进行中 · 生成向量 3103 段…"
+    for work that no longer exists.
+    """
+    with write_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE jobs SET status = 'error', message = '任务已中断',"
+            " error = '应用退出导致任务中断，请重新索引', updated_at = ?"
+            " WHERE status IN ('pending', 'running')",
+            (utcnow(),),
+        )
+        return int(cursor.rowcount or 0)
 
 
 # --------------------------------------------------------------------------- #

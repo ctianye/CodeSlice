@@ -64,6 +64,14 @@ async def lifespan(_: FastAPI):
     _configure_logging()
     settings.ensure_dirs()
     init_db()
+    # A job row left at "running" by the previous process would keep the sidebar
+    # spinning on progress that no thread is producing any more.
+    try:
+        interrupted = repo.interrupt_stale_jobs()
+        if interrupted:
+            log.info("marked %d interrupted job(s) from the previous run", interrupted)
+    except Exception:  # cleanup must never block startup
+        log.warning("stale job cleanup failed", exc_info=True)
     # Opening the app is a good moment to drop conversations the user started and
     # never typed into; only ones older than an hour go, so a half-written draft
     # survives a restart.
