@@ -49,19 +49,39 @@ you back to the original source.
 ### Explore code and notes in separate graphs
 
 Switch between independent code and note graphs with the same static canvas.
-Expand individual communities, search and focus a node, or hover to inspect it;
-only community centers carry labels. The inspector rail can summarize the
-selected node and every direct neighbor using your configured model.
-Conversations can jump to their related code nodes. Note links record shared
-folders, projects or file references; they do not assert semantic similarity.
+Filter relation families, show or hide whole communities, search and focus a
+node, or hover to inspect it; only community centers carry labels. The inspector
+rail lists callers and callees and can summarize the selected node and every
+direct neighbor using your configured model. Conversations can jump to their
+related code nodes. Note links record shared folders, projects or file
+references; they do not assert semantic similarity.
 
-![Explore related saved notes in the CodeSlice knowledge graph](docs/screenshots/knowledge-graph.png)
+![Explore code dependencies in the CodeSlice knowledge graph](docs/screenshots/knowledge-graph.png)
 
-代码图谱与笔记图谱独立切换，共用静态画布和右侧检查器栏，跟随浅色 / 深色主题。图谱构建一次即持久化到本地数据库，再次打开瞬时呈现。支持社区逐簇收起 / 展开、搜索定位、悬浮详情、AI 总结全部直接邻点，以及从对话定位到对应代码节点。详见 [图谱交互与验证](docs/GRAPH_EXPLORER.md)。
+代码图谱与笔记图谱独立切换，共用静态画布和右侧检查器栏，跟随浅色 / 深色主题。图谱构建一次即持久化到本地数据库，再次打开瞬时呈现。支持按关系族筛选、按社区显示 / 隐藏、搜索定位、悬浮详情、AI 总结全部直接邻点，以及从对话定位到对应代码节点。详见 [图谱交互与验证](docs/GRAPH_EXPLORER.md)。
+
+## What's new in v0.2
+
+- **Knowledge graphs for code and notes.** Each project gets a local graph built
+  from Tree-sitter AST evidence and persisted in SQLite, rendered on a static
+  canvas with community colours, relation-family filters, search and focus.
+- **AI relationship summaries.** Select a node to list its callers and callees
+  and stream a summary of the node and its direct neighbours; the inspector
+  becomes a draggable bottom panel in narrow layouts.
+- **Persistent code annotations.** Select a code range, add a collapsible
+  annotation card, and keep it attached to the file and line range.
+- **Conversation ↔ graph navigation.** Jump from an answer to the corresponding
+  graph node, and ask about a node directly from the graph.
+- **Reading and editing.** In-place Markdown editing, configurable agent
+  prompts, and binary files reported as binary instead of decoded to mojibake.
+- **More accurate retrieval and edges.** Cross-language false links were removed;
+  cross-file calls now require AST and explicit import evidence.
+- Refreshed screenshots, a Linux packaging configuration, and Graphify
+  attribution with a NOTICE and third-party license copy.
 
 ## Getting started
 
-1. Download `CodeSlice-0.1.0-Setup.exe` from the [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest) and install it on Windows 10 or 11.
+1. Download `CodeSlice-0.2.0-Setup.exe` from the [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest) and install it on Windows 10 or 11.
 2. Start CodeSlice and add a local repository by selecting its folder.
 3. Open a source file, select the code you want to understand, and ask a question in the conversation pane.
 4. Open **Settings → Model** to configure a compatible model provider and API key. The key is stored in Windows Credential Manager.
@@ -128,6 +148,20 @@ See [local development](#本地开发), [architecture](docs/ARCHITECTURE.md), an
 Contributions and issue reports are welcome. For changes to the application,
 please explain the problem, reproduction steps, and expected behavior.
 
+## Acknowledgements
+
+The knowledge-graph design — the Tree-sitter AST extraction pipeline, the
+relation vocabulary, and the canvas visual language — is modelled on
+[Graphify](https://github.com/Graphify-Labs/graphify), Copyright 2026 Safi
+Shamsi and the Graphify contributors, and is used under the Apache License 2.0.
+CodeSlice is an independent implementation; see [NOTICE](NOTICE) and
+[THIRD_PARTY_LICENSES/Graphify-Apache-2.0.txt](THIRD_PARTY_LICENSES/Graphify-Apache-2.0.txt)
+for the attribution terms.
+
+CodeSlice also builds on React, Monaco Editor, FastAPI, LangGraph, Tree-sitter,
+and vis-network; their licenses are declared in the respective package
+manifests.
+
 > 本地优先的「代码阅读」智能体桌面应用。把任意一个代码仓库拖进来，边读边问，
 > 每个回答都带可点击的文件/行号引用；需要动文件或跑命令时，逐条向你申请授权。
 
@@ -140,6 +174,7 @@ CodeSlice 是一个跑在你机器上的 Electron 桌面程序 + 本地 Python �
 
 ## 目录
 
+- [v0.2 更新](#v02-更新)
 - [核心特性](#核心特性)
 - [架构](#架构)
 - [技术栈](#技术栈)
@@ -148,8 +183,27 @@ CodeSlice 是一个跑在你机器上的 Electron 桌面程序 + 本地 Python �
 - [构建与打包](#构建与打包)
 - [数据与凭据](#数据与凭据)
 - [安全模型](#安全模型)
-- [V1 范围与路线图](#v1-范围与路线图)
+- [已实现功能](#已实现功能)
 - [常见问题](#常见问题)
+- [致谢](#致谢)
+
+---
+
+## v0.2 更新
+
+- **知识图谱**：代码与笔记各有一张本地图谱。代码图谱由 Tree-sitter AST 与显式
+  import 证据构建，结果持久化到 SQLite；画布支持关系族筛选、按社区显示 / 隐藏、
+  搜索定位和悬浮详情，双击节点直接打开代码或笔记。
+- **AI 关系解读**：在检查器里查看节点的调用者 / 被调用者，并让模型流式总结节点与
+  全部直接邻点；窄窗口下检查器变为可拖动的底部面板。
+- **代码批注**：选中代码即可添加持久、可折叠的批注卡片，跟随文件与行号保存。
+- **对话与图谱互通**：回答可定位到对应图谱节点，图谱节点也能直接发起提问或打开源码。
+- **阅读体验**：Markdown 就地编辑、Agent 提示词可配置；二进制文件只显示文件信息，
+  不再解码成乱码。
+- **检索与图谱准确性**：修正跨语言误连，跨文件调用必须有 AST / import 证据；
+  完善向量检索与相关测试。
+- **发布**：版本号统一到 0.2.0，新增 Linux 打包配置，README 截图更新，并补充
+  Graphify 署名与 NOTICE。
 
 ---
 
@@ -211,7 +265,7 @@ CodeSlice 是一个跑在你机器上的 Electron 桌面程序 + 本地 Python �
 **启动握手**：后端在真正开始监听之后，向 stdout 打印一行
 
 ```
-CODESLICE_READY {"port": 54746, "token": "xN-Nxo...", "version": "0.1.0"}
+CODESLICE_READY {"port": 54746, "token": "xN-Nxo...", "version": "0.2.0"}
 ```
 
 Electron 主进程读到这一行才知道该连哪个端口、用什么 Token。
@@ -340,7 +394,7 @@ cd desktop; npm run dev
 # 1) 后端 → packaging\dist-backend\codeslice-backend.exe（扁平布局）
 pwsh -File packaging\build_backend.ps1
 
-# 2) 前端 + Electron → desktop\release\CodeSlice-0.1.0-Setup.exe
+# 2) 前端 + Electron → desktop\release\CodeSlice-0.2.0-Setup.exe
 pwsh -File packaging\build_desktop.ps1
 ```
 
@@ -460,9 +514,7 @@ CodeSlice 按「不信任本地服务的调用方」来设计——因为同一�
 
 ---
 
-## V1 范围与路线图
-
-**V1 已实现**
+## 已实现功能
 
 - 单项目、单用户、本地运行
 - Tree-sitter 结构化切块 + FTS5/向量混合检索
@@ -644,17 +696,6 @@ Base URL：
 「文件 7 / 片段 7 / 向量 0」，看起来像索引是空的。未配置向量模型时 `vectors` 恒为 0，
 检索退回关键词模式，这是正常状态而不是失败。
 
-**后续（V1 之外）**
-
-| 方向 | 说明 |
-| --- | --- |
-| 三维知识图谱 | 把模块依赖、调用关系、对话脉络可视化成可导航的三维图 |
-| 热力图 | 按修改频率 / 对话关注度 / 复杂度给文件与函数着色 |
-| MCP 文档导入 | 通过 MCP 接入外部文档源（Confluence、Notion 等），与代码一起检索 |
-| 多语言 LSP | 用语言服务器替代/补充 Tree-sitter，获得跨文件符号解析 |
-| 全文重构智能体 | 跨文件、多步、可回滚的批量改动 |
-| 多用户 / 云端同步 | V1 明确不做——数据留在本机是这个产品的核心承诺 |
-
 ---
 
 ## 常见问题
@@ -729,7 +770,7 @@ uv run fastapi dev app/main.py --port 8123
 **Q：安装后 `CodeSlice.exe` 是 Electron 的默认图标？**
 
 说明打包时 rcedit 那一步没生效。正常的打包输出里应该有
-`[ok] icon verified: ...` 与 `[ok] version info: CodeSlice 0.1.0.0`。
+`[ok] icon verified: ...` 与 `[ok] version info: CodeSlice 0.2.0.0`。
 原因是 `desktop/electron-builder.yml` 里 `signAndEditExecutable: false`（本地不签名），
 electron-builder 因此跳过写图标/版本；而打开它的替代路径需要解压含符号链接的
 winCodeSign 包，非管理员做不到。`packaging\build_desktop.ps1` 改为
@@ -751,6 +792,22 @@ electron-builder 不会清理 `extraResources` 的旧文件，增量构建可能
 
 ---
 
+## 致谢
+
+知识图谱的设计——Tree-sitter AST 抽取管线、关系词表与画布视觉语言——参考了
+[Graphify](https://github.com/Graphify-Labs/graphify)（Copyright 2026 Safi Shamsi
+and the Graphify contributors，Apache License 2.0）。CodeSlice 为独立实现，
+署名与许可条款见 [NOTICE](NOTICE) 与
+[THIRD_PARTY_LICENSES/Graphify-Apache-2.0.txt](THIRD_PARTY_LICENSES/Graphify-Apache-2.0.txt)。
+
+项目同时依赖 React、Monaco Editor、FastAPI、LangGraph、Tree-sitter、vis-network
+等开源项目，许可信息以各自包清单为准。
+
+---
+
 ## 许可
 
-未定。此仓库处于早期开发阶段。
+本项目以 MIT 许可证发布，见 [LICENSE](LICENSE)。知识图谱的设计参考了
+[Graphify](https://github.com/Graphify-Labs/graphify)（Apache License 2.0），
+相关署名与许可证副本见 [NOTICE](NOTICE) 和
+[THIRD_PARTY_LICENSES/Graphify-Apache-2.0.txt](THIRD_PARTY_LICENSES/Graphify-Apache-2.0.txt)。

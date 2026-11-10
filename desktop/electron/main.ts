@@ -88,7 +88,8 @@ function saveBounds(window: BrowserWindow): void {
 // ---------------------------------------------------------------------------
 
 function backendExecutable(): string {
-  return join(process.resourcesPath, 'backend', 'codeslice-backend.exe')
+  const name = process.platform === 'win32' ? 'codeslice-backend.exe' : 'codeslice-backend'
+  return join(process.resourcesPath, 'backend', name)
 }
 
 /**

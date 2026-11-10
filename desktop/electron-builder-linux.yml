@@ -1,0 +1,46 @@
+appId: com.codeslice.app
+productName: CodeSlice
+copyright: Copyright © 2026 CodeSlice
+
+directories:
+  output: release
+  buildResources: build-assets
+
+# Renderer bundle + compiled Electron main/preload + manifest.
+files:
+  - dist/**
+  - electron/**
+  - package.json
+  - '!electron/*.ts'
+  - '!electron/tsconfig.json'
+  - '!**/*.map'
+
+# Linux uses the platform-specific PyInstaller bundle produced in WSL.
+# The backend is a flat directory: codeslice-backend + _internal/.
+extraResources:
+  - from: build-assets/icon.png
+    to: icon.png
+  - from: ../packaging/dist-backend-linux
+    to: backend
+    filter:
+      - '**/*'
+  # The backend serves this same renderer over http://127.0.0.1.
+  - from: dist
+    to: frontend
+    filter:
+      - '**/*'
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: build-assets/icon.png
+  category: Development
+  maintainer: CodeSlice
+  synopsis: Local-first code reading assistant
+  description: Read code, ask grounded questions, and build a local knowledge graph.
+  artifactName: ${productName}-${version}-${arch}.${ext}

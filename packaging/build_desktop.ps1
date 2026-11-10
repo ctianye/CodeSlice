@@ -460,7 +460,7 @@ if ($script:Failures -gt 0) { Exit-WithResult }
 
 # Version strings for VERSIONINFO, taken from desktop/package.json so the
 # metadata can never drift from the artifact name.
-$appVersion = '0.1.0'
+$appVersion = '0.2.0'
 $pkgJson = Join-Path $DesktopDir 'package.json'
 if (Test-Path -LiteralPath $pkgJson) {
     try {
