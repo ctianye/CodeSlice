@@ -1,6 +1,6 @@
 # CodeSlice 打包流水线 / Packaging pipeline
 
-本目录负责把 CodeSlice 打包成 Windows / Linux 桌面程序。产物由两部分拼装而成：
+本目录负责把 CodeSlice 打包成 Windows / macOS / Linux 桌面程序。产物由两部分拼装而成：
 
 1. **后端**：`backend/`（FastAPI + LangGraph）经 PyInstaller 打成 one-dir 可执行包；
 2. **前端**：`frontend/`（Vite + React）构建成静态资源，由 `desktop/`（Electron）加载，
@@ -189,11 +189,34 @@ Linux 安装包（AppImage / deb / rpm）**不能**在 Windows 上打：后端�
 `CodeSlice-<ver>-arm64.AppImage`、`CodeSlice-<ver>-arm64.deb`、
 `CodeSlice-<ver>-aarch64.rpm`。
 
+**A2. 在 macOS 上构建 DMG**
+
+macOS 的 PyInstaller 产物同样不能用其他平台交叉编译，必须在对应架构的 macOS 上运行：
+
+```bash
+./packaging/build_mac.sh --arch arm64   # Apple Silicon
+./packaging/build_mac.sh --arch x64     # Intel
+```
+
+脚本会：
+
+1. 用 uv 创建 Python 3.11 环境，安装 `backend` 与 `requirements-packaging.txt`；
+2. PyInstaller 输出到 `packaging/dist-backend-mac`，压平为
+   `codeslice-backend` + `_internal/`；
+3. 跑一次 `codeslice-backend --selftest`（含 tree-sitter 与 keyring 后端检查）；
+4. 构建前端与 Electron 主进程，再用 `electron-builder --mac` 生成 DMG。
+
+DMG 输出到 `desktop/release-mac/`，文件名是
+`CodeSlice-<ver>-arm64.dmg` 或 `CodeSlice-<ver>-x64.dmg`。仅做 ad-hoc 签名、未使用
+Developer ID、未公证；CI 通过 `CSC_IDENTITY_AUTO_DISCOVERY=false` 跳过 Apple 签名，
+再由 `desktop/scripts/after-pack-adhoc.js` 给 app 做 ad-hoc 签名。安装后首次启动需右键
+「打开」或执行 `xattr -dr com.apple.quarantine /Applications/CodeSlice.app`。
+
 **B. 推 tag 走 GitHub Actions**
 
 `.github/workflows/release.yml` 在推送 `v*` 标签（或手动触发）时并行构建 Windows、
-Linux x64 与 Linux arm64，把安装包和 `SHA256SUMS-<tag>.txt` 一并挂到对应的 GitHub
-Release。Linux 构建使用 `ubuntu-22.04` / `ubuntu-22.04-arm` 原生 runner，并通过 uv
+Linux x64、Linux arm64、macOS x64 与 macOS arm64，把安装包和 `SHA256SUMS-<tag>.txt`
+一并挂到对应的 GitHub Release。Linux 构建使用 `ubuntu-22.04` / `ubuntu-22.04-arm` 原生 runner，并通过 uv
 管理 Python 3.11；不依赖本机 WSL/Docker。
 
 ---
@@ -371,6 +394,7 @@ PyInstaller 默认产出**嵌套**目录 `dist-backend\codeslice-backend\codesli
 | `build_backend.ps1` | 后端构建 + 自检 + 冒烟测试 + 扁平化产物布局 |
 | `build_desktop.ps1` | 前端构建 + 三步安装器构建 + 布局/图标/前端版本校验 |
 | `build_linux.sh` | Linux 后端 + AppImage / deb / rpm（在 Linux 或 WSL 中运行） |
+| `build_mac.sh` | macOS 后端 + DMG（在对应架构的 macOS 上运行） |
 | `README.md` | 本文件 |
 
 运行时产物（均被 `.gitignore` 忽略，不入库）：

@@ -1,0 +1,55 @@
+appId: com.codeslice.app
+productName: CodeSlice
+copyright: Copyright © 2026 CodeSlice
+
+directories:
+  # Keep macOS artifacts separate from the Windows/Linux output directories.
+  output: release-mac
+  buildResources: build-assets
+
+# Apple Silicon requires at least an ad-hoc signature. electron-builder's own
+# signing is disabled (no Developer ID in CI), so this hook signs the assembled
+# app before the DMG is created.
+afterPack: scripts/after-pack-adhoc.js
+
+# Renderer bundle + compiled Electron main/preload + manifest.
+files:
+  - dist/**
+  - electron/**
+  - package.json
+  - '!electron/*.ts'
+  - '!electron/tsconfig.json'
+  - '!**/*.map'
+
+# The backend is a flat PyInstaller one-dir bundle built on the same macOS
+# architecture as the runner: codeslice-backend + _internal/.
+extraResources:
+  - from: build-assets/icon.png
+    to: icon.png
+  - from: ../packaging/dist-backend-mac
+    to: backend
+    filter:
+      - '**/*'
+  # The backend serves this same renderer over http://127.0.0.1.
+  - from: dist
+    to: frontend
+    filter:
+      - '**/*'
+
+mac:
+  # Architecture comes from the CLI (--x64 / --arm64) so one config covers the
+  # Intel and Apple Silicon jobs.
+  target: dmg
+  category: public.app-category.developer-tools
+  icon: build-assets/icon.png
+  # No Developer ID certificate in CI: skip Apple signing/notarization, then
+  # ad-hoc sign in afterPack so arm64 apps are still runnable.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+  darkModeSupport: true
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+dmg:
+  title: ${productName} ${version}

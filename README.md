@@ -5,6 +5,7 @@
 CodeSlice 是一款本地优先的 AI 代码阅读桌面应用。添加代码仓库后，打开文件、选中代码并开始提问。回答附有可点击的文件与行号引用；AI 需要写文件或运行命令时，先由你审核授权。
 
 **[下载 Windows 版](https://github.com/ctianye/CodeSlice/releases/latest)** ·
+**[下载 macOS 版](https://github.com/ctianye/CodeSlice/releases/latest)** ·
 **[下载 Linux 版](https://github.com/ctianye/CodeSlice/releases/latest)** ·
 [全部版本](https://github.com/ctianye/CodeSlice/releases) ·
 [MIT 许可](LICENSE)
@@ -12,11 +13,14 @@ CodeSlice 是一款本地优先的 AI 代码阅读桌面应用。添加代码仓
 | 平台 | 架构 | 安装包 |
 | --- | --- | --- |
 | Windows 10 / 11 | x64 | `CodeSlice-0.2.3-Setup.exe` |
+| macOS 11+ | Apple Silicon（arm64） | `CodeSlice-0.2.3-arm64.dmg` |
+| macOS 10.15+ | Intel（x64） | `CodeSlice-0.2.3-x64.dmg` |
 | Linux（Ubuntu 22.04+ / Debian 12+） | x86_64 | `CodeSlice-0.2.3-x86_64.AppImage`、`-amd64.deb`、`-x86_64.rpm` |
 | Linux（Ubuntu 22.04+ / Debian 12+） | arm64 | `CodeSlice-0.2.3-arm64.AppImage`、`-arm64.deb`、`-aarch64.rpm` |
 
-安装包由 GitHub Actions 在对应的原生 runner 上构建：Windows 使用 NSIS，Linux 使用
-AppImage / deb / rpm。界面文案目前以中文为主，仓库同时提供英文 README 辅助说明。
+安装包由 GitHub Actions 在对应的原生 runner 上构建：Windows 使用 NSIS，macOS 使用
+DMG，Linux 使用 AppImage / deb / rpm。暂未提供 Windows ARM64 与 Linux ARMv7 安装包。
+界面文案目前以中文为主，仓库同时提供英文 README 辅助说明。
 
 ![CodeSlice 项目选择与本地项目列表](docs/screenshots/welcome.png)
 
@@ -138,9 +142,12 @@ references; they do not assert semantic similarity.
 - **Linux 包不再依赖新 glibc**：GitHub Actions 的 Linux 构建改用 uv 管理的 CPython，
   后端不再把构建机的 `GLIBC_2.38` 带进 AppImage；构建末尾会扫描所有二进制，超过
   `GLIBC_2.35` 直接失败。Linux 包改为在原生 x64 与 arm64 runner 上分别构建。
-- **发布流程交给 GitHub**：推送 `v*` 标签后自动构建 Windows NSIS、Linux x64 / arm64
-  的 AppImage / deb / rpm，生成 `SHA256SUMS` 并附加到 Release。Windows 构建会自动
-  下载 rcedit，不再依赖构建机预热 electron-builder 缓存。
+- **macOS 安装包**：GitHub Actions 在 Intel（`macos-15-intel`）与 Apple Silicon
+  （`macos-15`）runner 上分别构建 DMG；仅做 ad-hoc 签名，未使用 Developer ID、未公证，首次启动
+  需要右键「打开」或移除 quarantine 属性。
+- **发布流程交给 GitHub**：推送 `v*` 标签后自动构建 Windows NSIS、macOS x64/arm64
+  DMG、Linux x64 / arm64 的 AppImage / deb / rpm，生成 `SHA256SUMS` 并附加到
+  Release。Windows 构建会自动下载 rcedit，不再依赖构建机预热 electron-builder 缓存。
 - **发布**：版本号统一到 0.2.3。
 
 <details>
@@ -164,10 +171,13 @@ references; they do not assert semantic similarity.
   uv-managed CPython, so the AppImage no longer inherits the runner's
   `GLIBC_2.38`; the build scans every bundled binary and fails above
   `GLIBC_2.35`. Linux artifacts are now built natively on x64 and arm64 runners.
-- **GitHub owns the release build.** A `v*` tag builds Windows NSIS plus Linux
-  x64/arm64 AppImage, deb, and rpm packages, writes `SHA256SUMS`, and attaches
-  everything to the release. Windows CI downloads rcedit automatically instead
-  of relying on a warm electron-builder cache.
+- **macOS packages.** CI builds separate DMGs on Intel (`macos-15-intel`) and
+  Apple Silicon (`macos-15`) runners. They are unsigned and not notarized;
+  first launch needs right-click → Open or removal of the quarantine attribute.
+- **GitHub owns the release build.** A `v*` tag builds Windows NSIS, macOS
+  x64/arm64 DMGs, and Linux x64/arm64 AppImage, deb, and rpm packages, writes
+  `SHA256SUMS`, and attaches everything to the release. Windows CI downloads
+  rcedit automatically instead of relying on a warm electron-builder cache.
 
 </details>
 
@@ -240,8 +250,9 @@ references; they do not assert semantic similarity.
 ## 快速开始
 
 1. 从 [最新 GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest)
-   下载对应平台的安装包：Windows 使用 `CodeSlice-0.2.3-Setup.exe`；Linux 按架构选择
-   x86_64 或 arm64 的 AppImage、`.deb`、`.rpm`。
+   下载对应平台的安装包：Windows 使用 `CodeSlice-0.2.3-Setup.exe`；macOS 按芯片选择
+   arm64（Apple Silicon）或 x64（Intel）的 `.dmg`；Linux 按架构选择 x86_64 或 arm64
+   的 AppImage、`.deb`、`.rpm`。
 2. 启动 CodeSlice，点击添加项目并选择本地代码仓库所在的文件夹。
 3. 打开源文件，选中你想理解的代码，在对话面板提问。
 4. 打开 **设置 → 模型**，配置兼容的模型服务与 API Key。Key 保存在系统的凭据管理器
@@ -260,8 +271,9 @@ API Key 保存在系统凭据管理器中。
 
 1. Download the package for your platform from the
    [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest):
-   `CodeSlice-0.2.3-Setup.exe` for Windows, or the x86_64 / arm64 AppImage,
-   `.deb`, or `.rpm` for Linux.
+   `CodeSlice-0.2.3-Setup.exe` for Windows; an arm64 (Apple Silicon) or x64
+   (Intel) `.dmg` for macOS; or the x86_64 / arm64 AppImage, `.deb`, or `.rpm`
+   for Linux.
 2. Start CodeSlice and add a local repository by selecting its folder.
 3. Open a source file, select the code you want to understand, and ask a
    question in the conversation pane.
@@ -324,8 +336,9 @@ manually deleting the user data directory removes that local data.
 
 ## 运行要求
 
-- Windows 10（1809 或更高版本）或 Windows 11；或 Linux x86_64 / arm64
-  （Ubuntu 22.04+、Debian 12+，AppImage / `.deb` / `.rpm`）。
+- Windows 10（1809 或更高版本）或 Windows 11；macOS 11+（Apple Silicon）或
+  macOS 10.15+（Intel）；或 Linux x86_64 / arm64（Ubuntu 22.04+、Debian 12+，
+  AppImage / `.deb` / `.rpm`）。
 - 需要配置兼容的模型服务和你自己的 API Key 才能获得 AI 回答。支持在本地配置的
   模型服务。
 
@@ -335,8 +348,9 @@ manually deleting the user data directory removes that local data.
 <details>
 <summary>English</summary>
 
-- Windows 10 (version 1809 or later) or Windows 11, or Linux x86_64 / arm64
-  (Ubuntu 22.04+, Debian 12+; AppImage, deb, or rpm).
+- Windows 10 (version 1809 or later) or Windows 11; macOS 11+ (Apple Silicon)
+  or macOS 10.15+ (Intel); or Linux x86_64 / arm64 (Ubuntu 22.04+,
+  Debian 12+; AppImage, deb, or rpm).
 - A compatible model provider and your own API key for AI answers. Local model
   providers are supported where configured.
 
@@ -349,8 +363,12 @@ not need to install Python, Node.js, or developer tools.
 
 ## 已知限制
 
-- 预编译安装包面向 Windows 10/11 与 Linux x86_64 / arm64（AppImage / deb / rpm），
-  均未做代码签名。界面文案目前以中文为主，英文 README 仅作文档辅助。
+- 预编译安装包面向 Windows 10/11（x64）、macOS 11+ / 10.15+（arm64 / x64）与
+  Linux x86_64 / arm64（AppImage / deb / rpm），均未使用 Developer ID 代码签名；
+  macOS 包仅做 ad-hoc 签名且未公证。
+  界面文案目前以中文为主，英文 README 仅作文档辅助。
+- macOS 首次启动可能被 Gatekeeper 拦截：右键 CodeSlice →「打开」，或执行
+  `xattr -dr com.apple.quarantine /Applications/CodeSlice.app`。
 - AppImage 需要系统提供 FUSE；Ubuntu 22.04+ 若未安装 `libfuse2`，可先
   `sudo apt install libfuse2`，或使用 `--appimage-extract-and-run` 解包运行。
 - 模型回答依赖已配置的模型服务；API 费用与服务商的数据保留政策取决于你的服务与套餐。
@@ -364,9 +382,12 @@ not need to install Python, Node.js, or developer tools.
 <details>
 <summary>English</summary>
 
-- Prebuilt packages target Windows 10/11 and Linux x86_64 / arm64 (AppImage,
-  deb, rpm); none of them are code-signed. The UI is currently Chinese-first;
-  the English README is documentation assistance only.
+- Prebuilt packages target Windows 10/11 (x64), macOS 11+ / 10.15+ (arm64 /
+  x64), and Linux x86_64 / arm64 (AppImage, deb, rpm); none are code-signed and
+  the macOS builds are not notarized. The UI is currently Chinese-first; the
+  English README is documentation assistance only.
+- On first macOS launch, Gatekeeper may block the app: right-click CodeSlice →
+  Open, or run `xattr -dr com.apple.quarantine /Applications/CodeSlice.app`.
 - AppImage needs FUSE. On Ubuntu 22.04+ install `libfuse2`, or run with
   `--appimage-extract-and-run`.
 - Model responses require a configured provider; API charges and provider
@@ -482,7 +503,7 @@ Electron 主进程读到这一行才知道该连哪个端口、用什么 Token�
 
 | 层 | 技术 | 选型理由 |
 | --- | --- | --- |
-| 桌面壳 | Electron + electron-builder（NSIS / AppImage / deb / rpm） | 需要管理子进程、原生文件对话框、系统凭据 |
+| 桌面壳 | Electron + electron-builder（NSIS / DMG / AppImage / deb / rpm） | 需要管理子进程、原生文件对话框、系统凭据 |
 | 界面 | React 18 + TypeScript + Vite 5 | 成熟的编辑器周边生态，构建快 |
 | 代码显示 | Monaco Editor | 与 VS Code 同源，语法高亮与 diff 开箱即用 |
 | API | FastAPI + Uvicorn | 原生 async、SSE 简单、Pydantic 校验 |
@@ -633,12 +654,25 @@ CI）中运行：
 
 PyInstaller 产物必须在目标架构的 Linux 上生成，不能从 Windows 交叉编译；arm64 包同理，
 需要 arm64 runner 或 arm64 机器。GitHub Actions 已按架构分别构建：推送 `v*` 标签后，
-Windows、Linux x64、Linux arm64 会并行打包，汇总后自动创建 / 更新 Release 并上传
-`SHA256SUMS-v0.2.3.txt`。也可以手动触发 `release` workflow（只构建和上传 Actions
-artifact，不创建 Release）。
+Windows、macOS x64/arm64、Linux x64/arm64 会并行打包，汇总后自动创建 / 更新 Release
+并上传 `SHA256SUMS-v0.2.3.txt`。也可以手动触发 `release` workflow；填写
+`publish_tag` 可把本次构建发布到已有的 tag（不填则只上传 Actions artifact）。
 
 AppImage / deb / rpm 输出到 `desktop/release-linux/`。只想重新打包前端或复用已有后端时，
 可加 `--skip-backend`。
+
+macOS DMG 使用另一条脚本（必须在 macOS 上运行）：
+
+```bash
+./packaging/build_mac.sh --arch arm64   # Apple Silicon
+./packaging/build_mac.sh --arch x64     # Intel
+```
+
+脚本用 uv 创建同一架构的 Python 环境，PyInstaller 后端与 Electron 主进程都由本机架构
+生成；输出在 `desktop/release-mac/`。DMG 仅做 ad-hoc 签名，不使用 Developer ID、
+未公证；CI 通过 `CSC_IDENTITY_AUTO_DISCOVERY=false` 跳过 Apple 签名，再由
+`afterPack` 钩子给 app 做 ad-hoc 签名，首次启动按上面的 Gatekeeper 说明处理。
+GitHub Actions 使用 `macos-15-intel`（x64）与 `macos-15`（arm64）两个原生 runner。
 
 > 注意：`uv sync` / `uv run` 会把 PyInstaller 从 `backend\.venv` 里卸掉（它只在
 > `packaging\requirements-packaging.txt` 里）。同步过依赖之后，重跑
@@ -675,24 +709,27 @@ backend\.venv\Scripts\python.exe backend\scripts\check_packaged_notes.py --base 
 | --- | --- |
 | Windows 安装版（`CodeSlice.exe`） | `%APPDATA%\codeslice-desktop\` |
 | Windows 开发版（`uv run fastapi dev` / `codeslice-backend.exe` 手工启动） | `%LOCALAPPDATA%\CodeSlice\` |
+| macOS 安装版 | `~/Library/Application Support/codeslice-desktop/` |
+| macOS 开发版 | `~/.codeslice/` |
 | Linux 安装版 | `~/.config/codeslice-desktop/`（默认） |
 | Linux 开发版 | `~/.codeslice/` |
 | `scripts\dev.ps1` 一键启动 | 仓库下 `.devdata\` |
 
 原因是：安装版由 Electron 主进程显式设置 `CODESLICE_DATA_DIR=app.getPath('userData')`，
 而 `app.getPath('userData')` 取 `package.json` 的 `name`（`codeslice-desktop`），所以
-Windows 下是 `%APPDATA%\codeslice-desktop`，Linux 下是
+Windows 下是 `%APPDATA%\codeslice-desktop`，macOS 下是
+`~/Library/Application Support/codeslice-desktop`，Linux 下是
 `~/.config/codeslice-desktop`；开发模式下没人设置该变量，后端回落到
 `backend/app/core/config.py` 的默认值（Windows 为 `%LOCALAPPDATA%\CodeSlice`，
-Linux 为 `~/.codeslice`）。
+macOS / Linux 为 `~/.codeslice`）。
 
 | 内容 | 位置 |
 | --- | --- |
 | SQLite 数据库 | `<数据目录>/codeslice.db` |
 | 日志 | `<数据目录>/logs/backend.log` |
 | LangGraph 检查点 | `<数据目录>/checkpoints.db` |
-| 窗口尺寸等桌面状态 | 仅安装版：Windows 为 `%APPDATA%\codeslice-desktop\window-state.json`，Linux 为 `~/.config/codeslice-desktop/window-state.json` |
-| 模型 API Key | 系统凭据管理器（Windows 凭据管理器 / Linux Secret Service），服务名 **`codeslice`** |
+| 窗口尺寸等桌面状态 | 仅安装版：Windows 为 `%APPDATA%\codeslice-desktop\window-state.json`，macOS 为 `~/Library/Application Support/codeslice-desktop/window-state.json`，Linux 为 `~/.config/codeslice-desktop/window-state.json` |
+| 模型 API Key | 系统凭据管理器（Windows 凭据管理器 / macOS Keychain / Linux Secret Service），服务名 **`codeslice`** |
 | 会话 Token | 仅进程内存，每次启动随机生成 |
 
 可用环境变量 `CODESLICE_DATA_DIR` 覆盖数据目录（开发脚本会指向仓库下的 `.devdata\`）。
@@ -781,7 +818,7 @@ CodeSlice 按「不信任本地服务的调用方」来设计——因为同一�
 - 模型配置（OpenAI 兼容 / Anthropic）+ 连通性测试
 - 本地向量模型一键下载：设置页内置 `bge-m3` / `qwen3-embedding:0.6b` 两个预设，
   通过本机 Ollama 下载并自动写入 Embedding 配置（切换模型后提示重建索引）
-- PyInstaller 后端 + electron-builder NSIS / AppImage / deb / rpm 安装包
+- PyInstaller 后端 + electron-builder NSIS / DMG / AppImage / deb / rpm 安装包
 
 **本地向量模型（Ollama）**
 
@@ -949,6 +986,14 @@ uv run fastapi dev app/main.py
 PyInstaller 产出的 exe 没有代码签名，属于典型误报。点「更多信息 → 仍要运行」，
 或把安装目录加入白名单。正式分发需要购买代码签名证书。
 
+**Q：macOS 上怎么安装？**
+
+下载对应芯片的 DMG（Apple Silicon 用 `arm64`，Intel 用 `x64`），打开后把 CodeSlice
+拖进「应用程序」。安装包仅做 ad-hoc 签名、未公证，首次启动若被 Gatekeeper 拦截：
+
+- 右键 CodeSlice →「打开」→ 再点「打开」；或
+- 执行 `xattr -dr com.apple.quarantine /Applications/CodeSlice.app` 后再启动。
+
 **Q：Linux 上怎么安装？**
 
 - AppImage：`chmod +x CodeSlice-0.2.3-x86_64.AppImage` 后直接运行，不需要安装；
@@ -989,10 +1034,11 @@ packaging\dist-backend\codeslice-backend.exe --selftest
 
 **Q：数据存在哪？卸载会删吗？**
 
-Windows 安装版在 `%APPDATA%\codeslice-desktop\`，Linux 安装版在
-`~/.config/codeslice-desktop/`；开发版分别在 `%LOCALAPPDATA%\CodeSlice\` 与
-`~/.codeslice/`（详见[数据与凭据](#数据与凭据)）。卸载程序默认保留这些目录
-（`deleteAppDataOnUninstall: false`，避免误删笔记与对话）；
+Windows 安装版在 `%APPDATA%\codeslice-desktop\`，macOS 安装版在
+`~/Library/Application Support/codeslice-desktop/`，Linux 安装版在
+`~/.config/codeslice-desktop/`；开发版分别为 `%LOCALAPPDATA%\CodeSlice\`、
+`~/.codeslice/` 与 `~/.codeslice/`（详见[数据与凭据](#数据与凭据)）。卸载程序默认
+保留这些目录（`deleteAppDataOnUninstall: false`，避免误删笔记与对话）；
 需要彻底清理时手动删除即可。API Key 在系统凭据管理器中，需单独删除。
 
 **Q：能同时打开多个项目吗？**

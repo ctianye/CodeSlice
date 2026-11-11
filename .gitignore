@@ -111,3 +111,4 @@ acl-recovery/
 desktop/release-linux/
 desktop/release-*/
 packaging/dist-backend-linux/
+packaging/dist-backend-mac/

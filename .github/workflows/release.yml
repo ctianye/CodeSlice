@@ -1,7 +1,7 @@
 name: release
 
-# Builds the Windows installer and the Linux packages (AppImage / deb / rpm) for
-# a version tag, then attaches them to that GitHub release.
+# Builds the Windows installer, the Linux packages (AppImage / deb / rpm), and
+# the macOS DMGs for a version tag, then attaches them to that GitHub release.
 #
 # Linux runs on native x64 and arm64 runners. The backend is bundled with
 # uv-managed CPython, which is linked against an old glibc, so the AppImage does
@@ -11,6 +11,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: Build all platforms and publish to this existing tag
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -116,10 +121,49 @@ jobs:
             desktop/release-linux/*.rpm
           if-no-files-found: error
 
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Backend bundle + DMG (${{ matrix.arch }})
+        run: |
+          chmod +x packaging/build_mac.sh
+          ./packaging/build_mac.sh --arch ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: desktop/release-mac/*.dmg
+          if-no-files-found: error
+
   publish:
-    needs: [windows, linux]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_tag != ''
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.publish_tag || github.ref_name }}
     steps:
       # gh release create --generate-notes needs a git checkout (and the full
       # history) to build the notes; this job previously failed with
@@ -136,13 +180,22 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum * | sed 's#  .*/#  #' > "SHA256SUMS-${GITHUB_REF_NAME}.txt"
-          cat "SHA256SUMS-${GITHUB_REF_NAME}.txt"
+          sha256sum * | sed 's#  .*/#  #' > "SHA256SUMS-${TAG}.txt"
+          cat "SHA256SUMS-${TAG}.txt"
 
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "CodeSlice $GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          NOTES="docs/releases/${TAG}.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            if [ -f "$NOTES" ]; then gh release edit "$TAG" --notes-file "$NOTES"; fi
+          else
+            if [ -f "$NOTES" ]; then
+              gh release create "$TAG" --title "CodeSlice $TAG" --notes-file "$NOTES"
+            else
+              gh release create "$TAG" --title "CodeSlice $TAG" --generate-notes
+            fi
+            gh release upload "$TAG" dist/* --clobber
+          fi
