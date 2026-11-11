@@ -65,8 +65,8 @@ packaging\dist-backend\            # 扁平布局，与 electron-builder 的 ext
 └── _internal\                     # Python 运行时、依赖、语法库
 
 desktop\release\
-├── CodeSlice-0.2.5-Setup.exe      # NSIS 安装器（最终交付物）
-├── CodeSlice-0.2.5-Setup.exe.blockmap
+├── CodeSlice-0.2.6-Setup.exe      # NSIS 安装器（最终交付物）
+├── CodeSlice-0.2.6-Setup.exe.blockmap
 └── win-unpacked\
     ├── CodeSlice.exe              # 已写入图标 + 版本信息（见第 3 节三步构建）
     └── resources\
@@ -261,7 +261,7 @@ PyInstaller 产出的 exe 没有代码签名，且自解压行为与部分启发
 ### 安装后的 `CodeSlice.exe` 是 Electron 默认图标 / 属性里显示 "Electron"
 
 说明 rcedit 那一步没生效。正常构建会打印
-`[ok] icon verified: <hash>` 和 `[ok] version info: CodeSlice 0.2.5.0`。
+`[ok] icon verified: <hash>` 和 `[ok] version info: CodeSlice 0.2.6.0`。
 
 * 若脚本自动下载 rcedit 失败（离线环境）：手动下载
   `https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe`，
@@ -418,6 +418,6 @@ PyInstaller 默认产出**嵌套**目录 `dist-backend\codeslice-backend\codesli
    `[ok] icon verified`、`[ok] version info: CodeSlice`、
    `[ok] packaged exe keeps the CodeSlice icon after repackaging`、
    `[ok] packaged backend present`、`[ok] packaged renderer is current: assets/index-*.js`；
-3. `desktop\release\CodeSlice-0.2.5-Setup.exe` 存在，脚本会打印其大小与 SHA256；
+3. `desktop\release\CodeSlice-0.2.6-Setup.exe` 存在，脚本会打印其大小与 SHA256；
 4. 可直接对安装后的后端复跑自检：
    `desktop\release\win-unpacked\resources\backend\codeslice-backend.exe --selftest`。
