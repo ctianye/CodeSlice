@@ -691,3 +691,18 @@ export interface HoverResult {
   line?: number
   reason?: string | null
 }
+
+
+export interface LatestReleaseAsset {
+  name: string
+  browser_download_url: string
+}
+
+export interface LatestRelease {
+  tag_name: string
+  html_url: string
+  body: string
+  prerelease: boolean
+  draft: boolean
+  assets: LatestReleaseAsset[]
+}

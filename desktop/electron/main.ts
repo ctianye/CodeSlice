@@ -326,6 +326,7 @@ function registerIpc(info: BackendInfo): void {
       apiBase: isDev ? '' : info.baseUrl,
       token: info.token,
       platform: process.platform,
+      arch: process.arch,
     }
   })
 }

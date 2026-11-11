@@ -10,6 +10,7 @@ export interface CodesliceBridge {
   pickFolder: () => Promise<string | null>
   openExternal: (url: string) => Promise<void>
   platform: string
+  arch: string
   minimize: () => Promise<void>
   toggleMaximize: () => Promise<boolean>
   closeWindow: () => Promise<void>

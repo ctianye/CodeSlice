@@ -10,6 +10,7 @@ interface BackendInfoPayload {
   apiBase: string
   token: string
   platform: string
+  arch: string
 }
 
 function readBackendInfo(): BackendInfoPayload {
@@ -19,9 +20,10 @@ function readBackendInfo(): BackendInfoPayload {
       apiBase: typeof info?.apiBase === 'string' ? info.apiBase : '',
       token: typeof info?.token === 'string' ? info.token : '',
       platform: typeof info?.platform === 'string' ? info.platform : process.platform,
+      arch: typeof info?.arch === 'string' ? info.arch : process.arch,
     }
   } catch {
-    return { apiBase: '', token: '', platform: process.platform }
+    return { apiBase: '', token: '', platform: process.platform, arch: process.arch }
   }
 }
 
@@ -31,6 +33,7 @@ const bridge = {
   apiBase: backend.apiBase,
   token: backend.token,
   platform: backend.platform,
+  arch: backend.arch,
   /** Opens the native directory picker; resolves to null when cancelled. */
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('codeslice:pick-folder') as Promise<string | null>,
   /** Opens an http(s) URL in the system browser. */

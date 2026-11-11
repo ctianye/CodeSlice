@@ -8,14 +8,14 @@ export function ReleaseDetails({ release }: { release: AppRelease }): ReactNode 
   return <div className="release-notice">
     <strong>发现新版本 v{release.version}</strong>
     <p className="release-notes">{release.notes.slice(0, 2000) || '此版本暂无更新说明。'}</p>
-    <p>下载后请退出 CodeSlice，再运行安装包并覆盖原安装目录。正常覆盖安装会保留本机笔记、批注、对话和配置；请勿先删除应用数据。</p>
+    <p>下载后请退出 CodeSlice，再安装新版本并覆盖原安装位置。正常升级会保留本机笔记、批注、对话和配置；请勿先删除应用数据。</p>
     <div className="release-actions">
       <button className="primary small" type="button" onClick={() => openExternal(release.downloadUrl ?? release.url)}>
-        <Icon name="download" size={12} />{release.downloadUrl ? '下载 Windows 安装包' : '查看 Release 下载'}
+        <Icon name="download" size={12} />{release.downloadUrl ? release.downloadLabel : '查看 Release 下载'}
       </button>
       <button className="ghost small" type="button" onClick={() => openExternal(release.url)}>更新详情</button>
     </div>
-    <span className="hint">将在默认浏览器中下载，下载完成后手动运行安装包。</span>
+    <span className="hint">将在默认浏览器中下载；安装包未签名，首次启动请按 Release 页说明处理。</span>
   </div>
 }
 

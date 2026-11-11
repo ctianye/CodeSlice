@@ -36,6 +36,7 @@ from app.api import (
     projects,
     system,
     terminal,
+    updates,
 )
 from app.api import settings as settings_api
 from app.core.config import APP_NAME, VERSION, settings
@@ -150,6 +151,7 @@ def create_app() -> FastAPI:
         graph_api.router,
         graph_code.router,
         navigation.router,
+        updates.router,
     ):
         app.include_router(module, prefix="/api")
 

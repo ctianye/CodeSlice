@@ -23,6 +23,7 @@ import type {
   HoverResult,
   IndexStatus,
   Job,
+  LatestRelease,
   ModelSettings,
   ModelSettingsUpdate,
   ModelTestResult,
@@ -122,6 +123,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 /** GET /api/health — the only unauthenticated endpoint. */
 export const getHealth = (signal?: AbortSignal): Promise<Health> => request<Health>('/api/health', { signal })
+
+/** GET /api/updates/latest — backend-cached GitHub release lookup. */
+export const getLatestRelease = (signal?: AbortSignal): Promise<LatestRelease> =>
+  request<LatestRelease>('/api/updates/latest', { signal })
 
 /* -------------------------------- projects --------------------------------- */
 

@@ -1,12 +1,13 @@
-import { getHealth } from '../api'
+import { getHealth, getLatestRelease } from '../api'
+import { bridge } from '../bridge'
 
 export const REPOSITORY_URL = 'https://github.com/ctianye/CodeSlice'
-const RELEASE_API = 'https://api.github.com/repos/ctianye/CodeSlice/releases/latest'
 
 export interface AppRelease {
   version: string
   url: string
   downloadUrl: string | null
+  downloadLabel: string
   notes: string
 }
 
@@ -48,30 +49,58 @@ function githubUrl(value: unknown, prefix: string): string | null {
   }
 }
 
+
+/** The renderer's platform, with a browser-dev fallback (no Electron bridge). */
+function currentTarget(): { platform: string; arch: string } {
+  if (bridge?.platform) return { platform: bridge.platform, arch: bridge.arch }
+  const ua = navigator.userAgent
+  const platform = ua.includes('Mac') ? 'darwin' : ua.includes('Linux') ? 'linux' : 'win32'
+  return { platform, arch: /arm64|aarch64/i.test(ua) ? 'arm64' : 'x64' }
+}
+
+/** Pick the installer for this machine from the release asset list. */
+function pickDownload(assets: Array<{ name: string; browser_download_url: string }>): { url: string | null; label: string } {
+  const { platform, arch } = currentTarget()
+  const find = (pattern: RegExp) => assets.find((asset) => pattern.test(asset.name))
+  let asset: { name: string; browser_download_url: string } | undefined
+  let label = '查看 Release 下载'
+  if (platform === 'win32') {
+    asset = find(/^CodeSlice-.*-Setup\.exe$/i)
+    label = '下载 Windows 安装包'
+  } else if (platform === 'darwin') {
+    asset = arch === 'arm64' ? find(/-arm64\.dmg$/i) : find(/-x64\.dmg$/i)
+    label = arch === 'arm64' ? '下载 macOS 安装包（Apple Silicon）' : '下载 macOS 安装包（Intel）'
+  } else if (platform === 'linux') {
+    asset = arch === 'arm64' ? find(/-arm64\.AppImage$/i) : find(/-x86_64\.AppImage$/i)
+    label = '下载 Linux AppImage'
+  }
+  return { url: githubUrl(asset?.browser_download_url, '/ctianye/CodeSlice/releases/download/'), label }
+}
+
 export async function checkForRelease(signal?: AbortSignal): Promise<{ currentVersion: string; release: AppRelease | null }> {
   const controller = new AbortController()
   const cancel = () => controller.abort()
   signal?.addEventListener('abort', cancel, { once: true })
   if (signal?.aborted) controller.abort()
-  const timeout = window.setTimeout(cancel, 12000)
+  const timeout = window.setTimeout(cancel, 20000)
   try {
     // Never substitute a fake version while the local service is still loading.
     const health = await getHealth(controller.signal)
-    const response = await fetch(RELEASE_API, {
-      headers: { Accept: 'application/vnd.github+json' }, signal: controller.signal,
-    })
-    if (!response.ok) throw new Error(response.status === 404 ? '仓库尚未发布正式版本。' : `GitHub 检查失败（HTTP ${response.status}）`)
-    const latest = await response.json() as { tag_name?: string; html_url?: string; body?: string; prerelease?: boolean; draft?: boolean; assets?: Array<{ name: string; browser_download_url: string }> }
+    // The backend owns the GitHub request: it caches a successful response and
+    // falls back to the HTML/Atom feed when the unauthenticated API hits its
+    // 60-requests-per-hour limit. Calling api.github.com from the renderer was
+    // what surfaced HTTP 403 to the update panel.
+    const latest = await getLatestRelease(controller.signal)
     const version = latest.tag_name ?? ''
     const newer = compareVersions(version, health.version) > 0
     const url = githubUrl(latest.html_url, '/ctianye/CodeSlice/releases/tag/')
     if (!url) throw new Error('GitHub 返回的 Release 地址无效。')
-    const installer = latest.assets?.find((asset) => /^CodeSlice-.*-Setup\.exe$/i.test(asset.name))
-    const downloadUrl = githubUrl(installer?.browser_download_url, '/ctianye/CodeSlice/releases/download/')
+    const download = pickDownload(latest.assets ?? [])
     return {
       currentVersion: health.version,
       release: newer && !latest.prerelease && !latest.draft ? {
-        version: version.replace(/^v/, ''), url, downloadUrl, notes: typeof latest.body === 'string' ? latest.body : '',
+        version: version.replace(/^v/, ''), url, downloadUrl: download.url, downloadLabel: download.label,
+        notes: typeof latest.body === 'string' ? latest.body : '',
       } : null,
     }
   } catch (error) {
