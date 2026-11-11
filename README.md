@@ -132,7 +132,7 @@ references; they do not assert semantic similarity.
 
 - **检查更新不再被 GitHub 403 卡住**：此前前端直连 GitHub 匿名 API，每小时只有
   60 次额度，共享出口或连续点击就会返回 403。现在由本地后端请求并缓存 30 分钟，
-  API 限流时自动改用 GitHub Release 页面 / Atom 备用源；两者都失败才给出可读提示，
+  API 限流时自动改用 jsDelivr 静态版本源 / GitHub Release 页面 / Atom；都失败才给出可读提示，
   不再把原始 HTTP 403 直接抛到设置页。启动检查和手动检查共用这份缓存。
 - **按平台选择更新包**：Windows 下载 `Setup.exe`；macOS 按 Apple Silicon / Intel
   选择对应 DMG；Linux 选择 AppImage。找不到匹配资产时回到 Release 页面。
@@ -146,8 +146,7 @@ references; they do not assert semantic similarity.
 - **Update checks no longer fail with GitHub 403.** The renderer used to call the
   anonymous GitHub API, which allows only 60 requests per hour per public IP; a
   shared NAT or repeated clicks surfaced HTTP 403. The local backend now fetches
-  and caches the result for 30 minutes, falls back to the GitHub release page /
-  Atom feed when the API is rate-limited, and only reports a readable error when
+  and caches the result for 30 minutes, falls back to a jsDelivr-hosted version file / GitHub release page / Atom feed when the API is rate-limited, and only reports a readable error when
   both fail. Startup and manual checks share the cache.
 - **Platform-aware download.** Windows gets the Setup executable, macOS gets the
   matching Apple Silicon / Intel DMG, and Linux gets the AppImage. If no asset
@@ -709,7 +708,9 @@ GitHub Actions 使用 `macos-15-intel`（x64）与 `macos-15`（arm64）两个�
 > `packaging\requirements-packaging.txt` 里）。同步过依赖之后，重跑
 > `build_backend.ps1` 时**不要**加 `-SkipInstall`。
 
-打包细节、参数与故障排查见 **[packaging/README.md](packaging/README.md)**。
+打包细节、参数与故障排查见 **[packaging/README.md](packaging/README.md)**。发布新版本时，除了
+`package.json` / `pyproject.toml`，还要同步根目录 `version.json` 的 `version`、`tag` 和
+`url`；它是更新检查在 GitHub API 限流时的 CDN 兜底。
 
 ### 验证打包产物
 
@@ -1016,7 +1017,7 @@ uv run fastapi dev app/main.py
 
 旧版由前端直接调用 GitHub 匿名 API，该接口按公网 IP 每小时只允许 60 次；共享出口、
 反复点击或代理出口被多人使用时就会触发限流。v0.2.4 起改由本地后端请求并缓存 30 分钟，
-API 限流时自动回退到 GitHub Release 页面 / Atom 源，设置页不会再收到原始 403。
+API 限流时自动回退到 jsDelivr 静态版本源 / GitHub Release 页面 / Atom，设置页不会再收到原始 403。
 仍在使用旧版的用户，请手动到 [Releases](https://github.com/ctianye/CodeSlice/releases)
 下载一次 v0.2.4 或更新版本。
 
