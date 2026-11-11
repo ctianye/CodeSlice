@@ -101,11 +101,12 @@ MAX_LAYOUT_BYTES = 8 * 1024 * 1024
 MAX_LAYOUT_POSITIONS = 50_000
 
 # Bumped when a settled layout would change shape, even though the graph did not.
-# Version 2 raises the large-graph stabilization pass from 80 to 200 iterations:
-# 80 collapsed a ~2k-node graph into one uniformly dense ball, so any layout it
-# produced is not worth keeping. Stored coordinates are per topology key, so
+# Version 2 raised the large-graph stabilization pass from 80 to 200 iterations.
+# Version 3 retires the layouts saved by the old completion signal: `stabilized`
+# fires at the start of `stabilize()`, so those runs often persisted the seed
+# coordinates as a dense ball. Stored coordinates are per topology key, so
 # including this version retires them once and the next open re-settles.
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
 
 
 def topology_key(graph: dict[str, Any]) -> str:
