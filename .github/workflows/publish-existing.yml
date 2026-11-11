@@ -48,5 +48,5 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes
+            || gh release create "$TAG" --title "CodeSlice $TAG" --generate-notes
           gh release upload "$TAG" dist/* --clobber
