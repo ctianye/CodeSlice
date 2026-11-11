@@ -101,9 +101,32 @@ def extract_all(sources: list[tuple[str, bytes]]) -> list[Extraction]:
 
 def build_graph(sources: list[tuple[str, bytes]] | None = None, *, root: Path | None = None) -> dict[str, Any]:
     """Full pipeline: read → extract → resolve. Returns nodes/edges/stats."""
+    return _build(sources, root, with_index=False)
+
+
+def build_symbol_index(
+    sources: list[tuple[str, bytes]] | None = None,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """The per-occurrence definition/reference index for editor navigation.
+
+    Kept separate from :func:`build_graph` so the graph entry point stays the one
+    tests and callers patch; graph storage reads the sources once and passes them
+    to both builders.
+    """
+    return _build(sources, root, with_index=True)
+
+
+def _build(
+    sources: list[tuple[str, bytes]] | None,
+    root: Path | None,
+    *,
+    with_index: bool,
+) -> dict[str, Any]:
     if sources is None:
         if root is None:
             raise ValueError("build_graph needs either sources or root")
         sources = collect_sources(root)
     extractions = extract_all(sources)
-    return resolve(extractions)
+    return resolve(extractions, with_index=with_index)

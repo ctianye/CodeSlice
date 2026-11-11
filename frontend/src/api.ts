@@ -10,6 +10,7 @@ import type {
   Conversation,
   ConversationDetail,
   CreateConversationBody,
+  DefinitionResult,
   FileContent,
   GeneratedNote,
   GitDiff,
@@ -19,6 +20,7 @@ import type {
   GraphSummaryEvent,
   GraphNode,
   Health,
+  HoverResult,
   IndexStatus,
   Job,
   ModelSettings,
@@ -33,6 +35,7 @@ import type {
   OllamaPullStatus,
   OllamaStatus,
   Project,
+  ReferencesResult,
   ResumeBody,
   RetrievedChunk,
   TreeNode,
@@ -295,6 +298,55 @@ export const locateGraphNode = (
   const params = new URLSearchParams({ path, line: String(line) })
   return request<{ node: GraphNode | null }>(
     `/api/projects/${projectId}/graph/locate?${params.toString()}`,
+    { signal },
+  )
+}
+
+/* ---------------------------- editor navigation ---------------------------- */
+
+/**
+ * The definition under a cursor. 1-based line/column, matching Monaco's
+ * `IPosition`; the backend returns the exact name span so the caller can
+ * highlight the declaration rather than a whole line.
+ */
+export const getDefinition = (
+  projectId: number,
+  path: string,
+  line: number,
+  column: number,
+  signal?: AbortSignal,
+): Promise<DefinitionResult> => {
+  const params = new URLSearchParams({ path, line: String(line), column: String(column) })
+  return request<DefinitionResult>(
+    `/api/projects/${projectId}/definition?${params.toString()}`,
+    { signal },
+  )
+}
+
+export const getReferences = (
+  projectId: number,
+  path: string,
+  line: number,
+  column: number,
+  signal?: AbortSignal,
+): Promise<ReferencesResult> => {
+  const params = new URLSearchParams({ path, line: String(line), column: String(column) })
+  return request<ReferencesResult>(
+    `/api/projects/${projectId}/references?${params.toString()}`,
+    { signal },
+  )
+}
+
+export const getHover = (
+  projectId: number,
+  path: string,
+  line: number,
+  column: number,
+  signal?: AbortSignal,
+): Promise<HoverResult> => {
+  const params = new URLSearchParams({ path, line: String(line), column: String(column) })
+  return request<HoverResult>(
+    `/api/projects/${projectId}/hover?${params.toString()}`,
     { signal },
   )
 }

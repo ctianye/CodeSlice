@@ -15,6 +15,12 @@ const SIDEBAR_TABS: SidebarTab[] = ['files', 'chats', 'notes']
 export interface RevealTarget extends Citation {
   /** Bumped on every request so repeated jumps to the same range still re-run. */
   nonce: number
+  /**
+   * Why the range is highlighted. Citations show the "引用第 x 行" ask bar;
+   * navigation jumps keep the line highlighted but stay out of that bar, like
+   * VS Code's go-to-definition.
+   */
+  source?: 'citation' | 'navigation'
 }
 
 export interface OpenFileState {
@@ -54,6 +60,16 @@ export interface GraphAsk {
   community_label: string
 }
 
+/** One entry in the editor's back/forward stack. */
+export interface NavHistoryEntry {
+  path: string
+  start_line: number
+  end_line: number
+}
+
+/** A reading session should not grow an unbounded list of jump targets. */
+const MAX_NAV_HISTORY = 40
+
 interface AppState {
   project: Project | null
   projects: Project[]
@@ -72,6 +88,18 @@ interface AppState {
    * note tabs: jumping to code from a note leaves the note in the strip.
    */
   reveal: (path: string, start?: number, end?: number) => void
+  /**
+   * Jump to a definition like an IDE: opens/reuses the tab, highlights the
+   * range, and pushes onto the back/forward stack. Unlike `reveal`, jumping to
+   * the same place twice keeps the highlight instead of toggling it off.
+   */
+  navigateTo: (path: string, start?: number, end?: number) => void
+  navHistory: NavHistoryEntry[]
+  navIndex: number
+  canGoBack: boolean
+  canGoForward: boolean
+  goBack: () => void
+  goForward: () => void
   /** Every open tab, in strip order. */
   tabs: EditorTab[]
   activeTabIndex: number
@@ -174,6 +202,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
    */
   const sidebarTab: SidebarTab = SIDEBAR_TABS.includes(storedSidebarTab) ? storedSidebarTab : 'files'
   const [focusNoteId, setFocusNoteId] = useState<number | null>(null)
+  const [navHistory, setNavHistory] = useState<NavHistoryEntry[]>([])
+  const [navIndex, setNavIndex] = useState(-1)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -189,6 +219,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
           setTabs([])
           setActiveTabIndex(0)
           setCitationHighlight(null)
+          setNavHistory([])
+          setNavIndex(-1)
         }
         return next
       })
@@ -224,19 +256,87 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
 
   const reveal = useCallback(
     (path: string, start?: number, end?: number) => {
+      const hasRange = Boolean((start && start > 0) || (end && end > 0))
+      // Opening a file from the tree is not a citation jump. Without this guard
+      // every plain open produced a "引用第 1–1 行" bar, because the missing
+      // range defaulted to line 1.
+      if (!hasRange) {
+        openFileTab(path, null)
+        setCitationHighlight(null)
+        return
+      }
       const from = start && start > 0 ? start : 1
       const to = end && end >= from ? end : from
-      openFileTab(path, start || end ? { start: from, end: to } : null)
+      openFileTab(path, { start: from, end: to })
       setCitationHighlight((prev) => {
         const same = prev && prev.path === path && prev.start_line === from && prev.end_line === to
         // Second click on the same chip is a request to drop the highlight again.
-        return same ? null : { path, start_line: from, end_line: to, symbol: null, nonce: 0 }
+        return same
+          ? null
+          : { path, start_line: from, end_line: to, symbol: null, nonce: 0, source: 'citation' }
       })
     },
     [openFileTab],
   )
 
   const clearCitation = useCallback(() => setCitationHighlight(null), [])
+
+  const showNavEntry = useCallback(
+    (entry: NavHistoryEntry) => {
+      openFileTab(entry.path, { start: entry.start_line, end: entry.end_line })
+      setCitationHighlight({
+        path: entry.path,
+        start_line: entry.start_line,
+        end_line: entry.end_line,
+        symbol: null,
+        // A fresh nonce makes clicking the same definition twice re-paint the
+        // range instead of looking like nothing happened.
+        nonce: Date.now(),
+        source: 'navigation',
+      })
+    },
+    [openFileTab],
+  )
+
+  const navigateTo = useCallback(
+    (path: string, start?: number, end?: number) => {
+      const from = start && start > 0 ? start : 1
+      const to = end && end >= from ? end : from
+      const entry = { path, start_line: from, end_line: to }
+      showNavEntry(entry)
+      setNavHistory((prev) => {
+        const base = navIndex >= 0 ? prev.slice(0, navIndex + 1) : []
+        const last = base[base.length - 1]
+        if (last && last.path === path && last.start_line === from && last.end_line === to) {
+          setNavIndex(base.length - 1)
+          return base
+        }
+        const next = [...base, entry].slice(-MAX_NAV_HISTORY)
+        setNavIndex(next.length - 1)
+        return next
+      })
+    },
+    [navIndex, showNavEntry],
+  )
+
+  const goBack = useCallback(() => {
+    if (navIndex <= 0) return
+    const target = navHistory[navIndex - 1]
+    if (!target) return
+    setNavIndex(navIndex - 1)
+    showNavEntry(target)
+  }, [navHistory, navIndex, showNavEntry])
+
+  const goForward = useCallback(() => {
+    if (navIndex < 0 || navIndex >= navHistory.length - 1) return
+    const target = navHistory[navIndex + 1]
+    if (!target) return
+    setNavIndex(navIndex + 1)
+    showNavEntry(target)
+  }, [navHistory, navIndex, showNavEntry])
+
+  const canGoBack = navIndex > 0
+  const canGoForward = navIndex >= 0 && navIndex < navHistory.length - 1
 
   const bumpRefresh = useCallback(() => setRefreshKey((n) => n + 1), [])
 
@@ -409,6 +509,8 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setTabs([{ kind: 'graph', scope: 'code', focusNodeId: nodeId, focusNonce: Date.now() }])
       setActiveTabIndex(0)
       setCitationHighlight(null)
+      setNavHistory([])
+      setNavIndex(-1)
     } else openGraph(nodeId, 'code')
     setActiveConversationIdState(conversationId)
     setGraphAsk(null)
@@ -425,6 +527,13 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setProjects,
       openFile,
       reveal,
+      navigateTo,
+      navHistory,
+      navIndex,
+      canGoBack,
+      canGoForward,
+      goBack,
+      goForward,
       tabs,
       activeTabIndex,
       activateTab,
@@ -461,6 +570,13 @@ export function AppProvider({ children }: { children: ReactNode }): ReactNode {
       setProject,
       openFile,
       reveal,
+      navigateTo,
+      navHistory,
+      navIndex,
+      canGoBack,
+      canGoForward,
+      goBack,
+      goForward,
       tabs,
       activeTabIndex,
       activateTab,

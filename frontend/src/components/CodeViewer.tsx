@@ -3,6 +3,7 @@ import type { editor as MonacoEditor } from 'monaco-editor'
 import type { ReactNode } from 'react'
 import { memo } from 'react'
 import { useApp } from '../state/AppState'
+import { registerCodeNavigation } from './editor/codeNavigation'
 
 // Serve Monaco from the bundle (scripts/copy-monaco.mjs copies node_modules →
 // public/monaco/vs) so the editor works with no network access.
@@ -11,6 +12,8 @@ loader.config({ paths: { vs: './monaco/vs' } })
 interface CodeViewerProps {
   value: string
   language: string
+  /** Project-relative path; gives each file its own Monaco model/URI. */
+  path?: string
   onMountEditor?: (instance: MonacoEditor.IStandaloneCodeEditor) => void
   /**
    * Editable mode. When true the editor becomes writable and `value` is fed in
@@ -33,6 +36,7 @@ interface CodeViewerProps {
 export const CodeViewer = memo(function CodeViewer({
   value,
   language,
+  path,
   onMountEditor,
   readOnly = true,
   onChange,
@@ -41,10 +45,18 @@ export const CodeViewer = memo(function CodeViewer({
   // Read-only mode stays controlled (the pane swaps files in place). Writable
   // mode switches to an uncontrolled buffer so typing is never overwritten.
   const buffer = readOnly ? { value } : { defaultValue: value }
+  // A real URI keeps per-file view state and gives the hover provider a stable
+  // model identity. Encode each segment so spaces/#/? in a path cannot truncate
+  // the URI.
+  const modelPath = path
+    ? `file:///${path.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/')}`
+    : undefined
   return (
     <Editor
       className="editor-surface"
       {...buffer}
+      path={modelPath}
+      keepCurrentModel
       language={language}
       theme={theme === 'dark' ? 'codeslice-dark' : 'codeslice-light'}
       onChange={readOnly ? undefined : (next) => onChange?.(next ?? '')}
@@ -61,10 +73,21 @@ export const CodeViewer = memo(function CodeViewer({
         // picked set right before the click handler runs, so lines could never
         // accumulate.
         selectOnLineNumbers: false,
-        // Occurrence highlighting re-scans the whole buffer on every selection
-        // change, which is what made dragging feel sticky on large files.
-        occurrencesHighlight: 'off',
-        selectionHighlight: false,
+        // Ctrl/Cmd+Click is "go to definition" here, so it must not also add a
+        // cursor. Alt remains the multi-cursor modifier.
+        multiCursorModifier: 'alt',
+        // Hover cards and the reference picker can extend past the editor pane;
+        // without this Monaco clips them at the mount's overflow boundary.
+        fixedOverflowWidgets: true,
+        // VS Code's "box every occurrence of the symbol" effect. Monaco's
+        // wordHighlighter is the same contribution VS Code uses: it debounces the
+        // whole-file scan and only runs on explicit cursor moves, so a mouse drag
+        // does not trigger it. The colors live in editor.css.
+        occurrencesHighlight: 'singleFile',
+        // Selection highlighting rescans on every selection change; keep it for
+        // normal source files and let large generated files opt out so dragging
+        // stays responsive.
+        selectionHighlight: value.length < 200_000,
         matchBrackets: 'never',
         renderLineHighlight: 'line',
         minimap: { enabled: false },
@@ -94,6 +117,7 @@ export const CodeViewer = memo(function CodeViewer({
         },
       }}
       beforeMount={(monaco) => {
+        registerCodeNavigation(monaco)
         monaco.editor.defineTheme('codeslice-dark', {
           base: 'vs-dark',
           inherit: true,

@@ -26,7 +26,17 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import conversations, graph_api, graph_code, indexing, notes, projects, system, terminal
+from app.api import (
+    conversations,
+    graph_api,
+    graph_code,
+    indexing,
+    navigation,
+    notes,
+    projects,
+    system,
+    terminal,
+)
 from app.api import settings as settings_api
 from app.core.config import APP_NAME, VERSION, settings
 from app.core.db import init_db
@@ -139,6 +149,7 @@ def create_app() -> FastAPI:
         terminal.router,
         graph_api.router,
         graph_code.router,
+        navigation.router,
     ):
         app.include_router(module, prefix="/api")
 

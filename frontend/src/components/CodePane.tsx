@@ -1,9 +1,16 @@
 import type { editor as MonacoEditor } from 'monaco-editor'
-import { editor as monacoEditor, Selection } from 'monaco-editor'
+import { KeyCode, KeyMod, editor as monacoEditor, Selection } from 'monaco-editor'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
-import type { CodeAnnotation, Conversation, FileContent, GitStatus } from '../types'
+import type {
+  CodeAnnotation,
+  Conversation,
+  DefinitionTarget,
+  FileContent,
+  GitStatus,
+  ReferenceLocation,
+} from '../types'
 import { useAsync } from '../hooks/useAsync'
 import { baseName } from '../lib/citations'
 import { formatBytes, languageFromPath } from '../lib/format'
@@ -13,16 +20,32 @@ import { ConversationCards } from './ConversationCards'
 import { ErrorNote, Loading } from './Feedback'
 import { Icon } from './Icon'
 import { MarkdownDoc } from './MarkdownDoc'
+import { NavPicker } from './NavPicker'
+import type { NavChoice } from './NavPicker'
 import type { FrameZoneItem } from './editor/frameZones'
 import { createFrameZones } from './editor/frameZones'
 import { frameDecorations, hoverDecorations } from './editor/decorations'
 import { attachGutterSelection } from './editor/gutterSelection'
+import { clearNavigationHoverCache, setNavigationContext } from './editor/codeNavigation'
 
 export interface SnippetSelection {
   path: string
   start: number
   end: number
   code: string
+}
+
+/** Monaco's `IPosition` shape without importing the whole namespace type. */
+interface EditorPosition {
+  lineNumber: number
+  column: number
+}
+
+interface NavHandlers {
+  goToDefinitionAt: (position: EditorPosition) => void
+  showReferencesAt: (position: EditorPosition) => void
+  goBack: () => void
+  goForward: () => void
 }
 
 interface CodePaneProps {
@@ -43,6 +66,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     bumpRefresh,
     openNoteView,
     openGraph,
+    navigateTo,
+    goBack,
+    goForward,
+    canGoBack,
+    canGoForward,
   } = useApp()
   const projectId = project?.id ?? null
   const path = openFile?.path ?? null
@@ -82,6 +110,8 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const frameRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const annotationRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const pickRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  /** Underline under the symbol while Ctrl/Cmd is held. */
+  const ctrlLinkRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
   const zonesRef = useRef<{ update: (items: FrameZoneItem[]) => void; dispose: () => void } | null>(null)
   const detachRef = useRef<(() => void) | null>(null)
   /** Pending rAF handle for selection updates; null when nothing is scheduled. */
@@ -125,6 +155,39 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
   const [docNotice, setDocNotice] = useState<string | null>(null)
   const [docError, setDocError] = useState<string | null>(null)
   const [graphLocating, setGraphLocating] = useState(false)
+  const [navBusy, setNavBusy] = useState(false)
+  const [navFlash, setNavFlash] = useState<{
+    path: string
+    line: number
+    column: number
+    name: string
+    nonce: number
+  } | null>(null)
+  const navFlashRef = useRef<MonacoEditor.IEditorDecorationsCollection | null>(null)
+  const navFlashTimer = useRef<number | null>(null)
+  const [navNotice, setNavNotice] = useState<{
+    kind: 'info' | 'success' | 'error'
+    text: string
+    line?: number
+  } | null>(null)
+  const [navPicker, setNavPicker] = useState<{
+    title: string
+    subtitle?: string
+    items: NavChoice[]
+  } | null>(null)
+  /** Synchronous guard: two F12 presses must not race into two requests. */
+  const navBusyRef = useRef(false)
+  /**
+   * Monaco actions are registered once per editor instance, so they read the
+   * latest project/file handlers through this ref instead of capturing a stale
+   * render's closure.
+   */
+  const navHandlersRef = useRef<NavHandlers>({
+    goToDefinitionAt: () => undefined,
+    showReferencesAt: () => undefined,
+    goBack: () => undefined,
+    goForward: () => undefined,
+  })
 
   const updateSelection = useCallback((instance: MonacoEditor.IStandaloneCodeEditor) => {
     const model = instance.getModel()
@@ -228,6 +291,8 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       frameRef.current = instance.createDecorationsCollection([])
       annotationRef.current = instance.createDecorationsCollection([])
       pickRef.current = instance.createDecorationsCollection([])
+      navFlashRef.current = instance.createDecorationsCollection([])
+      ctrlLinkRef.current = instance.createDecorationsCollection([])
       zonesRef.current = createFrameZones(instance)
       setReady(true)
 
@@ -237,7 +302,18 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
       const editorNode = instance.getDomNode()
       const onMouseDownCapture = (event: MouseEvent) => {
         if (event.button !== 0) return
-        const target = instance.getTargetAtClientPoint(event.clientX, event.clientY)?.type
+        const hit = instance.getTargetAtClientPoint(event.clientX, event.clientY)
+        // Ctrl/Cmd+Click is navigation, not selection. Handling it in the native
+        // capture phase keeps Monaco's own mouse pipeline out of it, which also
+        // makes it work when the click lands on a token span rather than the
+        // editor root.
+        if ((event.ctrlKey || event.metaKey) && hit?.type === monacoEditor.MouseTargetType.CONTENT_TEXT && hit.position) {
+          event.preventDefault()
+          event.stopPropagation()
+          navHandlersRef.current.goToDefinitionAt(hit.position)
+          return
+        }
+        const target = hit?.type
         mouseSelectingRef.current =
           target === monacoEditor.MouseTargetType.CONTENT_TEXT ||
           target === monacoEditor.MouseTargetType.CONTENT_EMPTY ||
@@ -270,8 +346,82 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
         // turns it into the selection bar, so nothing extra is needed here.
         onSelectRange: () => undefined,
       })
+      // Ctrl/Cmd-hover underline, matching the affordance VS Code shows before
+      // a modifier-click jump.
+      const clearCtrlLink = () => ctrlLinkRef.current?.clear()
+      const ctrlHoverListener = instance.onMouseMove((event) => {
+        if (!(event.event.ctrlKey || event.event.metaKey)) {
+          clearCtrlLink()
+          return
+        }
+        if (event.target.type !== monacoEditor.MouseTargetType.CONTENT_TEXT || !event.target.position) {
+          clearCtrlLink()
+          return
+        }
+        const model = instance.getModel()
+        const word = model?.getWordAtPosition(event.target.position)
+        if (!model || !word) {
+          clearCtrlLink()
+          return
+        }
+        ctrlLinkRef.current?.set([
+          {
+            range: {
+              startLineNumber: event.target.position.lineNumber,
+              startColumn: word.startColumn,
+              endLineNumber: event.target.position.lineNumber,
+              endColumn: word.endColumn,
+            },
+            options: { inlineClassName: 'ctrl-click-link' },
+          },
+        ])
+      })
+      const ctrlLeaveListener = instance.onMouseLeave(clearCtrlLink)
+      const releaseCtrlLink = () => clearCtrlLink()
+      window.addEventListener('keyup', releaseCtrlLink)
+      window.addEventListener('blur', releaseCtrlLink)
+
+      // Navigation actions read `navHandlersRef`, so they always use the
+      // project/file of the current render even though they are registered once.
+      const navigationActions = [
+        instance.addAction({
+          id: 'codeslice.goToDefinition',
+          label: '转到定义',
+          keybindings: [KeyMod.CtrlCmd | KeyCode.F12],
+          run: () => {
+            const position = instance.getPosition()
+            if (position) navHandlersRef.current.goToDefinitionAt(position)
+          },
+        }),
+        instance.addAction({
+          id: 'codeslice.findReferences',
+          label: '查找引用',
+          keybindings: [KeyMod.Shift | KeyCode.F12],
+          run: () => {
+            const position = instance.getPosition()
+            if (position) navHandlersRef.current.showReferencesAt(position)
+          },
+        }),
+        instance.addAction({
+          id: 'codeslice.navBack',
+          label: '后退',
+          keybindings: [KeyMod.Alt | KeyCode.LeftArrow],
+          run: () => navHandlersRef.current.goBack(),
+        }),
+        instance.addAction({
+          id: 'codeslice.navForward',
+          label: '前进',
+          keybindings: [KeyMod.Alt | KeyCode.RightArrow],
+          run: () => navHandlersRef.current.goForward(),
+        }),
+      ]
       detachRef.current = () => {
         selectionListener.dispose()
+        navigationActions.forEach((action) => action.dispose())
+        ctrlHoverListener.dispose()
+        ctrlLeaveListener.dispose()
+        window.removeEventListener('keyup', releaseCtrlLink)
+        window.removeEventListener('blur', releaseCtrlLink)
         editorNode?.removeEventListener('mousedown', onMouseDownCapture, true)
         window.removeEventListener('mouseup', onMouseUpCapture, true)
         window.removeEventListener('blur', onMouseUpCapture)
@@ -280,6 +430,11 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           window.cancelAnimationFrame(selectionFrame.current)
           selectionFrame.current = null
         }
+        if (navFlashTimer.current !== null) {
+          window.clearTimeout(navFlashTimer.current)
+          navFlashTimer.current = null
+        }
+        navFlashRef.current?.clear()
         detachGutter()
       }
 
@@ -398,6 +553,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     frameRef.current?.clear()
     annotationRef.current?.clear()
     pickRef.current?.clear()
+    ctrlLinkRef.current?.clear()
     pickedRef.current = []
     // Zones survive a model swap, so drop the old file's strips before the new
     // cards arrive; otherwise they would sit on lines the new file may not have.
@@ -415,6 +571,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     setDocDraft(null)
     setDocNotice(null)
     setDocError(null)
+    setNavPicker(null)
   }, [path, projectId])
 
   // Restore an unsaved document buffer when the tab comes back.
@@ -487,7 +644,14 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
    * clicking a citation is exactly when a reader wants to ask about that code.
    */
   const citationRange = (() => {
-    if (!content || content.binary || !openFile || !citationHighlight || citationHighlight.path !== openFile.path) return null
+    if (
+      !content ||
+      content.binary ||
+      !openFile ||
+      !citationHighlight ||
+      citationHighlight.path !== openFile.path ||
+      citationHighlight.source === 'navigation'
+    ) return null
     const maxLine = Math.max(1, countLines(content.content))
     const start = Math.max(1, Math.min(citationHighlight.start_line, maxLine))
     const end = Math.max(start, Math.min(citationHighlight.end_line, maxLine))
@@ -602,6 +766,178 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
     },
     [path, file],
   )
+
+  // These hooks must run before the `!project` / `!path` early returns below.
+  // Otherwise opening the first file changes the hook count and React tears the
+  // pane down ("change in the order of Hooks").
+  const goToDefinitionAt = useCallback(
+    async (position: EditorPosition) => {
+      if (projectId === null || !path || navBusyRef.current) return
+      navBusyRef.current = true
+      setNavBusy(true)
+      setNavPicker(null)
+      setNavNotice(null)
+      try {
+        const result = await api.getDefinition(projectId, path, position.lineNumber, position.column)
+        if (result.targets.length === 1) {
+          const target = result.targets[0]
+          // Frame the declaration line, not the whole body: jumping to a large
+          // function should read as "here is the definition", not "select 60 lines".
+          navigateTo(target.path, target.line, target.line)
+          setNavFlash({
+            path: target.path,
+            line: target.line,
+            column: target.column,
+            name: target.name,
+            nonce: Date.now(),
+          })
+          if (target.path !== path) {
+            setNavNotice({
+              kind: 'success',
+              text: `已跳到 ${target.name} · ${target.path}:${target.line}`,
+            })
+          }
+          return
+        }
+        const candidates = result.targets.length > 1 ? result.targets : result.candidates
+        if (candidates.length > 0) {
+          setNavPicker({
+            title: result.targets.length > 1 ? '找到多个定义' : '找到同名符号',
+            subtitle: result.word ? `“${result.word}”没有唯一解析结果，请选择一项` : undefined,
+            items: candidates.map(definitionChoice),
+          })
+          return
+        }
+        setNavNotice({
+          kind: 'info',
+          text: definitionReasonText(result.reason, result.word),
+          line: position.lineNumber,
+        })
+      } catch (error) {
+        setNavNotice({
+          kind: 'error',
+          text: error instanceof Error ? error.message : String(error),
+        })
+      } finally {
+        navBusyRef.current = false
+        setNavBusy(false)
+      }
+    },
+    [navigateTo, path, projectId],
+  )
+
+  const showReferencesAt = useCallback(
+    async (position: EditorPosition) => {
+      if (projectId === null || !path || navBusyRef.current) return
+      navBusyRef.current = true
+      setNavBusy(true)
+      setNavPicker(null)
+      setNavNotice(null)
+      try {
+        const result = await api.getReferences(projectId, path, position.lineNumber, position.column)
+        const target = result.target
+        if (target && result.locations.length > 0) {
+          setNavPicker({
+            title: `引用 · ${target.name}`,
+            subtitle: `共 ${result.locations.length} 处${result.truncated ? '（只显示前 500 处）' : ''}，选择一处跳转`,
+            items: result.locations.map(referenceChoice),
+          })
+          return
+        }
+        if (result.candidates.length > 0) {
+          setNavPicker({
+            title: '同名符号有多个',
+            subtitle: '先选择要查找引用的符号',
+            items: result.candidates.map(definitionChoice),
+          })
+          return
+        }
+        setNavNotice({ kind: 'info', text: '没有找到这个符号的引用' })
+      } catch (error) {
+        setNavNotice({
+          kind: 'error',
+          text: error instanceof Error ? error.message : String(error),
+        })
+      } finally {
+        navBusyRef.current = false
+        setNavBusy(false)
+      }
+    },
+    [path, projectId],
+  )
+
+  const pickNavChoice = useCallback(
+    (item: NavChoice) => {
+      setNavPicker(null)
+      navigateTo(item.path, item.line, item.end_line)
+      if (item.symbolName) {
+        setNavFlash({
+          path: item.path,
+          line: item.line,
+          column: 1,
+          name: item.symbolName,
+          nonce: Date.now(),
+        })
+      }
+    },
+    [navigateTo],
+  )
+
+  navHandlersRef.current = {
+    goToDefinitionAt: (position) => { void goToDefinitionAt(position) },
+    showReferencesAt: (position) => { void showReferencesAt(position) },
+    goBack,
+    goForward,
+  }
+
+  // The hover provider is global (registered once), so it reads the active
+  // project/file from this module-level context.
+  useEffect(() => {
+    setNavigationContext(path && projectId !== null ? { projectId, path } : null)
+    return () => setNavigationContext(null)
+  }, [path, projectId])
+
+  useEffect(() => {
+    clearNavigationHoverCache()
+  }, [refreshKey])
+
+  // Notices are transient; an error stays long enough to read, then gets out of
+  // the way. The picker is user-driven and never auto-closes.
+  useEffect(() => {
+    if (!navNotice) return
+    const timer = window.setTimeout(() => setNavNotice(null), 4500)
+    return () => window.clearTimeout(timer)
+  }, [navNotice])
+
+  // VS Code flashes the landing symbol for 350ms after go-to-definition. The
+  // line is already framed by citationHighlight; this adds the tighter box
+  // around the declaration name itself.
+  useEffect(() => {
+    if (!navFlash || navFlash.path !== path || !ready) return
+    const model = editorRef.current?.getModel()
+    if (!model || navFlash.line < 1 || navFlash.line > model.getLineCount()) return
+    if (!navFlash.name || navFlash.name.includes('/') || navFlash.name.includes('\\')) return
+    const lineText = model.getLineContent(navFlash.line)
+    let index = lineText.indexOf(navFlash.name, Math.max(0, navFlash.column - 1))
+    if (index < 0) index = lineText.indexOf(navFlash.name)
+    if (index < 0) return
+    navFlashRef.current?.set([
+      {
+        range: {
+          startLineNumber: navFlash.line,
+          startColumn: index + 1,
+          endLineNumber: navFlash.line,
+          endColumn: index + 1 + navFlash.name.length,
+        },
+        options: { className: 'symbolHighlight' },
+      },
+    ])
+    if (navFlashTimer.current !== null) window.clearTimeout(navFlashTimer.current)
+    navFlashTimer.current = window.setTimeout(() => {
+      navFlashRef.current?.clear()
+      navFlashTimer.current = null
+    }, 450)
+  }, [navFlash, path, ready, file.data])
 
   if (!project) {
     return (
@@ -752,7 +1088,46 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
             {docSaving ? '保存中…' : '保存'}
           </button>
         ) : null}
+        {navBusy ? (
+          <span className="tag nav-busy" title="正在查询符号索引">
+            <span className="spinner" />
+            定位中…
+          </span>
+        ) : null}
         {!binary ? <div className="toolbar-actions">
+          <button
+            className="ghost icon"
+            title="后退 (Alt+←)"
+            aria-label="后退"
+            disabled={!canGoBack}
+            onClick={goBack}
+            type="button"
+          >
+            <Icon name="chevron-left" size={13} />
+          </button>
+          <button
+            className="ghost icon"
+            title="前进 (Alt+→)"
+            aria-label="前进"
+            disabled={!canGoForward}
+            onClick={goForward}
+            type="button"
+          >
+            <Icon name="chevron-right" size={13} />
+          </button>
+          <button
+            className="ghost icon"
+            title="转到定义 (F12 / Ctrl+Click)"
+            aria-label="转到定义"
+            disabled={navBusy}
+            onClick={() => {
+              const position = editorRef.current?.getPosition()
+              if (position) void goToDefinitionAt(position)
+            }}
+            type="button"
+          >
+            <Icon name="corner-down-left" size={13} />
+          </button>
           <button
             className="ghost icon"
             title="在知识图谱中定位当前行"
@@ -783,6 +1158,42 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           </>
         ) : null}
       </div>
+
+      {navNotice ? (
+        <div className={`nav-notice ${navNotice.kind}`} role="status">
+          <Icon name={navNotice.kind === 'error' ? 'alert' : navNotice.kind === 'success' ? 'check' : 'info'} size={12} />
+          <span className="nav-notice-text">{navNotice.text}</span>
+          {navNotice.line ? (
+            <button
+              className="small ghost"
+              onClick={() => void locateInGraph(navNotice.line)}
+              type="button"
+            >
+              <Icon name="network" size={11} />
+              在图谱中定位
+            </button>
+          ) : null}
+          <button
+            className="ghost icon nav-notice-close"
+            onClick={() => setNavNotice(null)}
+            title="关闭"
+            aria-label="关闭提示"
+            type="button"
+          >
+            <Icon name="x" size={11} />
+          </button>
+        </div>
+      ) : null}
+
+      {navPicker ? (
+        <NavPicker
+          title={navPicker.title}
+          subtitle={navPicker.subtitle}
+          items={navPicker.items}
+          onPick={pickNavChoice}
+          onClose={() => setNavPicker(null)}
+        />
+      ) : null}
 
       {picked ? (
         <div className="selection-bar">
@@ -974,6 +1385,7 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           <CodeViewer
             value={isDoc ? docText : content.content}
             language={languageFor(content)}
+            path={content.path}
             onMountEditor={onMount}
             readOnly={!docEditing}
             onChange={(next) => updateDocDraft(next)}
@@ -992,6 +1404,67 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
  * panel is otherwise Chinese, so translate the cases a user can actually hit and
  * fall back to the original text for anything else (never lose the detail).
  */
+const KIND_LABELS: Record<string, string> = {
+  function: '函数',
+  class: '类',
+  file: '文件',
+  method: '方法',
+  call: '调用',
+  import: '导入',
+  base: '继承',
+  ref: '引用',
+}
+
+function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] ?? kind
+}
+
+function confidenceLabel(confidence: string): string {
+  return confidence === 'INFERRED' || confidence === 'AMBIGUOUS' ? '推断' : '精确'
+}
+
+function definitionChoice(target: DefinitionTarget): NavChoice {
+  return {
+    id: target.node_id || `${target.path}:${target.line}:${target.column}`,
+    label: target.name,
+    hint: `${target.path}:${target.line}`,
+    meta: kindLabel(target.kind),
+    badge: confidenceLabel(target.confidence),
+    path: target.path,
+    line: target.line,
+    end_line: target.line,
+    symbolName: target.name,
+  }
+}
+
+function referenceChoice(location: ReferenceLocation): NavChoice {
+  return {
+    id: `${location.path}:${location.line}:${location.column}:${location.name}`,
+    label: location.from_name || location.name,
+    hint: `${location.path}:${location.line}`,
+    meta: kindLabel(location.kind),
+    path: location.path,
+    line: location.line,
+    end_line: location.end_line,
+  }
+}
+
+function definitionReasonText(reason: string | null, word: string | null): string {
+  const what = word ? `“${word}”` : '当前位置'
+  switch (reason) {
+    case 'external':
+      return `${what}来自外部库，项目内没有可跳转的定义`
+    case 'ambiguous':
+      return `${what}有多个同名定义，暂时无法确定是哪一个`
+    case 'unresolved':
+      return `${what}没有解析到定义，可能是动态调用`
+    case 'file_not_found':
+      return '文件已不存在，请重新打开后再试'
+    default:
+      return `${what}没有可跳转的定义`
+  }
+}
+
 function saveErrorText(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   if (raw.includes('file changed on disk since it was opened')) {

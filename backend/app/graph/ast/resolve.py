@@ -24,8 +24,10 @@ from collections import defaultdict
 from typing import Any
 
 from app.graph.ast import (
+    CONF_AMBIGUOUS,
     CONF_EXTRACTED,
     CONF_INFERRED,
+    CONF_UNRESOLVED,
     KIND_CLASS,
     KIND_EXTERNAL,
     KIND_FILE,
@@ -348,15 +350,20 @@ class SymbolTable:
         return []
 
 
-def resolve(extractions: list[Extraction]) -> dict[str, Any]:
+def resolve(extractions: list[Extraction], *, with_index: bool = False) -> dict[str, Any]:
     """Merge every extraction and resolve the cross-file facts.
 
-    Returns ``{"nodes", "edges", "stats"}`` ready for clustering.
+    Returns ``{"nodes", "edges", "stats"}`` ready for clustering. With
+    ``with_index`` it also returns ``defs``/``refs``: the per-occurrence symbol
+    index used by go-to-definition. The graph itself stays aggregate (one edge per
+    caller/callee pair); the index is what keeps every call site's line and column.
     """
     table = SymbolTable(extractions)
 
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+    refs: list[dict[str, Any]] = []
+    ref_keys: set[tuple[Any, ...]] = set()
 
     def add_edge(source: str, target: str, relation: str, confidence: str, line: int | None = None) -> None:
         if source == target or not source or not target:
@@ -374,6 +381,60 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
         elif confidence == CONF_EXTRACTED and existing["confidence"] != CONF_EXTRACTED:
             # A resolved edge outranks an inferred one between the same pair.
             existing["confidence"] = CONF_EXTRACTED
+
+    def add_ref(
+        path: str,
+        name: str,
+        kind: str,
+        *,
+        line: int,
+        column: int | None,
+        end_line: int | None,
+        end_column: int | None,
+        from_node_id: str,
+        target: str | None,
+        confidence: str,
+    ) -> None:
+        """Record one navigable occurrence.
+
+        ``confidence`` is exact for a proven target and ambiguous/unresolved
+        otherwise. Unresolved rows are kept on purpose: the query layer can still
+        offer same-name candidates instead of pretending the identifier does not
+        exist.
+        """
+        key = (path, line, column, name, kind, target, from_node_id)
+        if key in ref_keys:
+            return
+        ref_keys.add(key)
+        refs.append(
+            {
+                "path": path,
+                "name": name,
+                "kind": kind,
+                "line": line,
+                "column": column,
+                "end_line": end_line,
+                "end_column": end_column,
+                "from_node_id": from_node_id,
+                "target_node_id": target,
+                "confidence": confidence,
+            }
+        )
+
+    def symbol_in_file(path: str, name: str) -> str | None:
+        """The unique function/class ``name`` declared in ``path``.
+
+        Case-sensitive on purpose: ``from config import settings`` must not land
+        on a class called ``Settings``. When the imported name is a module-level
+        variable (not indexed as a symbol), the caller falls back to the file node.
+        """
+        hits = [
+            node_id
+            for node_id in table.by_file.get(path, ())
+            if nodes.get(node_id, {}).get("kind") in (KIND_FUNCTION, KIND_CLASS)
+            and str(nodes[node_id].get("label") or "") == name
+        ]
+        return hits[0] if len(hits) == 1 else None
 
     # ---- carry over per-file nodes and structural edges ----------------------
     for extraction in extractions:
@@ -433,6 +494,19 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                         },
                     )
                 add_edge(source_file, ext_id, REL_USES, CONF_EXTRACTED, line)
+                for local in _import_receiver_names(fact):
+                    add_ref(
+                        path,
+                        local,
+                        "import",
+                        line=line,
+                        column=fact.get("column"),
+                        end_line=fact.get("end_line"),
+                        end_column=fact.get("end_column"),
+                        from_node_id=source_file,
+                        target=ext_id,
+                        confidence=CONF_EXTRACTED,
+                    )
                 continue
 
             relation = REL_IMPORTS_FROM if fact.get("kind") == "from" else REL_IMPORTS
@@ -450,6 +524,26 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                 for name in bound:
                     if target_file not in table.import_bindings[path][name]:
                         table.import_bindings[path][name].append(target_file)
+                    original = _import_original_name(fact, name)
+                    # ``from x import helper`` names the symbol, so the editor
+                    # should land on its definition rather than the module header.
+                    target = (
+                        symbol_in_file(target_file, original)
+                        if fact.get("kind") == "from"
+                        else None
+                    ) or file_node_id(target_file)
+                    add_ref(
+                        path,
+                        name,
+                        "import",
+                        line=line,
+                        column=fact.get("column"),
+                        end_line=fact.get("end_line"),
+                        end_column=fact.get("end_column"),
+                        from_node_id=source_file,
+                        target=target,
+                        confidence=CONF_EXTRACTED,
+                    )
                 table.imported_modules[path].append(target_file)
 
             # ``from app.storage import repo`` imports a *submodule*, not a symbol:
@@ -511,6 +605,18 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                     )
                 target = ext_id
             add_edge(fact["child_id"], target, REL_INHERITS, CONF_EXTRACTED, fact.get("line"))
+            add_ref(
+                extraction.path,
+                head,
+                "base",
+                line=fact.get("line") or 1,
+                column=fact.get("column"),
+                end_line=fact.get("end_line"),
+                end_column=fact.get("end_column"),
+                from_node_id=fact["child_id"],
+                target=target,
+                confidence=CONF_EXTRACTED,
+            )
 
     # ---- calls --------------------------------------------------------------
     # Index declared names per file, so a bare call prefers a local definition.
@@ -626,6 +732,10 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                 continue
             caller_id = fact["caller_id"]
             line = fact.get("line")
+            ref_line = fact.get("name_line") or line or 1
+            ref_column = fact.get("name_col")
+            ref_end_line = fact.get("name_end_line") or ref_line
+            ref_end_column = fact.get("name_end_col")
             target: str | None = None
 
             receiver_type = fact.get("receiver_type")
@@ -657,10 +767,40 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                     # ``GraphService.load`` style aliases exist).
                     target = resolve_module_member(path, receiver_name, callee)
                 if target is None:
-                    # A member call on an untyped value cannot be attributed.
+                    # A member call on an untyped value cannot be attributed. It
+                    # is still a navigable identifier: keep the occurrence with no
+                    # target so the editor can offer same-name candidates.
                     stats["calls_dropped"] += 1
+                    add_ref(
+                        path,
+                        callee,
+                        "call",
+                        line=ref_line,
+                        column=ref_column,
+                        end_line=ref_end_line,
+                        end_column=ref_end_column,
+                        from_node_id=caller_id,
+                        target=None,
+                        confidence=(
+                            CONF_AMBIGUOUS
+                            if table.candidates(KIND_FUNCTION, callee) or table.candidates(KIND_CLASS, callee)
+                            else CONF_UNRESOLVED
+                        ),
+                    )
                     continue
                 add_edge(caller_id, target, REL_CALLS, CONF_EXTRACTED, line)
+                add_ref(
+                    path,
+                    callee,
+                    "call",
+                    line=ref_line,
+                    column=ref_column,
+                    end_line=ref_end_line,
+                    end_column=ref_end_column,
+                    from_node_id=caller_id,
+                    target=target,
+                    confidence=CONF_EXTRACTED,
+                )
                 stats["calls_extracted"] += 1
                 # ``self.method()`` and ``Foo.method()`` both name a project symbol,
                 # so they belong in the denominator of the project-call rate.
@@ -673,10 +813,37 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
                 stats["calls_dropped"] += 1
                 # Distinguish "no such project symbol" (fine to drop) from
                 # "project symbol exists but ambiguous" (a real miss).
-                if table.candidates(KIND_FUNCTION, callee) or table.candidates(KIND_CLASS, callee):
+                ambiguous = bool(
+                    table.candidates(KIND_FUNCTION, callee) or table.candidates(KIND_CLASS, callee)
+                )
+                if ambiguous:
                     stats["calls_project"] += 1
+                add_ref(
+                    path,
+                    callee,
+                    "call",
+                    line=ref_line,
+                    column=ref_column,
+                    end_line=ref_end_line,
+                    end_column=ref_end_column,
+                    from_node_id=caller_id,
+                    target=None,
+                    confidence=CONF_AMBIGUOUS if ambiguous else CONF_UNRESOLVED,
+                )
                 continue
             add_edge(caller_id, target, REL_CALLS, CONF_EXTRACTED, line)
+            add_ref(
+                path,
+                callee,
+                "call",
+                line=ref_line,
+                column=ref_column,
+                end_line=ref_end_line,
+                end_column=ref_end_column,
+                from_node_id=caller_id,
+                target=target,
+                confidence=CONF_EXTRACTED,
+            )
             stats["calls_extracted"] += 1
             stats["calls_project"] += 1
 
@@ -697,6 +864,18 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
             target = resolve_bare(extraction.path, callee)
             if target and target != fact["caller_id"]:
                 add_edge(fact["caller_id"], target, REL_INDIRECT_CALL, CONF_INFERRED, fact.get("line"))
+                add_ref(
+                    extraction.path,
+                    callee,
+                    "ref",
+                    line=fact.get("name_line") or fact.get("line") or 1,
+                    column=fact.get("name_col"),
+                    end_line=fact.get("name_end_line"),
+                    end_column=fact.get("name_end_col"),
+                    from_node_id=fact["caller_id"],
+                    target=target,
+                    confidence=CONF_INFERRED,
+                )
 
     # ---- final assembly -----------------------------------------------------
     degree: dict[str, int] = defaultdict(int)
@@ -716,7 +895,42 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
     for edge in edge_list:
         by_relation[edge["relation"]] += 1
 
-    return {
+    defs: list[dict[str, Any]] = []
+    if with_index:
+        # Rationale nodes already hang off the symbol they explain. Joining them
+        # here means the hover card can quote the author's own docstring/WHY note
+        # without a second graph read.
+        doc_by_owner: dict[str, list[str]] = defaultdict(list)
+        for node in nodes.values():
+            if node.get("kind") == KIND_RATIONALE and node.get("parent"):
+                doc_by_owner[node["parent"]].append(str(node.get("label") or ""))
+        for node in node_list:
+            kind = node.get("kind")
+            if kind not in (KIND_FILE, KIND_CLASS, KIND_FUNCTION):
+                continue
+            is_file = kind == KIND_FILE
+            label = str(node.get("path") or "") if is_file else str(node.get("label") or "")
+            if not label:
+                continue
+            defs.append(
+                {
+                    "node_id": node["id"],
+                    "name": label,
+                    "normalized": label.lower() if is_file else _symbol_key(label),
+                    "kind": kind,
+                    "path": node.get("path") or "",
+                    "line": int(node.get("start_line") or 1),
+                    "column": int(node.get("start_col") or 1),
+                    "end_line": int(node.get("end_line") or node.get("start_line") or 1),
+                    "end_column": int(node.get("end_col") or 1),
+                    "parent_node_id": node.get("parent"),
+                    "signature": str(node.get("signature") or ""),
+                    "doc": " ".join(doc_by_owner.get(node["id"], []))[:600],
+                    "language": str(node.get("language") or ""),
+                }
+            )
+
+    result: dict[str, Any] = {
         "nodes": node_list,
         "edges": edge_list,
         "stats": {
@@ -731,3 +945,7 @@ def resolve(extractions: list[Extraction]) -> dict[str, Any]:
             **stats,
         },
     }
+    if with_index:
+        result["defs"] = defs
+        result["refs"] = refs
+    return result

@@ -628,3 +628,66 @@ export interface CommandRuleCreateBody {
   scope: RuleScope
   needs_confirm: boolean
 }
+
+/* --------------------------- editor navigation ---------------------------- */
+
+/** A definition the editor can jump to. Lines and columns are 1-based. */
+export interface DefinitionTarget {
+  path: string
+  name: string
+  kind: string
+  node_id: string
+  line: number
+  column: number
+  end_line: number
+  end_column: number
+  signature: string
+  doc: string
+  /** EXTRACTED / INFERRED / AMBIGUOUS / EXACT. */
+  confidence: string
+  language: string
+}
+
+export interface DefinitionResult {
+  targets: DefinitionTarget[]
+  candidates: DefinitionTarget[]
+  /** no_definition | ambiguous | external | unresolved | file_not_found */
+  reason: string | null
+  word: string | null
+}
+
+export interface ReferenceLocation {
+  path: string
+  name: string
+  kind: string
+  line: number
+  column: number
+  end_line: number
+  end_column: number
+  from_name: string | null
+  from_kind: string | null
+  confidence: string | null
+}
+
+export interface ReferencesResult {
+  target: DefinitionTarget | null
+  locations: ReferenceLocation[]
+  truncated: boolean
+  candidates: DefinitionTarget[]
+  reason: string | null
+  word: string | null
+}
+
+export interface HoverResult {
+  contents: string | null
+  range?: {
+    start_line: number
+    start_column: number
+    end_line: number
+    end_column: number
+  }
+  kind?: string
+  path?: string
+  line?: number
+  reason?: string | null
+}

@@ -67,6 +67,32 @@ def _end_line(node: Any) -> int:
     return node.end_point[0] + 1
 
 
+def _start_col(node: Any) -> int:
+    """1-based column of a node's first character (Monaco's convention)."""
+    return node.start_point[1] + 1
+
+
+def _end_col(node: Any) -> int:
+    """1-based column just past a node's last character."""
+    return node.end_point[1] + 1
+
+
+def _span(node: Any) -> dict[str, int]:
+    """Name span in the same 1-based line/column shape the API returns."""
+    return {
+        "name_line": _line(node),
+        "name_col": _start_col(node),
+        "name_end_line": _end_line(node),
+        "name_end_col": _end_col(node),
+    }
+
+
+def _signature(node: Any, source: bytes) -> str:
+    """First line of a declaration, for the editor hover card."""
+    text = _text(node, source).splitlines()[0].strip()
+    return text[:200]
+
+
 def _named_child(node: Any, field: str | None) -> Any | None:
     if not field:
         return None
@@ -169,6 +195,7 @@ def _callee_facts(call_node: Any, config: LanguageConfig, source: bytes) -> dict
             "receiver_type": None,
             "is_member_call": False,
             "line": _line(call_node),
+            **_span(name_node),
         }
 
     func_node = _named_child(call_node, config.call_function_field)
@@ -202,6 +229,7 @@ def _callee_facts(call_node: Any, config: LanguageConfig, source: bytes) -> dict
             "receiver_type": receiver_type,
             "is_member_call": True,
             "line": _line(call_node),
+            **_span(attr),
         }
 
     name = _text(func_node, source)
@@ -213,6 +241,7 @@ def _callee_facts(call_node: Any, config: LanguageConfig, source: bytes) -> dict
         "receiver_type": None,
         "is_member_call": False,
         "line": _line(call_node),
+        **_span(func_node),
     }
 
 
@@ -329,7 +358,9 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
         kind=KIND_FILE,
         path=path,
         start_line=1,
+        start_col=1,
         end_line=total_lines,
+        end_col=1,
         language=config.name,
         parent=None,
     )
@@ -387,7 +418,10 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                     kind=KIND_CLASS,
                     path=path,
                     start_line=_line(child),
+                    start_col=_start_col(child),
                     end_line=_end_line(child),
+                    end_col=_end_col(child),
+                    signature=_signature(child, source),
                     language=config.name,
                     parent=owner_id,
                 )
@@ -410,6 +444,9 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                                     "child_name": name,
                                     "base": _text(base, source),
                                     "line": _line(base),
+                                    "column": _start_col(base),
+                                    "end_line": _end_line(base),
+                                    "end_column": _end_col(base),
                                     "is_interface": base.type in ("generic_name", "subscript"),
                                 }
                             )
@@ -431,7 +468,10 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                     kind=KIND_FUNCTION,
                     path=path,
                     start_line=_line(child),
+                    start_col=_start_col(child),
                     end_line=_end_line(child),
+                    end_col=_end_col(child),
+                    signature=_signature(child, source),
                     language=config.name,
                     parent=owner_id,
                 )
@@ -498,6 +538,7 @@ def extract_file(path: str, source: bytes, config: LanguageConfig) -> Extraction
                                 "is_member_call": False,
                                 "indirect": True,
                                 "line": _line(target_node),
+                                **_span(target_node),
                             }
                         )
                 # Recurse: a call's arguments can contain further calls and
