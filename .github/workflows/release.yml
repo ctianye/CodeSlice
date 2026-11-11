@@ -92,7 +92,17 @@ jobs:
       - name: Packaging tools
         run: sudo apt-get update && sudo apt-get install -y rpm binutils
 
+      # electron-builder bundles an x86_64 fpm. On an arm64 runner that binary
+      # fails with "Exec format error", so build with the distro's native fpm.
+      - name: Native fpm (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get install -y ruby ruby-dev build-essential
+          sudo gem install --no-document fpm
+
       - name: Backend bundle + packages (${{ matrix.arch }})
+        env:
+          USE_SYSTEM_FPM: ${{ matrix.arch == 'arm64' && 'true' || 'false' }}
         run: |
           chmod +x packaging/build_linux.sh
           ./packaging/build_linux.sh --arch ${{ matrix.arch }}

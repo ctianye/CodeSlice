@@ -13,7 +13,7 @@ CodeSlice 是一款本地优先的 AI 代码阅读桌面应用。添加代码仓
 | --- | --- | --- |
 | Windows 10 / 11 | x64 | `CodeSlice-0.2.3-Setup.exe` |
 | Linux（Ubuntu 22.04+ / Debian 12+） | x86_64 | `CodeSlice-0.2.3-x86_64.AppImage`、`-amd64.deb`、`-x86_64.rpm` |
-| Linux（Ubuntu 22.04+ / Debian 12+） | arm64 | `CodeSlice-0.2.3-aarch64.AppImage`、`-arm64.deb`、`-aarch64.rpm` |
+| Linux（Ubuntu 22.04+ / Debian 12+） | arm64 | `CodeSlice-0.2.3-arm64.AppImage`、`-arm64.deb`、`-aarch64.rpm` |
 
 安装包由 GitHub Actions 在对应的原生 runner 上构建：Windows 使用 NSIS，Linux 使用
 AppImage / deb / rpm。界面文案目前以中文为主，仓库同时提供英文 README 辅助说明。
@@ -952,7 +952,7 @@ PyInstaller 产出的 exe 没有代码签名，属于典型误报。点「更多
 **Q：Linux 上怎么安装？**
 
 - AppImage：`chmod +x CodeSlice-0.2.3-x86_64.AppImage` 后直接运行，不需要安装；
-  arm64 机器使用 `CodeSlice-0.2.3-aarch64.AppImage`。若提示缺少 FUSE，可
+  arm64 机器使用 `CodeSlice-0.2.3-arm64.AppImage`。若提示缺少 FUSE，可
   `sudo apt install libfuse2`，或运行 `./CodeSlice-0.2.3-x86_64.AppImage --appimage-extract-and-run`。
 - deb：`sudo apt install ./CodeSlice-0.2.3-amd64.deb`（arm64 为
   `CodeSlice-0.2.3-arm64.deb`）。

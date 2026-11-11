@@ -186,7 +186,7 @@ Linux 安装包（AppImage / deb / rpm）**不能**在 Windows 上打：后端�
 
 产物在 `desktop/release-linux/`：x64 为 `CodeSlice-<ver>-x86_64.AppImage`、
 `CodeSlice-<ver>-amd64.deb`、`CodeSlice-<ver>-x86_64.rpm`；arm64 为
-`CodeSlice-<ver>-aarch64.AppImage`、`CodeSlice-<ver>-arm64.deb`、
+`CodeSlice-<ver>-arm64.AppImage`、`CodeSlice-<ver>-arm64.deb`、
 `CodeSlice-<ver>-aarch64.rpm`。
 
 **B. 推 tag 走 GitHub Actions**

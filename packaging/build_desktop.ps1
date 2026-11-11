@@ -453,6 +453,28 @@ Write-Step 'Building desktop installer'
 
 if (-not (Invoke-NpmInstall -Directory $DesktopDir -Label 'desktop')) { Exit-WithResult }
 
+# electron-builder packages desktop/electron/**, so the TypeScript main/preload
+# must be compiled first. A developer checkout usually already has
+# electron/build/ from `npm run dev`; a clean CI runner does not.
+Push-Location $DesktopDir
+try {
+    Write-Host '    [desktop] npm run build'
+    $desktopBuildCode = Invoke-Native -FilePath 'npm' -Arguments @('run', 'build')
+    if ($desktopBuildCode -ne 0) {
+        Write-Err "desktop TypeScript build failed (exit $desktopBuildCode)"
+    }
+    else {
+        Write-Ok 'electron main/preload compiled'
+    }
+}
+finally { Pop-Location }
+
+if (-not (Test-Path -LiteralPath (Join-Path $DesktopDir 'electron\build\main.js'))) {
+    Write-Err 'electron/build/main.js is missing after npm run build'
+}
+
+if ($script:Failures -gt 0) { Exit-WithResult }
+
 <#
     Why three stages instead of a single `npm run dist`:
 

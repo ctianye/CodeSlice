@@ -5,8 +5,9 @@
 # Windows: PyInstaller must produce a Linux backend bundle, and electron-builder
 # only builds Linux targets on a Linux host.
 #
-#   ./packaging/build_linux.sh            # full build
-#   ./packaging/build_linux.sh --skip-backend   # reuse packaging/dist-backend-linux
+#   ./packaging/build_linux.sh --arch x64      # x86_64 packages
+#   ./packaging/build_linux.sh --arch arm64    # arm64 packages (native arm64 host)
+#   ./packaging/build_linux.sh --arch x64 --skip-backend   # reuse dist-backend-linux
 #
 # Artifacts land in desktop/release-linux/.
 set -euo pipefail
