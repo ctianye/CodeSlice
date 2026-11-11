@@ -45,6 +45,7 @@ REL_USES = "uses"
 CONF_EXTRACTED = "EXTRACTED"
 CONF_INFERRED = "INFERRED"
 CONF_AMBIGUOUS = "AMBIGUOUS"
+CONF_UNRESOLVED = "UNRESOLVED"
 
 # Node kinds. ``rationale`` and ``external`` exist so the UI can style them apart
 # from ordinary symbols.

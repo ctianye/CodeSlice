@@ -30,6 +30,14 @@ def _python_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
     """
     text = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
     line = node.start_point[0] + 1
+    # Import facts carry statement-level positions. The exact bound name is
+    # matched by the editor word at query time, which is more robust than
+    # re-deriving regex offsets inside a multi-line parenthesised import.
+    span = {
+        "column": node.start_point[1] + 1,
+        "end_line": node.end_point[0] + 1,
+        "end_column": node.end_point[1] + 1,
+    }
     facts: list[dict[str, Any]] = []
     stripped = text.strip()
 
@@ -57,6 +65,7 @@ def _python_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
                 "names": names,
                 "aliases": aliases,
                 "line": line,
+                **span,
             }
         )
     else:
@@ -73,6 +82,7 @@ def _python_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
                     "names": [],
                     "aliases": {alias: ""} if alias else {},
                     "line": line,
+                    **span,
                 }
             )
     return facts
@@ -120,6 +130,11 @@ def _js_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
     """
     text = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
     line = node.start_point[0] + 1
+    span = {
+        "column": node.start_point[1] + 1,
+        "end_line": node.end_point[0] + 1,
+        "end_column": node.end_point[1] + 1,
+    }
     facts: list[dict[str, Any]] = []
     for match in _JS_IMPORT_RE.finditer(text):
         module = match.group("mod") or match.group("bare") or match.group("req") or match.group("reexp")
@@ -151,6 +166,7 @@ def _js_imports(node: Any, source: bytes) -> list[dict[str, Any]]:
                 # bare-call resolution.
                 "reexport": bool(match.group("reexp")),
                 "line": line,
+                **span,
             }
         )
     return facts

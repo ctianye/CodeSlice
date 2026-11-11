@@ -210,6 +210,51 @@ CREATE TABLE IF NOT EXISTS graph_layouts (
     PRIMARY KEY (project_id, scope, layout_key)
 );
 
+-- Per-symbol definitions and per-occurrence references, derived from the same
+-- AST parse as the graph. This is what makes F12/Ctrl+Click a primary-key lookup
+-- instead of a source-tree walk. 1-based lines and columns (Monaco's convention).
+CREATE TABLE IF NOT EXISTS symbol_defs (
+    -- No foreign key: like ``graphs``, this table is also written for an ad-hoc
+    -- project id during a build that may be discarded. delete_project removes
+    -- both tables through drop_graph_cache.
+    project_id     INTEGER NOT NULL,
+    node_id        TEXT    NOT NULL,
+    name           TEXT    NOT NULL,
+    normalized     TEXT    NOT NULL,
+    kind           TEXT    NOT NULL,
+    path           TEXT    NOT NULL,
+    start_line     INTEGER NOT NULL,
+    start_col      INTEGER NOT NULL DEFAULT 1,
+    end_line       INTEGER NOT NULL,
+    end_col        INTEGER NOT NULL DEFAULT 1,
+    parent_node_id TEXT,
+    signature      TEXT    NOT NULL DEFAULT '',
+    doc            TEXT    NOT NULL DEFAULT '',
+    language       TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (project_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_defs_pos ON symbol_defs(project_id, path, start_line);
+CREATE INDEX IF NOT EXISTS idx_symbol_defs_name ON symbol_defs(project_id, normalized);
+
+CREATE TABLE IF NOT EXISTS symbol_refs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id     INTEGER NOT NULL,
+    path           TEXT    NOT NULL,
+    start_line     INTEGER NOT NULL,
+    start_col      INTEGER,
+    end_line       INTEGER,
+    end_col        INTEGER,
+    name           TEXT    NOT NULL,
+    normalized     TEXT    NOT NULL,
+    kind           TEXT    NOT NULL,
+    from_node_id   TEXT,
+    target_node_id TEXT,
+    confidence     TEXT    NOT NULL DEFAULT 'EXTRACTED'
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_refs_pos ON symbol_refs(project_id, path, start_line, start_col);
+CREATE INDEX IF NOT EXISTS idx_symbol_refs_target ON symbol_refs(project_id, target_node_id);
+CREATE INDEX IF NOT EXISTS idx_symbol_refs_name ON symbol_refs(project_id, normalized);
+
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
@@ -238,6 +283,12 @@ def drop_graph_cache(conn: sqlite3.Connection, project_id: int, scope: str) -> N
     behaviour to duplicate.
     """
     conn.execute("DELETE FROM graphs WHERE project_id = ? AND scope = ?", (project_id, scope))
+    # The symbol index is derived in the same build; serving it after the graph
+    # was invalidated would jump to positions from a corpus that no longer exists.
+    # The notes graph (project_id 0) has no symbol index, so both deletes are safe.
+    conn.execute("DELETE FROM symbol_defs WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM symbol_refs WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM settings WHERE key = ?", (f"symbol_index:{project_id}",))
     bump_graph_epoch(conn, project_id)
 
 

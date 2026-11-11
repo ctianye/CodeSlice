@@ -19,7 +19,7 @@ Design rules that come from graphify's architecture and are worth keeping:
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 """Bumped whenever the builder's output shape or rules change.
 
 Version 2 replaced the chunk-derived graph with a real AST pass: docstrings and
@@ -35,6 +35,10 @@ aliases (``from x import y as z``).
 Version 4 stops Python/JS/TS imports from matching an unrelated project file by
 their short tail (``langgraph.types`` no longer resolves to ``types.ts``); only
 languages without an import parser keep that fallback.
+
+Version 5 adds the per-occurrence symbol index (``symbol_defs``/``symbol_refs``)
+used by editor go-to-definition. It is built from the same parse and invalidated
+with the graph, so a stored graph without an index is rebuilt once.
 
 A stored graph with a different version is rebuilt instead of served. Without
 this, changing how edges are derived would silently keep serving a graph built by

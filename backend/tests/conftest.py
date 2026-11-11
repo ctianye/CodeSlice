@@ -57,6 +57,8 @@ def conn_reset():
             # would otherwise leave a graph that a later test could be served.
             "graphs",
             "graph_layouts",
+            "symbol_refs",
+            "symbol_defs",
             "projects",
         ):
             conn.execute(f"DELETE FROM {table}")

@@ -78,7 +78,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.db import GRAPH_SCOPE_CODE, bump_graph_epoch, get_conn, utcnow, write_conn
-from app.graph import GRAPH_DIRNAME, GRAPH_FILENAME, SCHEMA_VERSION, builder
+from app.graph import GRAPH_DIRNAME, GRAPH_FILENAME, SCHEMA_VERSION, builder, symbols
 from app.graph.cluster import apply_communities, detect_communities
 
 log = logging.getLogger(__name__)
@@ -502,7 +502,10 @@ def build_and_store(
     with a fresh marker (see :func:`_persist_if_current`).
     """
     epoch = _read_epoch_now(project_id)
+    if sources is None:
+        sources = builder.collect_sources(root)
     graph = builder.build_graph(sources=sources, root=root)
+    index = builder.build_symbol_index(sources=sources, root=root)
     assignment, summaries = detect_communities(graph["nodes"], graph["edges"])
     nodes = apply_communities(graph["nodes"], assignment, summaries)
 
@@ -514,7 +517,13 @@ def build_and_store(
         "communities": summaries,
         "stats": graph["stats"],
     }
-    stored = _persist_if_current(project_id, payload, expected_epoch=epoch)
+    stored = _persist_if_current(
+        project_id,
+        payload,
+        expected_epoch=epoch,
+        defs=index.get("defs") or [],
+        refs=index.get("refs") or [],
+    )
     log.info(
         "%s graph for project %s: %d nodes, %d edges, %d communities, %d rationale",
         "built" if stored else "discarded a stale build of the",
@@ -527,7 +536,14 @@ def build_and_store(
     return payload
 
 
-def _persist_if_current(project_id: int, payload: dict[str, Any], *, expected_epoch: int | None) -> bool:
+def _persist_if_current(
+    project_id: int,
+    payload: dict[str, Any],
+    *,
+    expected_epoch: int | None,
+    defs: list[dict[str, Any]] | None = None,
+    refs: list[dict[str, Any]] | None = None,
+) -> bool:
     """Write the built payload unless the corpus changed while we were building.
 
     Reading the tree takes seconds. If an index run invalidated the graph in that
@@ -550,6 +566,10 @@ def _persist_if_current(project_id: int, payload: dict[str, Any], *, expected_ep
                 )
                 return False
         _write_row(conn, project_id, GRAPH_SCOPE_CODE, payload)
+        # The symbol index is part of the same corpus snapshot as the graph. Both
+        # writes share this transaction, so an epoch change cannot leave one
+        # describing an older tree than the other.
+        symbols.replace_index(conn, project_id, defs or [], refs or [])
     return True
 
 

@@ -8,6 +8,8 @@
   height: 100%;
   min-height: 0;
   min-width: 0;
+  /* The navigation picker is positioned inside the pane, not over the app. */
+  position: relative;
   background: var(--bg);
   /*
    * The toolbar drops tags based on how wide the pane is, not how wide the
@@ -92,6 +94,296 @@
   align-items: center;
   gap: 2px;
   flex: 0 0 auto;
+}
+
+/* ---------------------------- navigation feedback -------------------------- */
+
+.editor-toolbar .tag.nav-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.nav-busy .spinner {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+.nav-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  animation: slide-up var(--dur) var(--ease);
+}
+
+.nav-notice .nav-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-notice.success {
+  color: var(--ok);
+  border-top-color: color-mix(in srgb, var(--ok) 36%, var(--border));
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel));
+}
+
+.nav-notice.error {
+  color: var(--danger);
+  border-top-color: color-mix(in srgb, var(--danger) 36%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-panel));
+}
+
+.nav-notice-close {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
+
+/* ------------------------------ nav picker -------------------------------- */
+
+.nav-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 54px;
+  background: var(--bg-overlay);
+  animation: fade-in var(--dur-fast) var(--ease);
+}
+
+.nav-picker {
+  display: flex;
+  flex-direction: column;
+  width: min(580px, calc(100% - 28px));
+  max-height: calc(100% - 82px);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-3);
+}
+
+.nav-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-picker-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-picker-titles strong {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.nav-picker-titles span {
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-picker-count {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  padding: 4px;
+}
+
+.nav-picker-item {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.9fr) minmax(0, 1.6fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+}
+
+.nav-picker-item:hover:not(:disabled),
+.nav-picker-item.active {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.nav-picker-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.nav-picker-name {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-picker-hint {
+  overflow: hidden;
+  direction: rtl;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-picker-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.nav-picker-meta em {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-style: normal;
+  color: var(--text-faint);
+}
+
+.nav-picker-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.nav-picker-foot kbd {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+/* ------------------------- VS Code-style decorations ---------------------- */
+
+/*
+ * Monaco ships the same hover/occurrence contributions as VS Code, but the
+ * standalone build has no theme service to fill its `--vscode-*` variables.
+ * Defining them here is what makes `hoverHighlight`, `wordHighlightText` and
+ * `symbolHighlight` visible instead of transparent.
+ */
+.monaco-editor {
+  --vscode-editor-hoverHighlightBackground: rgba(76, 141, 255, 0.16);
+  --vscode-editor-wordHighlightBackground: rgba(76, 141, 255, 0.12);
+  --vscode-editor-wordHighlightBorder: rgba(76, 141, 255, 0.38);
+  --vscode-editor-wordHighlightTextBackground: rgba(76, 141, 255, 0.12);
+  --vscode-editor-wordHighlightTextBorder: rgba(76, 141, 255, 0.38);
+  --vscode-editor-wordHighlightStrongBackground: rgba(76, 141, 255, 0.2);
+  --vscode-editor-wordHighlightStrongBorder: rgba(76, 141, 255, 0.55);
+  --vscode-editor-selectionHighlightBackground: rgba(76, 141, 255, 0.1);
+  --vscode-editor-selectionHighlightBorder: rgba(76, 141, 255, 0.28);
+  --vscode-editor-symbolHighlightBackground: rgba(76, 141, 255, 0.22);
+  --vscode-editor-symbolHighlightBorder: rgba(76, 141, 255, 0.6);
+  --vscode-editorHoverWidget-background: var(--bg-elevated);
+  --vscode-editorHoverWidget-foreground: var(--text);
+  --vscode-editorHoverWidget-border: var(--border-strong);
+  --vscode-editorHoverWidget-statusBarBackground: var(--bg-panel);
+  --vscode-textCodeBlock-background: var(--bg-panel);
+  --vscode-textLink-foreground: var(--accent);
+  --vscode-textLink-activeForeground: var(--accent-hover);
+}
+
+:root[data-theme='light'] .monaco-editor {
+  --vscode-editor-hoverHighlightBackground: #add6ff33;
+  --vscode-editor-wordHighlightBackground: rgba(37, 99, 235, 0.08);
+  --vscode-editor-wordHighlightBorder: rgba(37, 99, 235, 0.28);
+  --vscode-editor-wordHighlightTextBackground: rgba(37, 99, 235, 0.08);
+  --vscode-editor-wordHighlightTextBorder: rgba(37, 99, 235, 0.28);
+  --vscode-editor-wordHighlightStrongBackground: rgba(37, 99, 235, 0.14);
+  --vscode-editor-wordHighlightStrongBorder: rgba(37, 99, 235, 0.45);
+  --vscode-editor-selectionHighlightBackground: rgba(37, 99, 235, 0.06);
+  --vscode-editor-selectionHighlightBorder: rgba(37, 99, 235, 0.2);
+  --vscode-editor-symbolHighlightBackground: rgba(37, 99, 235, 0.16);
+  --vscode-editor-symbolHighlightBorder: rgba(37, 99, 235, 0.5);
+  --vscode-editorHoverWidget-background: var(--bg-elevated);
+  --vscode-editorHoverWidget-foreground: var(--text);
+  --vscode-editorHoverWidget-border: var(--border-strong);
+  --vscode-editorHoverWidget-statusBarBackground: var(--bg-panel);
+  --vscode-textCodeBlock-background: var(--bg-panel);
+  --vscode-textLink-foreground: var(--accent);
+  --vscode-textLink-activeForeground: var(--accent-hover);
+}
+
+/* VS Code draws a 1px box around every occurrence; a small radius keeps it
+   readable next to the rounded UI without looking like a text selection. */
+.monaco-editor .wordHighlight,
+.monaco-editor .wordHighlightText,
+.monaco-editor .wordHighlightStrong,
+.monaco-editor .selectionHighlight,
+.monaco-editor .symbolHighlight {
+  border-radius: 2px;
+}
+
+/* Ctrl/Cmd-hover affordance: the symbol that a modifier-click would jump from. */
+.monaco-editor .ctrl-click-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* Monaco injects its own hover stylesheet at runtime, so use an extra class to
+   keep the larger VS Code-like radius and shadow. */
+.monaco-editor .monaco-hover.monaco-hover {
+  max-width: 640px;
+  border-radius: 8px;
+  box-shadow: var(--shadow-3);
 }
 
 .editor-mount {

@@ -239,6 +239,8 @@ manually deleting the user data directory removes that local data.
 - 把对话整理成可索引、可搜索、可跨项目复用的笔记。
 - 在独立的代码图谱与笔记图谱中可视化代码和笔记，支持展开社区、聚焦关系总结，
   以及从对话跳到代码。
+- 像 IDE 一样在代码间跳转：`F12` / `Ctrl+Click` 到定义，`Shift+F12` 查看引用，
+  `Alt+←/→` 前进后退。
 - 对话、索引与应用数据全部保存在本地。
 
 <details>
@@ -255,6 +257,8 @@ manually deleting the user data directory removes that local data.
 - Visualizes code and notes in separate static graphs with expandable
   communities, focused relationship summaries, and conversation-to-code
   navigation.
+- Jumps between symbols like an IDE: `F12` / `Ctrl+Click` for go-to-definition,
+  `Shift+F12` for references, and `Alt+←/→` for back/forward.
 - Saves conversations, indexes, and application data locally.
 
 </details>
@@ -355,6 +359,7 @@ please explain the problem, reproduction steps, and expected behavior.
 | **AI 可执行命令** | 对话里模型调 `run_command` 走的审批卡与终端是同一套沙箱：同一份危险命令黑名单，同一条 `command_rules` 授权规则。 |
 | **文档阅读与就地编辑** | 打开 `.md` / `.mdx` 默认渲染成排版文档（标题层级、表格、代码块带复制、图片按相对路径解析并走本机接口加载）。工具栏「阅读 / 编辑」切换：编辑态用 Monaco 直接改，`⌘/Ctrl+S` 或「保存」写回磁盘；保存带 mtime 校验，文件在打开后被别人改过会拒绝覆盖并给出提示。 |
 | **可溯源的引用** | 每条回答附 `文件:行号` 引用块，点击直接跳转并用左侧色条标出范围；再点同一个引用块取消标亮。 |
+| **代码跳转** | `F12` / `Ctrl+Click` 跳到定义，`Shift+F12` 列出引用，`Alt+←/→` 在跳转历史中前进后退。同名符号弹出选择器，外部库与未解析位置给出明确提示；悬浮显示签名、docstring 与 `WHY` 注释。光标所在符号和全部出现位置会像 VS Code 一样带框高亮，跳转后目标符号短暂闪烁。 |
 | **混合检索** | SQLite FTS5 关键词检索 + numpy 余弦相似度语义检索，结果融合排序。 |
 | **结构化索引** | Tree-sitter 解析 Python / TS / JS / Go / Rust / Java / C / C++ / JSON / Bash，按函数、类、模块切块。 |
 | **逐条授权** | 写文件、执行命令必须经你批准，规则可设为「仅本次 / 本会话 / 总是」。没有「信任整个项目」一键放行。 |
