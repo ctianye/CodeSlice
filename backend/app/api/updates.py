@@ -27,6 +27,10 @@ RELEASE_API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 RELEASE_PAGE = f"https://github.com/{REPOSITORY}/releases/latest"
 RELEASE_TAG_PREFIX = f"https://github.com/{REPOSITORY}/releases/tag/"
 ATOM_FEED = f"https://github.com/{REPOSITORY}/releases.atom"
+# A tiny static file on a CDN. GitHub's HTML/Atom hosts can be slow or
+# unreachable on some networks even when api.github.com is not; jsDelivr is a
+# useful last resort and does not share the API quota.
+CDN_VERSION = f"https://cdn.jsdelivr.net/gh/{REPOSITORY}@master/version.json?app={VERSION}"
 
 CACHE_TTL_SECONDS = 30 * 60
 STALE_TTL_SECONDS = 24 * 60 * 60
@@ -101,6 +105,21 @@ async def _fetch_html_redirect() -> dict[str, Any]:
     return _payload(match.group(1))
 
 
+async def _fetch_cdn() -> dict[str, Any]:
+    async with _client() as client:
+        response = await client.get(CDN_VERSION)
+        response.raise_for_status()
+        data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("version.json is not an object")
+    tag = data.get("tag")
+    if not isinstance(tag, str) and isinstance(data.get("version"), str):
+        tag = f"v{data['version']}"
+    if not isinstance(tag, str):
+        raise ValueError("version.json has no tag")
+    return _payload(tag)
+
+
 async def _fetch_atom() -> dict[str, Any]:
     async with _client() as client:
         response = await client.get(ATOM_FEED)
@@ -112,6 +131,12 @@ async def _fetch_atom() -> dict[str, Any]:
 
 
 async def _fetch_fallback() -> dict[str, Any]:
+    # Prefer the static CDN file: it is small and works on networks where the
+    # GitHub HTML host times out. HTML and Atom remain secondary fallbacks.
+    try:
+        return await _fetch_cdn()
+    except Exception:
+        pass
     try:
         return await _fetch_html_redirect()
     except Exception:

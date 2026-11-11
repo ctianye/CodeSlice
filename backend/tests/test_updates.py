@@ -62,6 +62,29 @@ def test_latest_release_falls_back_when_api_is_rate_limited(client, monkeypatch)
     assert body["html_url"].endswith("/releases/tag/v0.2.4")
 
 
+def test_latest_release_prefers_cdn_fallback(client, monkeypatch):
+    async def rate_limited():
+        raise RuntimeError("HTTP 403 rate limit exceeded")
+
+    async def cdn():
+        return updates._payload("v0.2.4")
+
+    async def html():
+        raise AssertionError("HTML fallback must not run when the CDN works")
+
+    async def atom():
+        raise AssertionError("Atom fallback must not run when the CDN works")
+
+    monkeypatch.setattr(updates, "_fetch_api", rate_limited)
+    monkeypatch.setattr(updates, "_fetch_cdn", cdn)
+    monkeypatch.setattr(updates, "_fetch_html_redirect", html)
+    monkeypatch.setattr(updates, "_fetch_atom", atom)
+
+    response = client.get("/api/updates/latest")
+    assert response.status_code == 200, response.text
+    assert response.json()["tag_name"] == "v0.2.4"
+
+
 def test_latest_release_is_cached(client, monkeypatch):
     calls = 0
 
