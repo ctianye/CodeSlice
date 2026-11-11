@@ -249,6 +249,9 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // The graph settles once per topology, in batches driven by timers. An
+      // occluded window must finish that pass instead of freezing the seed.
+      backgroundThrottling: false,
     },
   })
 

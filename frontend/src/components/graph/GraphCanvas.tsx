@@ -184,10 +184,13 @@ export function GraphCanvas({
   const labelFrame = useRef(0)
   /** vis emits `stabilizationIterationsDone` only for a pass it started itself. */
   const settleDone = useRef(false)
+  const settleCompleted = useRef(false)
   const settleRef = useRef<(() => void) | null>(null)
   const settleTimer = useRef(0)
   const settleDeadline = useRef(0)
   const stabilizePending = useRef(false)
+  const stabilizeRequested = useRef(false)
+  const stabilizeEpoch = useRef(0)
   const viewport = () => ({
     width: hostRef.current?.clientWidth ?? 1200,
     height: hostRef.current?.clientHeight ?? 800,
@@ -203,8 +206,9 @@ export function GraphCanvas({
     if (settleTimer.current) window.clearTimeout(settleTimer.current)
     settleTimer.current = window.setTimeout(() => settleRef.current?.(), delay)
   }
-  const noteProgress = () => {
+  const noteProgress = (info?: { iterations?: number; total?: number }) => {
     if (settleDone.current) return
+    if (info?.total && (info.iterations ?? 0) >= info.total) settleCompleted.current = true
     const remaining = settleDeadline.current - Date.now()
     if (remaining <= 0) {
       settleRef.current?.()
@@ -251,6 +255,11 @@ export function GraphCanvas({
       physics: {
         enabled: usePhysics,
         solver: 'forceAtlas2Based',
+        // vis ends a pass as soon as node velocity drops under this threshold.
+        // With the default (0.75) a 2k-node graph can stop after a handful of
+        // iterations, which is exactly the uniform ball we are trying to avoid.
+        // A tiny threshold makes the pass actually use its iteration budget.
+        minVelocity: 0,
         forceAtlas2Based: {
           gravitationalConstant: -60,
           centralGravity: 0.005,
@@ -283,6 +292,8 @@ export function GraphCanvas({
     fitted.current = false
     appliedFocus.current = null
     settleDone.current = false
+    settleCompleted.current = false
+    stabilizeRequested.current = false
     stabilizePending.current = usePhysics
     setSettling(usePhysics)
     if (usePhysics) {
@@ -312,8 +323,14 @@ export function GraphCanvas({
       }
       network.setOptions({ physics: { enabled: false } })
       const positions = network.getPositions()
-      rememberPositions(layoutKey, new Map(Object.entries(positions)))
-      settledRef.current?.(positions)
+      // Only a completed pass is worth persisting. A watchdog that fires
+      // before the first progress event means the layout never ran (the window
+      // can be occluded when the pass is requested); saving the seed would
+      // freeze that unusable view forever.
+      if (settleCompleted.current) {
+        rememberPositions(layoutKey, new Map(Object.entries(positions)))
+        settledRef.current?.(positions)
+      }
       setSettling(false)
       fitVisible(network)
       // A locate/search request can arrive before physics settles. fitVisible()
@@ -331,10 +348,36 @@ export function GraphCanvas({
     // network is constructed empty on purpose (data arrives in the next effect),
     // and `stabilize()` bails out on an empty body without emitting — which is
     // exactly how the canvas used to spin forever with physics running. The
-    // explicit pass below plus `stabilized` and the timer make settling certain.
-    network.once('stabilizationIterationsDone', settle)
-    network.once('stabilized', settle)
+    // explicit pass below plus `stabilizationIterationsDone` and the timer make settling certain.
+    const completeSettle = () => {
+      // Ignore a pass vis may run on the empty network before the data arrives.
+      if (!stabilizeRequested.current) return
+      settleCompleted.current = true
+      settle()
+    }
+    // Do NOT listen to `stabilized`: `stabilize()` emits it from its own
+    // `stopSimulation()` before the first physics tick, so treating it as
+    // completion saved the seed layout instead of the settled one.
+    network.once('stabilizationIterationsDone', completeSettle)
     network.on('stabilizationProgress', noteProgress)
+    // If the window was hidden while the pass was requested, the watchdog may
+    // have closed it before any physics tick. Retry when it becomes visible
+    // instead of leaving the seed on screen and unsaved.
+    const retryStalledSettle = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!settleDone.current || settleCompleted.current) return
+      settleDone.current = false
+      setSettling(true)
+      network.setOptions({ physics: { enabled: true } })
+      settleDeadline.current = Date.now() + SETTLE_HARD_MS
+      armSettleTimer(SETTLE_IDLE_MS)
+      window.setTimeout(() => {
+        if (!settleDone.current) {
+          networkRef.current?.stabilize(stabilizationIterations(nodesRef.current.length))
+        }
+      }, 0)
+    }
+    document.addEventListener('visibilitychange', retryStalledSettle)
     network.on('dragEnd', () => {
       const positions = network.getPositions()
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
@@ -347,6 +390,9 @@ export function GraphCanvas({
       settleTimer.current = 0
       settleRef.current = null
       settleDone.current = true
+      stabilizeRequested.current = false
+      stabilizeEpoch.current += 1
+      document.removeEventListener('visibilitychange', retryStalledSettle)
       network.destroy()
       networkRef.current = null
     }
@@ -435,12 +481,19 @@ export function GraphCanvas({
     if (stabilizePending.current && nodes.length) {
       stabilizePending.current = false
       const iterations = stabilizationIterations(nodes.length)
+      stabilizeRequested.current = true
       settleDeadline.current = Date.now() + SETTLE_HARD_MS
       armSettleTimer(SETTLE_IDLE_MS)
-      window.requestAnimationFrame(() => {
-        if (settleDone.current) return
+      // setTimeout, not requestAnimationFrame: a hidden or occluded Electron
+      // window pauses rAF, which left the graph on its seed and let the
+      // watchdog persist that unusable layout. Timers are only throttled.
+      // The data effect can run twice under StrictMode; only the newest
+      // request may start a pass, or two rounds fight over the same physics.
+      const epoch = ++stabilizeEpoch.current
+      window.setTimeout(() => {
+        if (epoch !== stabilizeEpoch.current || settleDone.current) return
         networkRef.current?.stabilize(iterations)
-      })
+      }, 0)
     }
     applyLabels(network, datasets.nodes, nodes, vars, selectedId, viewport())
   }, [nodes, edges, theme, vars, selectedId, datasets])

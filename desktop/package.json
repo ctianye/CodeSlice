@@ -1,6 +1,6 @@
 {
   "name": "codeslice-desktop",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "CodeSlice desktop shell (Electron main process + packager)",
   "homepage": "https://github.com/ctianye/CodeSlice",
