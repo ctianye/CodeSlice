@@ -100,15 +100,26 @@ _LOCKS_GUARD = threading.Lock()
 MAX_LAYOUT_BYTES = 8 * 1024 * 1024
 MAX_LAYOUT_POSITIONS = 50_000
 
+# Bumped when a settled layout would change shape, even though the graph did not.
+# Version 2 raises the large-graph stabilization pass from 80 to 200 iterations:
+# 80 collapsed a ~2k-node graph into one uniformly dense ball, so any layout it
+# produced is not worth keeping. Stored coordinates are per topology key, so
+# including this version retires them once and the next open re-settles.
+LAYOUT_VERSION = 2
+
 
 def topology_key(graph: dict[str, Any]) -> str:
-    """Stable fingerprint for one graph topology.
+    """Stable fingerprint for one graph topology and layout algorithm.
 
-    Node ids and resolved edges are enough: a community recolor or a note title
-    edit does not invalidate a perfectly good layout, while an added/removed
-    relationship does. The same key is used by code and notes graphs.
+    Node ids and resolved edges capture the topology: a community recolor or a
+    note title edit does not invalidate a perfectly good layout, while an
+    added/removed relationship does. ``LAYOUT_VERSION`` retires coordinates whose
+    *shape* would differ after a layout tuning change. The same key is used by
+    code and notes graphs.
     """
     digest = hashlib.sha256()
+    digest.update(f"layout-v{LAYOUT_VERSION}".encode("utf-8"))
+    digest.update(b"\x00")
     for node in sorted(graph.get("nodes") or [], key=lambda item: str(item.get("id") or "")):
         digest.update(str(node.get("id") or "").encode("utf-8"))
         digest.update(b"\x00")

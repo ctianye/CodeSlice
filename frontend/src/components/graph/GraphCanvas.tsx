@@ -45,6 +45,21 @@ interface Props {
 /** Zoom used when a search/citation/locate request focuses one node. */
 const FOCUS_SCALE = 0.7
 
+/**
+ * Stabilization passes before coordinates are frozen. A short 80-pass collapsed
+ * a ~2k-node graph into one uniformly dense ball; at 200 the communities stay
+ * visibly separate, which is the view the reader orients themselves with. The
+ * pass runs once per topology because the settled coordinates are persisted.
+ */
+function stabilizationIterations(nodeCount: number): number {
+  return nodeCount > 1200 ? 200 : 140
+}
+
+/** A settle that keeps reporting progress is not stuck; only silence is. */
+const SETTLE_IDLE_MS = 15_000
+/** Hard ceiling so a runaway layout cannot spin forever. */
+const SETTLE_HARD_MS = 120_000
+
 const LABEL_FACE = 'system-ui, "Microsoft YaHei UI", "Segoe UI", sans-serif'
 
 /** Relations with no direction; an arrowhead would imply a call that does not exist. */
@@ -171,11 +186,32 @@ export function GraphCanvas({
   const settleDone = useRef(false)
   const settleRef = useRef<(() => void) | null>(null)
   const settleTimer = useRef(0)
+  const settleDeadline = useRef(0)
   const stabilizePending = useRef(false)
   const viewport = () => ({
     width: hostRef.current?.clientWidth ?? 1200,
     height: hostRef.current?.clientHeight ?? 800,
   })
+
+  /**
+   * Stop waiting for a settle only after it goes quiet. A fixed timeout could
+   * fire while a large graph was still making progress, freezing half a layout
+   * (which is how the 2k-node ball was produced); the hard deadline still bounds
+   * a layout that never progresses at all.
+   */
+  const armSettleTimer = (delay: number) => {
+    if (settleTimer.current) window.clearTimeout(settleTimer.current)
+    settleTimer.current = window.setTimeout(() => settleRef.current?.(), delay)
+  }
+  const noteProgress = () => {
+    if (settleDone.current) return
+    const remaining = settleDeadline.current - Date.now()
+    if (remaining <= 0) {
+      settleRef.current?.()
+      return
+    }
+    armSettleTimer(Math.min(SETTLE_IDLE_MS, remaining))
+  }
 
   /**
    * Fit only what the filters currently show. vis-network's own `fit()` also
@@ -189,26 +225,28 @@ export function GraphCanvas({
   }
 
   // Seed coordinates from the last settled layout before the network exists, so
-  // a remount can skip a multi-second stabilisation entirely. Recomputed once per
-  // build: a new `layoutKey` means a different topology, so the previous build's
-  // coordinates (and cached map) do not apply to it.
-  const seed = useRef<{ key: string; positions: Map<string, { x: number; y: number }> | null }>({
-    key: '',
-    positions: null,
-  })
-  if (seed.current.key !== layoutKey) {
-    const ids = nodes.map(node => node.id)
+  // a remount can skip a multi-second stabilisation entirely. Resolved when the
+  // network is created: a new `layoutKey` means a different topology, and a
+  // remount (React StrictMode in dev, or a tab switch) should still reuse the
+  // coordinates the previous instance settled instead of starting physics again.
+  const seedPositions = useRef<Map<string, { x: number; y: number }> | null>(null)
+  const seedApplied = useRef(false)
+  const persistedRef = useRef(persistedPositions)
+  persistedRef.current = persistedPositions
+  const resolveSeed = () => {
+    const ids = nodesRef.current.map(node => node.id)
     const cached = recallPositions(layoutKey, ids)
-    const hits = ids.reduce((count, id) => count + (persistedPositions.has(id) ? 1 : 0), 0)
-    seed.current = {
-      key: layoutKey,
-      positions: cached ?? (ids.length && hits / ids.length >= 0.8 ? persistedPositions : null),
-    }
+    if (cached) return cached
+    const persisted = persistedRef.current
+    const hits = ids.reduce((count, id) => count + (persisted.has(id) ? 1 : 0), 0)
+    return ids.length && hits / ids.length >= 0.8 ? persisted : null
   }
 
   useEffect(() => {
     if (!hostRef.current) return
-    const usePhysics = !seed.current.positions
+    seedPositions.current = resolveSeed()
+    seedApplied.current = false
+    const usePhysics = !seedPositions.current
     const options: Options = {
       physics: {
         enabled: usePhysics,
@@ -222,11 +260,9 @@ export function GraphCanvas({
           avoidOverlap: 0.8,
         },
         // The settled result is persisted, so this is the only expensive pass.
-        // Large graphs get a shorter pass: 200 iterations took ~20s on a 2k-node
-        // graph, while 80 still produces a readable community layout.
         stabilization: {
           enabled: true,
-          iterations: nodes.length > 1200 ? 80 : 140,
+          iterations: stabilizationIterations(nodes.length),
           updateInterval: 25,
           fit: false,
         },
@@ -252,7 +288,8 @@ export function GraphCanvas({
     if (usePhysics) {
       // Backstop for a build that never receives nodes: without it the overlay
       // would stay up and the simulation would keep running on an empty canvas.
-      settleTimer.current = window.setTimeout(() => settleRef.current?.(), 15_000)
+      settleDeadline.current = Date.now() + SETTLE_HARD_MS
+      armSettleTimer(SETTLE_IDLE_MS)
     }
     network.on('zoom', () => {
       if (labelFrame.current) return
@@ -297,6 +334,7 @@ export function GraphCanvas({
     // explicit pass below plus `stabilized` and the timer make settling certain.
     network.once('stabilizationIterationsDone', settle)
     network.once('stabilized', settle)
+    network.on('stabilizationProgress', noteProgress)
     network.on('dragEnd', () => {
       const positions = network.getPositions()
       rememberPositions(layoutKey, new Map(Object.entries(positions)))
@@ -323,7 +361,12 @@ export function GraphCanvas({
     const ids = new Set(nodes.map(node => node.id))
     datasets.nodes.remove(datasets.nodes.getIds().filter(id => !ids.has(String(id))))
     const maxDegree = Math.max(1, ...nodes.map(node => node.degree))
-    const positions = seed.current.positions ?? new Map(Object.entries(network.getPositions()))
+    // Seeded coordinates are only the starting point of this mount. Later data
+    // updates (filter chips, theme) must keep whatever the layout has reached.
+    const positions = !seedApplied.current && seedPositions.current
+      ? seedPositions.current
+      : new Map(Object.entries(network.getPositions()))
+    seedApplied.current = true
     datasets.nodes.update(nodes.map((node, index): Node => {
       const color = communityColor(theme, node.community)
       const title = document.createElement('div')
@@ -387,24 +430,19 @@ export function GraphCanvas({
     }
     // The network was built before any node existed, so the stabilization pass
     // vis ran at construction had nothing to move and never reported back. Ask
-    // for a real pass now that the data is in. The timer is the safety net: if
-    // vis swallows the event (or the graph is too big to finish), physics still
-    // gets switched off instead of drifting for the rest of the session.
+    // for a real pass now that the data is in. `noteProgress` re-arms the
+    // watchdog while the pass reports progress; only a silent pass is cut off.
     if (stabilizePending.current && nodes.length) {
       stabilizePending.current = false
-      const iterations = nodes.length > 1200 ? 80 : 140
+      const iterations = stabilizationIterations(nodes.length)
+      settleDeadline.current = Date.now() + SETTLE_HARD_MS
+      armSettleTimer(SETTLE_IDLE_MS)
       window.requestAnimationFrame(() => {
         if (settleDone.current) return
         networkRef.current?.stabilize(iterations)
       })
-      if (settleTimer.current) window.clearTimeout(settleTimer.current)
-      settleTimer.current = window.setTimeout(
-        () => settleRef.current?.(),
-        Math.min(30_000, 8_000 + nodes.length * 5),
-      )
     }
     applyLabels(network, datasets.nodes, nodes, vars, selectedId, viewport())
-    seed.current = { key: layoutKey, positions: null }
   }, [nodes, edges, theme, vars, selectedId, datasets])
 
   // Dim everything except the selected node's one-hop neighbourhood.
