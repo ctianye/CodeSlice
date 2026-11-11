@@ -14,7 +14,7 @@ CodeSlice 是一款本地优先的 AI 代码阅读桌面应用。添加代码仓
 | --- | --- | --- |
 | Windows 10 / 11 | x64 | `CodeSlice-0.2.3-Setup.exe` |
 | macOS 11+ | Apple Silicon（arm64） | `CodeSlice-0.2.3-arm64.dmg` |
-| macOS 10.15+ | Intel（x64） | `CodeSlice-0.2.3-x64.dmg` |
+| macOS 11+ | Intel（x64） | `CodeSlice-0.2.3-x64.dmg` |
 | Linux（Ubuntu 22.04+ / Debian 12+） | x86_64 | `CodeSlice-0.2.3-x86_64.AppImage`、`-amd64.deb`、`-x86_64.rpm` |
 | Linux（Ubuntu 22.04+ / Debian 12+） | arm64 | `CodeSlice-0.2.3-arm64.AppImage`、`-arm64.deb`、`-aarch64.rpm` |
 
@@ -336,8 +336,7 @@ manually deleting the user data directory removes that local data.
 
 ## 运行要求
 
-- Windows 10（1809 或更高版本）或 Windows 11；macOS 11+（Apple Silicon）或
-  macOS 10.15+（Intel）；或 Linux x86_64 / arm64（Ubuntu 22.04+、Debian 12+，
+- Windows 10（1809 或更高版本）或 Windows 11；macOS 11+（Apple Silicon 或 Intel）；或 Linux x86_64 / arm64（Ubuntu 22.04+、Debian 12+，
   AppImage / `.deb` / `.rpm`）。
 - 需要配置兼容的模型服务和你自己的 API Key 才能获得 AI 回答。支持在本地配置的
   模型服务。
@@ -348,8 +347,7 @@ manually deleting the user data directory removes that local data.
 <details>
 <summary>English</summary>
 
-- Windows 10 (version 1809 or later) or Windows 11; macOS 11+ (Apple Silicon)
-  or macOS 10.15+ (Intel); or Linux x86_64 / arm64 (Ubuntu 22.04+,
+- Windows 10 (version 1809 or later) or Windows 11; macOS 11+ (Apple Silicon or Intel); or Linux x86_64 / arm64 (Ubuntu 22.04+,
   Debian 12+; AppImage, deb, or rpm).
 - A compatible model provider and your own API key for AI answers. Local model
   providers are supported where configured.
@@ -363,7 +361,7 @@ not need to install Python, Node.js, or developer tools.
 
 ## 已知限制
 
-- 预编译安装包面向 Windows 10/11（x64）、macOS 11+ / 10.15+（arm64 / x64）与
+- 预编译安装包面向 Windows 10/11（x64）、macOS 11+（arm64 / x64）与
   Linux x86_64 / arm64（AppImage / deb / rpm），均未使用 Developer ID 代码签名；
   macOS 包仅做 ad-hoc 签名且未公证。
   界面文案目前以中文为主，英文 README 仅作文档辅助。
@@ -382,8 +380,7 @@ not need to install Python, Node.js, or developer tools.
 <details>
 <summary>English</summary>
 
-- Prebuilt packages target Windows 10/11 (x64), macOS 11+ / 10.15+ (arm64 /
-  x64), and Linux x86_64 / arm64 (AppImage, deb, rpm); none are code-signed and
+- Prebuilt packages target Windows 10/11 (x64), macOS 11+ (arm64 / x64), and Linux x86_64 / arm64 (AppImage, deb, rpm); none are code-signed and
   the macOS builds are not notarized. The UI is currently Chinese-first; the
   English README is documentation assistance only.
 - On first macOS launch, Gatekeeper may block the app: right-click CodeSlice →
