@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 APP_NAME = "CodeSlice"
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 
 
 def _default_data_dir() -> Path:

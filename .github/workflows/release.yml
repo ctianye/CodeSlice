@@ -3,9 +3,9 @@ name: release
 # Builds the Windows installer and the Linux packages (AppImage / deb / rpm) for
 # a version tag, then attaches them to that GitHub release.
 #
-# Windows could be built locally with packaging/build_desktop.ps1; Linux cannot —
-# PyInstaller has to run on Linux and electron-builder only builds Linux targets
-# on a Linux host. This workflow is the supported way to get both from one tag.
+# Linux runs on native x64 and arm64 runners. The backend is bundled with
+# uv-managed CPython, which is linked against an old glibc, so the AppImage does
+# not inherit the runner's newer glibc (the previous GLIBC_2.38 failure).
 on:
   push:
     tags:
@@ -15,15 +15,22 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   windows:
     runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
@@ -57,33 +64,42 @@ jobs:
           if-no-files-found: error
 
   linux:
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
             desktop/package-lock.json
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      # uv's CPython is built against glibc 2.17, and objdump is used for the
+      # post-build compatibility audit.
+      - uses: astral-sh/setup-uv@v5
 
       - name: Packaging tools
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: sudo apt-get update && sudo apt-get install -y rpm binutils
 
-      - name: Backend bundle + packages
+      - name: Backend bundle + packages (${{ matrix.arch }})
         run: |
           chmod +x packaging/build_linux.sh
-          ./packaging/build_linux.sh
+          ./packaging/build_linux.sh --arch ${{ matrix.arch }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: linux-${{ matrix.arch }}
           path: |
             desktop/release-linux/*.AppImage
             desktop/release-linux/*.deb

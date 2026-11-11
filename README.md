@@ -4,12 +4,19 @@
 
 CodeSlice 是一款本地优先的 AI 代码阅读桌面应用。添加代码仓库后，打开文件、选中代码并开始提问。回答附有可点击的文件与行号引用；AI 需要写文件或运行命令时，先由你审核授权。
 
-**[下载 Windows 版（.exe）](https://github.com/ctianye/CodeSlice/releases/latest)** ·
-**[下载 Linux 版（AppImage / deb / rpm）](https://github.com/ctianye/CodeSlice/releases/latest)** ·
+**[下载 Windows 版](https://github.com/ctianye/CodeSlice/releases/latest)** ·
+**[下载 Linux 版](https://github.com/ctianye/CodeSlice/releases/latest)** ·
 [全部版本](https://github.com/ctianye/CodeSlice/releases) ·
 [MIT 许可](LICENSE)
 
-Windows 提供 `.exe` 安装包；Linux 提供 AppImage、`.deb` 与 `.rpm`（均为 x86_64）。
+| 平台 | 架构 | 安装包 |
+| --- | --- | --- |
+| Windows 10 / 11 | x64 | `CodeSlice-0.2.3-Setup.exe` |
+| Linux（Ubuntu 22.04+ / Debian 12+） | x86_64 | `CodeSlice-0.2.3-x86_64.AppImage`、`-amd64.deb`、`-x86_64.rpm` |
+| Linux（Ubuntu 22.04+ / Debian 12+） | arm64 | `CodeSlice-0.2.3-aarch64.AppImage`、`-arm64.deb`、`-aarch64.rpm` |
+
+安装包由 GitHub Actions 在对应的原生 runner 上构建：Windows 使用 NSIS，Linux 使用
+AppImage / deb / rpm。界面文案目前以中文为主，仓库同时提供英文 README 辅助说明。
 
 ![CodeSlice 项目选择与本地项目列表](docs/screenshots/welcome.png)
 
@@ -96,7 +103,7 @@ references; they do not assert semantic similarity.
 ## 目录
 
 - [实战演示](#实战演示)
-- [v0.2.2 更新](#v022-更新)
+- [v0.2.3 更新](#v023-更新)
 - [快速开始](#快速开始)
 - [功能一览](#功能一览)
 - [运行要求](#运行要求)
@@ -117,7 +124,55 @@ references; they do not assert semantic similarity.
 
 ---
 
-## v0.2.2 更新
+## v0.2.3 更新
+
+- **像 IDE 一样跳转**：`F12` / `Ctrl+Click`（macOS 为 `⌘+Click`）跳转到定义，
+  `Shift+F12` 列出引用，`Alt+←/→` 在跳转历史中前进后退。同名符号会弹出选择器；
+  命中外部库、找不到目标或位置有歧义时，界面会说明原因，而不是静默失败。
+- **悬浮信息与同词高亮**：悬停显示符号签名、docstring / `WHY` 注释与相对路径；
+  光标所在符号和全部出现位置带 VS Code 风格方框，按住 Ctrl / ⌘ 时目标词出现下划线。
+- **符号索引随图谱一次建好**：新增持久化的定义 / 引用索引（`symbol_defs` /
+  `symbol_refs`），带精确行列与跨文件解析结果；打开已有项目不会额外全量扫描。
+- **打开普通文件不再出现“引用第 1–1 行”**：只有从引用、图谱或对话真正带着行范围
+  跳转时才显示引用条，普通打开文件恢复干净视图。
+- **Linux 包不再依赖新 glibc**：GitHub Actions 的 Linux 构建改用 uv 管理的 CPython，
+  后端不再把构建机的 `GLIBC_2.38` 带进 AppImage；构建末尾会扫描所有二进制，超过
+  `GLIBC_2.35` 直接失败。Linux 包改为在原生 x64 与 arm64 runner 上分别构建。
+- **发布流程交给 GitHub**：推送 `v*` 标签后自动构建 Windows NSIS、Linux x64 / arm64
+  的 AppImage / deb / rpm，生成 `SHA256SUMS` 并附加到 Release。Windows 构建会自动
+  下载 rcedit，不再依赖构建机预热 electron-builder 缓存。
+- **发布**：版本号统一到 0.2.3。
+
+<details>
+<summary>English</summary>
+
+- **IDE-style navigation.** `F12` / `Ctrl+Click` (⌘+Click on macOS) goes to the
+  definition, `Shift+F12` lists references, and `Alt+←/→` walks the navigation
+  history. Ambiguous names open a picker; external or unresolved targets explain
+  why instead of failing silently.
+- **Hover and occurrence highlighting.** Hovering shows the signature,
+  docstring/`WHY` comment, and relative path. The symbol under the cursor and all
+  of its occurrences get a VS Code-style box, with an underline on the target
+  while Ctrl/⌘ is held.
+- **The symbol index is built with the graph.** Persistent definition/reference
+  tables (`symbol_defs` / `symbol_refs`) store exact lines/columns and
+  cross-file resolution; opening an existing project does not trigger another
+  full scan.
+- **No more “引用第 1–1 行” on ordinary file opens.** The citation bar only
+  appears for a real ranged jump; opening a file normally is clean again.
+- **Linux packages no longer require a new glibc.** CI builds the backend with
+  uv-managed CPython, so the AppImage no longer inherits the runner's
+  `GLIBC_2.38`; the build scans every bundled binary and fails above
+  `GLIBC_2.35`. Linux artifacts are now built natively on x64 and arm64 runners.
+- **GitHub owns the release build.** A `v*` tag builds Windows NSIS plus Linux
+  x64/arm64 AppImage, deb, and rpm packages, writes `SHA256SUMS`, and attaches
+  everything to the release. Windows CI downloads rcedit automatically instead
+  of relying on a warm electron-builder cache.
+
+</details>
+
+<details>
+<summary>v0.2.2 更新</summary>
 
 - **图谱不再卡在“正在排布图谱”**：画布把「稳定化完成」的回调挂在一个永远不会触发的
   vis 事件上——Network 是用空数据集构造的，vis 在空图上直接返回且不发事件。现在数据
@@ -157,6 +212,8 @@ references; they do not assert semantic similarity.
 
 </details>
 
+</details>
+
 <details>
 <summary>v0.2.1 更新</summary>
 
@@ -183,8 +240,8 @@ references; they do not assert semantic similarity.
 ## 快速开始
 
 1. 从 [最新 GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest)
-   下载对应平台的安装包：Windows 使用 `CodeSlice-0.2.2-Setup.exe`；Linux 使用
-   AppImage、`.deb` 或 `.rpm`（x86_64）。
+   下载对应平台的安装包：Windows 使用 `CodeSlice-0.2.3-Setup.exe`；Linux 按架构选择
+   x86_64 或 arm64 的 AppImage、`.deb`、`.rpm`。
 2. 启动 CodeSlice，点击添加项目并选择本地代码仓库所在的文件夹。
 3. 打开源文件，选中你想理解的代码，在对话面板提问。
 4. 打开 **设置 → 模型**，配置兼容的模型服务与 API Key。Key 保存在系统的凭据管理器
@@ -203,8 +260,8 @@ API Key 保存在系统凭据管理器中。
 
 1. Download the package for your platform from the
    [latest GitHub Release](https://github.com/ctianye/CodeSlice/releases/latest):
-   `CodeSlice-0.2.2-Setup.exe` for Windows, or the AppImage, `.deb`, or `.rpm`
-   (x86_64) for Linux.
+   `CodeSlice-0.2.3-Setup.exe` for Windows, or the x86_64 / arm64 AppImage,
+   `.deb`, or `.rpm` for Linux.
 2. Start CodeSlice and add a local repository by selecting its folder.
 3. Open a source file, select the code you want to understand, and ask a
    question in the conversation pane.
@@ -267,8 +324,8 @@ manually deleting the user data directory removes that local data.
 
 ## 运行要求
 
-- Windows 10（1809 或更高版本）或 Windows 11；或 Linux x86_64
-  （AppImage / `.deb` / `.rpm`）。
+- Windows 10（1809 或更高版本）或 Windows 11；或 Linux x86_64 / arm64
+  （Ubuntu 22.04+、Debian 12+，AppImage / `.deb` / `.rpm`）。
 - 需要配置兼容的模型服务和你自己的 API Key 才能获得 AI 回答。支持在本地配置的
   模型服务。
 
@@ -278,8 +335,8 @@ manually deleting the user data directory removes that local data.
 <details>
 <summary>English</summary>
 
-- Windows 10 (version 1809 or later) or Windows 11, or Linux x86_64
-  (AppImage, deb, or rpm).
+- Windows 10 (version 1809 or later) or Windows 11, or Linux x86_64 / arm64
+  (Ubuntu 22.04+, Debian 12+; AppImage, deb, or rpm).
 - A compatible model provider and your own API key for AI answers. Local model
   providers are supported where configured.
 
@@ -292,8 +349,10 @@ not need to install Python, Node.js, or developer tools.
 
 ## 已知限制
 
-- 预编译安装包面向 Windows 10/11 与 Linux x86_64（AppImage / deb / rpm），
-  均未做代码签名。
+- 预编译安装包面向 Windows 10/11 与 Linux x86_64 / arm64（AppImage / deb / rpm），
+  均未做代码签名。界面文案目前以中文为主，英文 README 仅作文档辅助。
+- AppImage 需要系统提供 FUSE；Ubuntu 22.04+ 若未安装 `libfuse2`，可先
+  `sudo apt install libfuse2`，或使用 `--appimage-extract-and-run` 解包运行。
 - 模型回答依赖已配置的模型服务；API 费用与服务商的数据保留政策取决于你的服务与套餐。
 - Tree-sitter 结构化索引目前配置了 Python、TypeScript、JavaScript、Go、Rust、Java、
   C、C++、JSON 与 Bash。其他文件仍可用于应用支持的纯文本工作流。
@@ -305,8 +364,11 @@ not need to install Python, Node.js, or developer tools.
 <details>
 <summary>English</summary>
 
-- Prebuilt packages target Windows 10/11 and Linux x86_64 (AppImage, deb, rpm);
-  none of them are code-signed.
+- Prebuilt packages target Windows 10/11 and Linux x86_64 / arm64 (AppImage,
+  deb, rpm); none of them are code-signed. The UI is currently Chinese-first;
+  the English README is documentation assistance only.
+- AppImage needs FUSE. On Ubuntu 22.04+ install `libfuse2`, or run with
+  `--appimage-extract-and-run`.
 - Model responses require a configured provider; API charges and provider
   retention policies depend on your provider and plan.
 - Tree-sitter structural indexing is currently configured for Python,
@@ -408,7 +470,7 @@ please explain the problem, reproduction steps, and expected behavior.
 **启动握手**：后端在真正开始监听之后，向 stdout 打印一行
 
 ```
-CODESLICE_READY {"port": 54746, "token": "xN-Nxo...", "version": "0.2.2"}
+CODESLICE_READY {"port": 54746, "token": "xN-Nxo...", "version": "0.2.3"}
 ```
 
 Electron 主进程读到这一行才知道该连哪个端口、用什么 Token。
@@ -537,7 +599,7 @@ cd desktop; npm run dev
 # 1) 后端 → packaging\dist-backend\codeslice-backend.exe（扁平布局）
 pwsh -File packaging\build_backend.ps1
 
-# 2) 前端 + Electron → desktop\release\CodeSlice-0.2.2-Setup.exe
+# 2) 前端 + Electron → desktop\release\CodeSlice-0.2.3-Setup.exe
 pwsh -File packaging\build_desktop.ps1
 ```
 
@@ -556,10 +618,27 @@ HTTP 服务，两处必须是同一份产物），再校验安装包内确实包
 后端产物直接放在 `packaging\dist-backend\`，不会被复制进 `desktop/`：
 `electron-builder.yml` 的 `extraResources.from` 指的就是那里。
 
-Linux 安装包使用 `desktop/electron-builder-linux.yml`：先在 Linux（或 WSL）中用同一
-PyInstaller 入口生成 `packaging/dist-backend-linux/`，再在 `desktop/` 下运行
-`npm run dist:linux`，AppImage / deb / rpm 会输出到 `desktop/release-linux/`。
-PyInstaller 产物必须在 Linux 平台生成，不能从 Windows 交叉编译。
+Linux 安装包使用 `desktop/electron-builder-linux.yml`，推荐在 Linux（原生机器、WSL 或
+CI）中运行：
+
+```bash
+./packaging/build_linux.sh --arch x64     # x86_64
+./packaging/build_linux.sh --arch arm64   # aarch64 / arm64
+```
+
+脚本优先用 [uv](https://docs.astral.sh/uv/) 创建 Python 3.11 环境；uv 提供的 CPython
+链接较旧的 glibc，后端不会把构建机的 `GLIBC_2.38` 带进安装包。构建完成后会扫描
+`packaging/dist-backend-linux/` 中的所有二进制，若所需 glibc 高于 2.35 就直接失败。
+没有 uv 时才会退回系统 `python3 -m venv`。
+
+PyInstaller 产物必须在目标架构的 Linux 上生成，不能从 Windows 交叉编译；arm64 包同理，
+需要 arm64 runner 或 arm64 机器。GitHub Actions 已按架构分别构建：推送 `v*` 标签后，
+Windows、Linux x64、Linux arm64 会并行打包，汇总后自动创建 / 更新 Release 并上传
+`SHA256SUMS-v0.2.3.txt`。也可以手动触发 `release` workflow（只构建和上传 Actions
+artifact，不创建 Release）。
+
+AppImage / deb / rpm 输出到 `desktop/release-linux/`。只想重新打包前端或复用已有后端时，
+可加 `--skip-backend`。
 
 > 注意：`uv sync` / `uv run` 会把 PyInstaller 从 `backend\.venv` 里卸掉（它只在
 > `packaging\requirements-packaging.txt` 里）。同步过依赖之后，重跑
@@ -872,9 +951,13 @@ PyInstaller 产出的 exe 没有代码签名，属于典型误报。点「更多
 
 **Q：Linux 上怎么安装？**
 
-- AppImage：`chmod +x CodeSlice-0.2.2-x86_64.AppImage` 后直接运行，不需要安装。
-- deb：`sudo apt install ./CodeSlice-0.2.2-amd64.deb`。
-- rpm：`sudo dnf install ./CodeSlice-0.2.2-x86_64.rpm`（或 `sudo rpm -i ...`）。
+- AppImage：`chmod +x CodeSlice-0.2.3-x86_64.AppImage` 后直接运行，不需要安装；
+  arm64 机器使用 `CodeSlice-0.2.3-aarch64.AppImage`。若提示缺少 FUSE，可
+  `sudo apt install libfuse2`，或运行 `./CodeSlice-0.2.3-x86_64.AppImage --appimage-extract-and-run`。
+- deb：`sudo apt install ./CodeSlice-0.2.3-amd64.deb`（arm64 为
+  `CodeSlice-0.2.3-arm64.deb`）。
+- rpm：`sudo dnf install ./CodeSlice-0.2.3-x86_64.rpm`（arm64 为
+  `CodeSlice-0.2.3-aarch64.rpm`，或 `sudo rpm -i ...`）。
 
 deb / rpm 默认安装到 `/opt/CodeSlice`，启动项会出现在应用菜单中。安装包未做代码签名，
 系统可能提示来源未知；确认文件来自本仓库 Release 后可继续安装。
@@ -933,7 +1016,7 @@ uv run fastapi dev app/main.py --port 8123
 **Q：安装后 `CodeSlice.exe` 是 Electron 的默认图标？**
 
 说明打包时 rcedit 那一步没生效。正常的打包输出里应该有
-`[ok] icon verified: ...` 与 `[ok] version info: CodeSlice 0.2.2.0`。
+`[ok] icon verified: ...` 与 `[ok] version info: CodeSlice 0.2.3.0`。
 原因是 `desktop/electron-builder.yml` 里 `signAndEditExecutable: false`（本地不签名），
 electron-builder 因此跳过写图标/版本；而打开它的替代路径需要解压含符号链接的
 winCodeSign 包，非管理员做不到。`packaging\build_desktop.ps1` 改为
