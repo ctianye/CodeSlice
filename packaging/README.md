@@ -1,6 +1,6 @@
 # CodeSlice 打包流水线 / Packaging pipeline
 
-本目录负责把 CodeSlice 打包成可安装的 Windows 桌面程序。产物由两部分拼装而成：
+本目录负责把 CodeSlice 打包成 Windows / Linux 桌面程序。产物由两部分拼装而成：
 
 1. **后端**：`backend/`（FastAPI + LangGraph）经 PyInstaller 打成 one-dir 可执行包；
 2. **前端**：`frontend/`（Vite + React）构建成静态资源，由 `desktop/`（Electron）加载，
@@ -65,8 +65,8 @@ packaging\dist-backend\            # 扁平布局，与 electron-builder 的 ext
 └── _internal\                     # Python 运行时、依赖、语法库
 
 desktop\release\
-├── CodeSlice-0.2.2-Setup.exe      # NSIS 安装器（最终交付物）
-├── CodeSlice-0.2.2-Setup.exe.blockmap
+├── CodeSlice-0.2.3-Setup.exe      # NSIS 安装器（最终交付物）
+├── CodeSlice-0.2.3-Setup.exe.blockmap
 └── win-unpacked\
     ├── CodeSlice.exe              # 已写入图标 + 版本信息（见第 3 节三步构建）
     └── resources\
@@ -110,6 +110,7 @@ desktop\release\
 | --- | --- |
 | `-SkipFrontend` | 复用已有的 `frontend\dist`，跳过前端构建 |
 | `-Clean` | 删除 `desktop\release`；对 `frontend`/`desktop` 强制重新 `npm ci` |
+| `-RceditPath <path>` | 指定 rcedit-x64.exe；不传时先查 electron-builder 缓存，再自动下载 |
 
 脚本会校验 Node 主版本 ≥ 24、两个 `package.json` 存在、后端产物存在；随后把
 `frontend\dist` 同步到 `desktop\dist`（`node desktop\scripts\copy-renderer.mjs`）。
@@ -166,28 +167,34 @@ Linux 安装包（AppImage / deb / rpm）**不能**在 Windows 上打：后端�
 **A. 在 WSL / 原生 Linux 上手动构建**
 
 ```bash
-./packaging/build_linux.sh              # 完整构建
-./packaging/build_linux.sh --skip-backend   # 复用 packaging/dist-backend-linux
+./packaging/build_linux.sh --arch x64              # 构建 x86_64 包
+./packaging/build_linux.sh --arch arm64            # 构建 arm64 包（需 arm64 机器）
+./packaging/build_linux.sh --arch x64 --skip-backend   # 复用 packaging/dist-backend-linux
 ```
 
-脚本依次做四件事：
+脚本依次做五件事：
 
-1. 用 `python3 -m venv packaging/build/linux-venv` 建独立环境（不碰 Windows 的
-   `backend/.venv`），安装 `backend` 与 `requirements-packaging.txt`；
+1. 优先用 `uv venv --python 3.11 packaging/build/linux-venv` 建独立环境（不碰 Windows 的
+   `backend/.venv`），安装 `backend` 与 `requirements-packaging.txt`；uv 的 CPython 链接
+   较旧的 glibc，避免安装包继承 CI runner 的 `GLIBC_2.38`。没有 uv 时退回 `python3 -m venv`；
 2. PyInstaller 输出到 `packaging/dist-backend-linux`，并压平为
    `codeslice-backend` + `_internal/`（与 `electron-builder-linux.yml` 的
    `extraResources` 对应）；
-3. 跑一次 `codeslice-backend --selftest`，语法库或 keyring 缺失会直接失败；
-4. `frontend` 构建 → `desktop/scripts/copy-renderer.mjs` → `electron-builder --linux`。
+3. 扫描所有二进制的 glibc 符号版本，超过 2.35 直接失败；
+4. 跑一次 `codeslice-backend --selftest`，语法库或 keyring 缺失会直接失败；
+5. `frontend` 构建 → `desktop/scripts/copy-renderer.mjs` → `electron-builder --linux --x64|--arm64`。
 
-产物在 `desktop/release-linux/`：`CodeSlice-<ver>-x86_64.AppImage`、
-`CodeSlice-<ver>-amd64.deb`、`CodeSlice-<ver>-x86_64.rpm`。
+产物在 `desktop/release-linux/`：x64 为 `CodeSlice-<ver>-x86_64.AppImage`、
+`CodeSlice-<ver>-amd64.deb`、`CodeSlice-<ver>-x86_64.rpm`；arm64 为
+`CodeSlice-<ver>-arm64.AppImage`、`CodeSlice-<ver>-arm64.deb`、
+`CodeSlice-<ver>-aarch64.rpm`。
 
 **B. 推 tag 走 GitHub Actions**
 
-`.github/workflows/release.yml` 在推送 `v*` 标签（或手动触发）时并行构建 Windows 与
-Linux，把安装包和 `SHA256SUMS-<tag>.txt` 一并挂到对应的 GitHub Release。这是唯一
-不依赖本机 WSL/Docker 的双平台出包方式。
+`.github/workflows/release.yml` 在推送 `v*` 标签（或手动触发）时并行构建 Windows、
+Linux x64 与 Linux arm64，把安装包和 `SHA256SUMS-<tag>.txt` 一并挂到对应的 GitHub
+Release。Linux 构建使用 `ubuntu-22.04` / `ubuntu-22.04-arm` 原生 runner，并通过 uv
+管理 Python 3.11；不依赖本机 WSL/Docker。
 
 ---
 
@@ -231,11 +238,13 @@ PyInstaller 产出的 exe 没有代码签名，且自解压行为与部分启发
 ### 安装后的 `CodeSlice.exe` 是 Electron 默认图标 / 属性里显示 "Electron"
 
 说明 rcedit 那一步没生效。正常构建会打印
-`[ok] icon verified: <hash>` 和 `[ok] version info: CodeSlice 0.2.2.0`。
+`[ok] icon verified: <hash>` 和 `[ok] version info: CodeSlice 0.2.3.0`。
 
-* 若报 `no usable rcedit-x64.exe found`：electron-builder 还没下载过 winCodeSign。
-  跑一次 `cd desktop; npx electron-builder --win --dir`，即使解压报
-  `Cannot create symbolic link` 也无所谓——缓存里已经留下可用的 `rcedit-x64.exe`。
+* 若脚本自动下载 rcedit 失败（离线环境）：手动下载
+  `https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe`，
+  再用 `-RceditPath <path>` 传入；也可以跑一次
+  `cd desktop; npx electron-builder --win --dir`，即使解压报
+  `Cannot create symbolic link` 也无所谓——缓存里会留下可用的 `rcedit-x64.exe`。
 * 若有人把 `desktop/electron-builder.yml` 的 `signAndEditExecutable` 改成 `true`，
   electron-builder 会尝试自行解压 winCodeSign 并失败（`cannot execute cause=exit status 2`）。
   保持 `false`，让本脚本的第 2 步负责写图标。
@@ -385,6 +394,6 @@ PyInstaller 默认产出**嵌套**目录 `dist-backend\codeslice-backend\codesli
    `[ok] icon verified`、`[ok] version info: CodeSlice`、
    `[ok] packaged exe keeps the CodeSlice icon after repackaging`、
    `[ok] packaged backend present`、`[ok] packaged renderer is current: assets/index-*.js`；
-3. `desktop\release\CodeSlice-0.2.2-Setup.exe` 存在，脚本会打印其大小与 SHA256；
+3. `desktop\release\CodeSlice-0.2.3-Setup.exe` 存在，脚本会打印其大小与 SHA256；
 4. 可直接对安装后的后端复跑自检：
    `desktop\release\win-unpacked\resources\backend\codeslice-backend.exe --selftest`。

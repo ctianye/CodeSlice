@@ -43,7 +43,10 @@
 [CmdletBinding()]
 param(
     [switch]$SkipFrontend,
-    [switch]$Clean
+    [switch]$Clean,
+    # CI has no electron-builder cache. Pass a downloaded rcedit-x64.exe here
+    # (or let the script fetch it) instead of requiring a warm local cache.
+    [string]$RceditPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -142,6 +145,48 @@ function Find-Rcedit {
         Sort-Object Length -Descending)
     foreach ($candidate in $candidates) {
         if ($candidate.Length -gt 100000) { return $candidate.FullName }
+    }
+    return $null
+}
+
+<#
+    Resolve rcedit for both local runs and clean CI runners.
+
+    Local builds usually already have rcedit from a previous electron-builder
+    run. GitHub-hosted runners do not, and unpacking electron-builder's
+    winCodeSign archive can fail without the symlink privilege, so fetch the
+    standalone rcedit binary from the official electron/rcedit release instead.
+#>
+function Resolve-Rcedit([string]$Explicit) {
+    if ($Explicit) {
+        if (Test-Path -LiteralPath $Explicit) { return (Resolve-Path -LiteralPath $Explicit).Path }
+        Write-Err "rcedit not found at $Explicit"
+        return $null
+    }
+
+    $cached = Find-Rcedit
+    if ($cached) { return $cached }
+
+    $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+    $destDir = Join-Path $tempRoot 'codeslice-build'
+    $dest = Join-Path $destDir 'rcedit-x64.exe'
+    if (-not (Test-Path -LiteralPath $dest)) {
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        Write-Host '    downloading rcedit (official electron/rcedit release)...' -ForegroundColor DarkGray
+        $previous = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe' -OutFile $dest
+        }
+        catch {
+            Write-Warn2 "rcedit download failed: $($_.Exception.Message)"
+        }
+        finally {
+            $ProgressPreference = $previous
+        }
+    }
+    if ((Test-Path -LiteralPath $dest) -and ((Get-Item -LiteralPath $dest).Length -gt 100000)) {
+        return $dest
     }
     return $null
 }
@@ -315,7 +360,7 @@ Write-Step 'Building frontend'
 # `npm ci` deletes the whole tree first, so it is only used with -Clean or when
 # node_modules is missing/incomplete - running it blind can leave the project
 # with no dependencies at all if the network blips mid-postinstall.
-if (-not $env:ELECTRON_MIRROR) {
+if (-not $env:ELECTRON_MIRROR -and -not $env:CI) {
     $env:ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/'
     Write-Host "    using ELECTRON_MIRROR=$env:ELECTRON_MIRROR" -ForegroundColor DarkGray
 }
@@ -408,6 +453,28 @@ Write-Step 'Building desktop installer'
 
 if (-not (Invoke-NpmInstall -Directory $DesktopDir -Label 'desktop')) { Exit-WithResult }
 
+# electron-builder packages desktop/electron/**, so the TypeScript main/preload
+# must be compiled first. A developer checkout usually already has
+# electron/build/ from `npm run dev`; a clean CI runner does not.
+Push-Location $DesktopDir
+try {
+    Write-Host '    [desktop] npm run build'
+    $desktopBuildCode = Invoke-Native -FilePath 'npm' -Arguments @('run', 'build')
+    if ($desktopBuildCode -ne 0) {
+        Write-Err "desktop TypeScript build failed (exit $desktopBuildCode)"
+    }
+    else {
+        Write-Ok 'electron main/preload compiled'
+    }
+}
+finally { Pop-Location }
+
+if (-not (Test-Path -LiteralPath (Join-Path $DesktopDir 'electron\build\main.js'))) {
+    Write-Err 'electron/build/main.js is missing after npm run build'
+}
+
+if ($script:Failures -gt 0) { Exit-WithResult }
+
 <#
     Why three stages instead of a single `npm run dist`:
 
@@ -433,13 +500,12 @@ if (-not (Invoke-NpmInstall -Directory $DesktopDir -Label 'desktop')) { Exit-Wit
 #>
 $DesktopExe   = Join-Path $ReleaseDir 'win-unpacked\CodeSlice.exe'
 $IconPath     = Join-Path $DesktopDir 'build-assets\icon.ico'
-$RceditPath   = Find-Rcedit
+$RceditPath   = Resolve-Rcedit -Explicit $RceditPath
 
 if (-not $RceditPath) {
-    Write-Err 'no usable rcedit-x64.exe found under %LOCALAPPDATA%\electron-builder\Cache\winCodeSign'
-    Write-Host '         electron-builder downloads it together with winCodeSign. Run once:' -ForegroundColor DarkGray
-    Write-Host '           cd desktop; $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"; npx electron-builder --win --dir' -ForegroundColor DarkGray
-    Write-Host '         and ignore the winCodeSign extraction error - the cache still ends up with rcedit-x64.exe.' -ForegroundColor DarkGray
+    Write-Err 'no usable rcedit-x64.exe found and the automatic download failed'
+    Write-Host '         Pass -RceditPath <path> or download it manually:' -ForegroundColor DarkGray
+    Write-Host '           https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe' -ForegroundColor DarkGray
 }
 else {
     Write-Ok "rcedit: $RceditPath"
@@ -460,7 +526,7 @@ if ($script:Failures -gt 0) { Exit-WithResult }
 
 # Version strings for VERSIONINFO, taken from desktop/package.json so the
 # metadata can never drift from the artifact name.
-$appVersion = '0.2.2'
+$appVersion = '0.2.3'
 $pkgJson = Join-Path $DesktopDir 'package.json'
 if (Test-Path -LiteralPath $pkgJson) {
     try {

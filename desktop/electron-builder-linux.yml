@@ -33,19 +33,22 @@ extraResources:
       - '**/*'
 
 linux:
+  # The architecture is selected on the command line by packaging/build_linux.sh
+  # (--x64 or --arm64). Keeping it out of the target list lets one config serve
+  # both the native x64 and the native arm64 CI runners.
   target:
-    - target: AppImage
-      arch:
-        - x64
-    - target: deb
-      arch:
-        - x64
-    - target: rpm
-      arch:
-        - x64
+    - AppImage
+    - deb
+    - rpm
   icon: build-assets/icon.png
+  executableName: codeslice
   category: Development
   maintainer: CodeSlice
   synopsis: Local-first code reading assistant
   description: Read code, ask grounded questions, and build a local knowledge graph.
   artifactName: ${productName}-${version}-${arch}.${ext}
+  desktop:
+    Name: CodeSlice
+    Comment: Local-first AI code reading assistant
+    Categories: Development;Utility;
+    Keywords: code;AI;graph;search;development;
