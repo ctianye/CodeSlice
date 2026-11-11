@@ -284,6 +284,14 @@ hiddenimports += [
     "win32ctypes.core.cffi",
 ]
 
+if sys.platform == "darwin":
+    # keyring resolves this backend through entry points; PyInstaller cannot see
+    # the ctypes-based Security/CoreServices API unless it is listed here.
+    hiddenimports += [
+        "keyring.backends.macOS",
+        "keyring.backends.macOS.api",
+    ]
+
 # keyring resolves backends via entry points -> needs its distribution metadata.
 for dist in ("keyring", "numpy"):
     try:
