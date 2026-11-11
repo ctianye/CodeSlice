@@ -121,6 +121,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      # gh release create --generate-notes needs a git checkout (and the full
+      # history) to build the notes; this job previously failed with
+      # "fatal: not a git repository".
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
