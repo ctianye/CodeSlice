@@ -313,13 +313,14 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           navHandlersRef.current.goToDefinitionAt(hit.position)
           return
         }
-        const target = hit?.type
-        mouseSelectingRef.current =
-          target === monacoEditor.MouseTargetType.CONTENT_TEXT ||
-          target === monacoEditor.MouseTargetType.CONTENT_EMPTY ||
-          target === monacoEditor.MouseTargetType.GUTTER_LINE_NUMBERS ||
-          target === monacoEditor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
-          target === monacoEditor.MouseTargetType.GUTTER_LINE_DECORATIONS
+        // Any primary press inside Monaco can begin or affect a selection.
+        // Restricting this guard to a handful of MouseTargetType values misses
+        // view zones, content widgets and other editor-owned surfaces. When
+        // that happens, cursor-selection events write React state during the
+        // native drag; the resulting Monaco option/layout update can terminate
+        // the drag after only one or two lines. Keep every editor press inside
+        // the no-render window and commit the selection once on mouseup.
+        mouseSelectingRef.current = true
         if (mouseSelectingRef.current && selectionFrame.current !== null) {
           window.cancelAnimationFrame(selectionFrame.current)
           selectionFrame.current = null
@@ -1382,13 +1383,15 @@ export function CodePane({ onAskSelection, onOpenFile }: CodePaneProps): ReactNo
           <MarkdownDoc path={content.path} projectId={projectId ?? 0} text={docText} />
         ) : null}
         {content && !binary && (!isDoc || docEditing) ? (
+          // A fresh callback defeats CodeViewer's memoisation. Ordinary source
+          // files are read-only, so omit the irrelevant change handler.
           <CodeViewer
             value={isDoc ? docText : content.content}
             language={languageFor(content)}
             path={content.path}
             onMountEditor={onMount}
             readOnly={!docEditing}
-            onChange={(next) => updateDocDraft(next)}
+            onChange={docEditing ? updateDocDraft : undefined}
           />
         ) : null}
         {!file.loading && !content && !file.error ? (
