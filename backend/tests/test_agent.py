@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 
@@ -348,6 +348,41 @@ def test_saved_path_rule_skips_approval_next_turn(project, conversation, scripte
     events = _drain(conversation["id"], "再写一次同样的文件")
     assert not any(e["type"] == "approval_required" for e in events)
     assert (__import__("pathlib").Path(project["path"]) / "pkg" / "gen.py").exists()
+
+
+def test_exhausted_tool_rounds_summarises_instead_of_apologising(project, conversation, scripted, monkeypatch):
+    """Running out of tool rounds must still answer, not emit the empty-turn apology.
+
+    The turn used to end on an assistant message that only carried ``tool_calls``,
+    so ``finalize`` found no text and replaced everything the agent had already
+    read with "这一轮没有生成有效内容".
+    """
+    monkeypatch.setattr(agent_graph, "_max_tool_rounds", lambda: 1)
+    model = scripted(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": "r1"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "args": {"path": "README.md"}, "id": "r2"}],
+            ),
+            AIMessage(content="基于已读内容：sample.py 定义了 Foo 类和 bar/baz 方法。"),
+        ]
+    )
+    events = _drain(conversation["id"], "讲讲整个项目的框架")
+
+    assert any(e["type"] == "done" for e in events)
+    saved = repo.list_messages(conversation["id"])
+    assert "没有生成有效内容" not in saved[-1]["content"]
+    assert "Foo" in saved[-1]["content"]
+
+    # The retry that produced the answer must not replay tool traffic, because it
+    # runs a model with no tools bound.
+    retry_payload = model.calls[-1]
+    assert not any(isinstance(message, ToolMessage) for message in retry_payload)
+    assert any("已经读到的内容摘录" in str(getattr(message, "content", "")) for message in retry_payload)
 
 
 def test_model_error_is_reported(project, conversation, monkeypatch):
