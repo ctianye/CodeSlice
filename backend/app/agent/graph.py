@@ -60,6 +60,24 @@ log = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 10
 MAX_HISTORY_MESSAGES = 30
 
+
+def _history_window(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """The tail of the conversation, never dropping the question being answered.
+
+    A tool-heavy turn spends its whole window on tool traffic: thirty messages of
+    ``read_file`` results push the user's request out of ``history[-30:]``, and the
+    model is left answering nothing — it ends up telling the user that their
+    message "only contains tool output, no question". Pinning the newest
+    HumanMessage keeps the window anchored to what was actually asked.
+    """
+    if len(messages) <= MAX_HISTORY_MESSAGES:
+        return list(messages)
+    window = list(messages[-MAX_HISTORY_MESSAGES:])
+    question = next((message for message in reversed(messages) if isinstance(message, HumanMessage)), None)
+    if question is not None and all(candidate is not question for candidate in window):
+        window.insert(0, question)
+    return window
+
 # Tools that only read the project, so they can never need an approval prompt and
 # can safely run several per node.
 READONLY_TOOLS = frozenset(
@@ -443,9 +461,7 @@ def agent(state: AgentState) -> dict[str, Any]:
     model = _build_model(config)
     bound = model.bind_tools(agent_tools.bound_tools())
 
-    history: list[AnyMessage] = list(state.get("messages") or [])
-    if len(history) > MAX_HISTORY_MESSAGES:
-        history = history[-MAX_HISTORY_MESSAGES:]
+    history = _history_window(list(state.get("messages") or []))
     payload: list[AnyMessage] = [
         SystemMessage(content=state.get("system") or prompts.BASE),
         *history,
@@ -745,7 +761,7 @@ def _summary_after_exhausted_rounds(state: AgentState) -> str:
 
     payload: list[AnyMessage] = [
         SystemMessage(content=state.get("system") or prompts.BASE),
-        *_text_only_history(messages[-MAX_HISTORY_MESSAGES:]),
+        *_text_only_history(_history_window(messages)),
     ]
     digest = _tool_digest(messages)
     if digest:

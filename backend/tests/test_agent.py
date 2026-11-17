@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 
@@ -383,6 +383,46 @@ def test_exhausted_tool_rounds_summarises_instead_of_apologising(project, conver
     retry_payload = model.calls[-1]
     assert not any(isinstance(message, ToolMessage) for message in retry_payload)
     assert any("已经读到的内容摘录" in str(getattr(message, "content", "")) for message in retry_payload)
+
+
+def test_history_window_keeps_the_question_behind_tool_traffic():
+    """A tool-heavy turn must not push the user's request out of the window."""
+    question = HumanMessage(content="讲一下整个项目的框架")
+    messages: list[AnyMessage] = [question]
+    for i in range(40):
+        messages.append(
+            AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"path": "pkg/a.py"}, "id": f"c{i}"}])
+        )
+        messages.append(ToolMessage(content=f"file {i}", tool_call_id=f"c{i}"))
+
+    window = agent_graph._history_window(messages)
+
+    assert len(window) == agent_graph.MAX_HISTORY_MESSAGES + 1
+    assert window[0] is question
+    assert window[-1] is messages[-1]
+
+
+def test_history_window_is_untouched_when_it_already_fits():
+    messages = [HumanMessage(content="单选一段解释")]
+    assert agent_graph._history_window(messages) == messages
+
+
+def test_question_reaches_the_model_after_many_tool_rounds(project, conversation, scripted, monkeypatch):
+    """End to end: the model still sees the question on the last tool round."""
+    monkeypatch.setattr(agent_graph, "MAX_HISTORY_MESSAGES", 4)
+    model = scripted(
+        [
+            AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": f"r{i}"}])
+            for i in range(3)
+        ]
+        + [AIMessage(content="基于已读内容的回答。")]
+    )
+    _drain(conversation["id"], "把整个项目框架讲一遍")
+
+    last_payload = model.calls[-1]
+    assert any(
+        isinstance(message, HumanMessage) and "整个项目框架" in str(message.content) for message in last_payload
+    )
 
 
 def test_model_error_is_reported(project, conversation, monkeypatch):
