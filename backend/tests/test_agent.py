@@ -378,6 +378,11 @@ def test_exhausted_tool_rounds_summarises_instead_of_apologising(project, conver
     assert "没有生成有效内容" not in saved[-1]["content"]
     assert "Foo" in saved[-1]["content"]
 
+    # The retry streams like a normal answer: the user waited through the whole
+    # tool loop, so a silent pause followed by a wall of text reads as a hang.
+    streamed = "".join(event.get("delta", "") for event in events if event["type"] == "token")
+    assert "Foo" in streamed
+
     # The retry that produced the answer must not replay tool traffic, because it
     # runs a model with no tools bound.
     retry_payload = model.calls[-1]
@@ -397,8 +402,10 @@ def test_history_window_keeps_the_question_behind_tool_traffic():
 
     window = agent_graph._history_window(messages)
 
-    assert len(window) == agent_graph.MAX_HISTORY_MESSAGES + 1
+    assert len(window) == agent_graph.MAX_HISTORY_MESSAGES
     assert window[0] is question
+    # The newest end is what the model needs to continue from: pinning the question
+    # must displace the oldest tail entry, not the freshest one.
     assert window[-1] is messages[-1]
 
 

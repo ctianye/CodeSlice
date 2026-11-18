@@ -75,7 +75,9 @@ def _history_window(messages: list[AnyMessage]) -> list[AnyMessage]:
     window = list(messages[-MAX_HISTORY_MESSAGES:])
     question = next((message for message in reversed(messages) if isinstance(message, HumanMessage)), None)
     if question is not None and all(candidate is not question for candidate in window):
-        window.insert(0, question)
+        # Swap in the question and drop the oldest tail entry, so pinning it does
+        # not push the window one message past its own cap.
+        window = [question, *window[1:]]
     return window
 
 # Tools that only read the project, so they can never need an approval prompt and
@@ -768,12 +770,20 @@ def _summary_after_exhausted_rounds(state: AgentState) -> str:
         payload.append(HumanMessage(content=f"本轮已经读到的内容摘录：\n\n{digest}"))
     payload.append(HumanMessage(content=EXHAUSTED_SUMMARY_PROMPT))
 
+    # Stream the retry like a normal answer: the user has already waited through
+    # the whole tool loop, and a silent pause followed by a wall of text reads as
+    # a hang. ``_emit`` is the same channel ``agent`` uses for its tokens.
+    accumulated: AIMessageChunk | None = None
     try:
-        reply = model.invoke(payload)
+        for chunk in model.stream(payload):
+            accumulated = chunk if accumulated is None else accumulated + chunk
+            delta = _text_of(chunk)
+            if delta:
+                _emit({"type": "token", "delta": delta})
     except Exception:
         log.warning("exhausted-round summary call failed", exc_info=True)
         return ""
-    return _text_of(reply).strip()
+    return _text_of(accumulated).strip()
 
 
 def finalize(state: AgentState) -> dict[str, Any]:
