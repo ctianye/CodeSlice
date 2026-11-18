@@ -60,6 +60,26 @@ log = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 10
 MAX_HISTORY_MESSAGES = 30
 
+
+def _history_window(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """The tail of the conversation, never dropping the question being answered.
+
+    A tool-heavy turn spends its whole window on tool traffic: thirty messages of
+    ``read_file`` results push the user's request out of ``history[-30:]``, and the
+    model is left answering nothing — it ends up telling the user that their
+    message "only contains tool output, no question". Pinning the newest
+    HumanMessage keeps the window anchored to what was actually asked.
+    """
+    if len(messages) <= MAX_HISTORY_MESSAGES:
+        return list(messages)
+    window = list(messages[-MAX_HISTORY_MESSAGES:])
+    question = next((message for message in reversed(messages) if isinstance(message, HumanMessage)), None)
+    if question is not None and all(candidate is not question for candidate in window):
+        # Swap in the question and drop the oldest tail entry, so pinning it does
+        # not push the window one message past its own cap.
+        window = [question, *window[1:]]
+    return window
+
 # Tools that only read the project, so they can never need an approval prompt and
 # can safely run several per node.
 READONLY_TOOLS = frozenset(
@@ -99,6 +119,9 @@ class AgentState(TypedDict, total=False):
     pending_calls: list[dict[str, Any]]
     session_approvals: list[str]
     tool_rounds: int
+    # True when the turn ran out of tool rounds before the model produced a
+    # plain answer; ``finalize`` then asks for a summary instead of giving up.
+    rounds_exhausted: bool
     last_ai: dict[str, Any] | None
     error: str | None
 
@@ -440,9 +463,7 @@ def agent(state: AgentState) -> dict[str, Any]:
     model = _build_model(config)
     bound = model.bind_tools(agent_tools.bound_tools())
 
-    history: list[AnyMessage] = list(state.get("messages") or [])
-    if len(history) > MAX_HISTORY_MESSAGES:
-        history = history[-MAX_HISTORY_MESSAGES:]
+    history = _history_window(list(state.get("messages") or []))
     payload: list[AnyMessage] = [
         SystemMessage(content=state.get("system") or prompts.BASE),
         *history,
@@ -487,8 +508,16 @@ def agent(state: AgentState) -> dict[str, Any]:
 
     rounds = int(state.get("tool_rounds") or 0) + 1
     max_rounds = _max_tool_rounds()
-    if rounds > max_rounds:
+    exhausted = rounds > max_rounds
+    if exhausted:
         calls = []
+        _emit(
+            {
+                "type": "status",
+                "stage": "summarize",
+                "detail": f"工具调用已达上限（{max_rounds} 轮），改为整理已读内容作答",
+            }
+        )
 
     node_config.record_run(
         "agent",
@@ -501,6 +530,7 @@ def agent(state: AgentState) -> dict[str, Any]:
         "messages": [message],
         "pending_calls": calls,
         "tool_rounds": rounds,
+        "rounds_exhausted": exhausted,
         "last_ai": {"content": _text_of(message), "tool_calls": calls},
     }
 
@@ -675,19 +705,124 @@ def run_one(state: AgentState) -> dict[str, Any]:
     }
 
 
+EXHAUSTED_SUMMARY_PROMPT = (
+    "工具调用次数已经用完，这一轮还没有给出回答。不要再调用工具，请直接根据上面已经读到的内容作答；"
+    "如果确实缺少信息，就说明还缺什么，并给出目前能确认的结论。"
+)
+
+
+def _text_only_history(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """History with the tool traffic stripped.
+
+    The summary retry runs a model with no tools bound, so replaying assistant
+    messages that carry ``tool_calls`` (and the ``ToolMessage`` answers to them)
+    would be rejected by strict providers, and is meaningless without the tools.
+    """
+    kept: list[AnyMessage] = []
+    for message in messages:
+        if isinstance(message, ToolMessage):
+            continue
+        if isinstance(message, AIMessage):
+            text = _text_of(message).strip()
+            if text:
+                kept.append(AIMessage(content=text))
+            continue
+        if isinstance(message, SystemMessage):
+            continue
+        kept.append(message)
+    return kept
+
+
+def _tool_digest(messages: list[AnyMessage], *, limit: int = 12, chars: int = 700) -> str:
+    """Compact recap of what the tools returned, keeping the retry grounded."""
+    parts: list[str] = []
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        body = _text_of(message).strip()
+        if body:
+            parts.append(body[:chars])
+    return "\n\n".join(parts[-limit:])
+
+
+def _summary_after_exhausted_rounds(state: AgentState) -> str:
+    """One tool-free call so a turn cut off by the round cap still answers.
+
+    Running out of ``max_tool_rounds`` used to end the turn on an assistant
+    message that only carried ``tool_calls``. ``finalize`` then found no text at
+    all and replaced a turn that had already read plenty of files with the
+    generic "no valid content" apology. Asking once more, without tools, turns
+    that dead end into the answer the user was waiting for.
+    """
+    messages = list(state.get("messages") or [])
+    try:
+        model = _build_model(_node_config("finalize"))
+    except Exception:  # pragma: no cover - a broken config keeps the apology path
+        log.warning("could not build a model for the exhausted-round summary", exc_info=True)
+        return ""
+
+    payload: list[AnyMessage] = [
+        SystemMessage(content=state.get("system") or prompts.BASE),
+        *_text_only_history(_history_window(messages)),
+    ]
+    digest = _tool_digest(messages)
+    if digest:
+        payload.append(HumanMessage(content=f"本轮已经读到的内容摘录：\n\n{digest}"))
+    payload.append(HumanMessage(content=EXHAUSTED_SUMMARY_PROMPT))
+
+    # Stream the retry like a normal answer: the user has already waited through
+    # the whole tool loop, and a silent pause followed by a wall of text reads as
+    # a hang. ``_emit`` is the same channel ``agent`` uses for its tokens.
+    accumulated: AIMessageChunk | None = None
+    try:
+        for chunk in model.stream(payload):
+            accumulated = chunk if accumulated is None else accumulated + chunk
+            delta = _text_of(chunk)
+            if delta:
+                _emit({"type": "token", "delta": delta})
+    except Exception:
+        log.warning("exhausted-round summary call failed", exc_info=True)
+        return ""
+    return _text_of(accumulated).strip()
+
+
 def finalize(state: AgentState) -> dict[str, Any]:
     messages = list(state.get("messages") or [])
     last_ai = None
+    text_carrying_ai = None
     for message in reversed(messages):
-        if isinstance(message, AIMessage) and not message.tool_calls:
+        if not isinstance(message, AIMessage):
+            continue
+        if not message.tool_calls:
             last_ai = message
             break
-    text = _text_of(last_ai) if last_ai is not None else ""
+        # A message that asked for tools can still carry text; keep the newest
+        # one as a fallback for turns that never reached a plain answer.
+        if text_carrying_ai is None and _text_of(message).strip():
+            text_carrying_ai = message
+    chosen = last_ai if last_ai is not None else text_carrying_ai
+    text = _text_of(chosen) if chosen is not None else ""
     citations = _dedupe_citations(list(state.get("citations") or []))
     meta: dict[str, Any] = {"stages": ["retrieve", "plan", "execute", "summarize"]}
+    exhausted = bool(state.get("rounds_exhausted"))
+    # A message that carried tool_calls was on its way to another tool, not to an
+    # answer: its text is a preamble ("我先看一下项目结构"), so an exhausted turn
+    # must still summarise instead of handing that preamble over as the answer.
+    answered_plainly = last_ai is not None and text.strip()
+    if exhausted and not answered_plainly:
+        summary = _summary_after_exhausted_rounds(state)
+        if summary.strip():
+            text = summary
     if not text.strip():
-        text = "抱歉，这一轮没有生成有效内容，请重试或把问题描述得更具体一些。"
-        _emit({"type": "error", "detail": "empty model output"})
+        if exhausted:
+            text = (
+                f"抱歉，工具调用已达上限（{_max_tool_rounds()} 轮），这一轮没能给出完整回答。"
+                "可以把问题拆小一些再问，或调高 agent 节点的 max_tool_rounds 后重试。"
+            )
+            _emit({"type": "error", "detail": "tool rounds exhausted"})
+        else:
+            text = "抱歉，这一轮没有生成有效内容，请重试或把问题描述得更具体一些。"
+            _emit({"type": "error", "detail": "empty model output"})
     saved = repo.add_message(state["conversation_id"], "assistant", text, citations=citations or None, meta=meta)
     _emit({"type": "message", "message": saved})
     config = _node_config("finalize")

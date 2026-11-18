@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 
@@ -386,6 +386,112 @@ def test_saved_path_rule_skips_approval_next_turn(project, conversation, scripte
     events = _drain(conversation["id"], "再写一次同样的文件")
     assert not any(e["type"] == "approval_required" for e in events)
     assert (__import__("pathlib").Path(project["path"]) / "pkg" / "gen.py").exists()
+
+
+def test_exhausted_tool_rounds_summarises_instead_of_apologising(project, conversation, scripted, monkeypatch):
+    """Running out of tool rounds must still answer, not emit the empty-turn apology.
+
+    The turn used to end on an assistant message that only carried ``tool_calls``,
+    so ``finalize`` found no text and replaced everything the agent had already
+    read with "这一轮没有生成有效内容".
+    """
+    monkeypatch.setattr(agent_graph, "_max_tool_rounds", lambda: 1)
+    model = scripted(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": "r1"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "args": {"path": "README.md"}, "id": "r2"}],
+            ),
+            AIMessage(content="基于已读内容：sample.py 定义了 Foo 类和 bar/baz 方法。"),
+        ]
+    )
+    events = _drain(conversation["id"], "讲讲整个项目的框架")
+
+    assert any(e["type"] == "done" for e in events)
+    saved = repo.list_messages(conversation["id"])
+    assert "没有生成有效内容" not in saved[-1]["content"]
+    assert "Foo" in saved[-1]["content"]
+
+    # The retry streams like a normal answer: the user waited through the whole
+    # tool loop, so a silent pause followed by a wall of text reads as a hang.
+    streamed = "".join(event.get("delta", "") for event in events if event["type"] == "token")
+    assert "Foo" in streamed
+
+    # The retry that produced the answer must not replay tool traffic, because it
+    # runs a model with no tools bound.
+    retry_payload = model.calls[-1]
+    assert not any(isinstance(message, ToolMessage) for message in retry_payload)
+    assert any("已经读到的内容摘录" in str(getattr(message, "content", "")) for message in retry_payload)
+
+
+def test_history_window_keeps_the_question_behind_tool_traffic():
+    """A tool-heavy turn must not push the user's request out of the window."""
+    question = HumanMessage(content="讲一下整个项目的框架")
+    messages: list[AnyMessage] = [question]
+    for i in range(40):
+        messages.append(
+            AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"path": "pkg/a.py"}, "id": f"c{i}"}])
+        )
+        messages.append(ToolMessage(content=f"file {i}", tool_call_id=f"c{i}"))
+
+    window = agent_graph._history_window(messages)
+
+    assert len(window) == agent_graph.MAX_HISTORY_MESSAGES
+    assert window[0] is question
+    # The newest end is what the model needs to continue from: pinning the question
+    # must displace the oldest tail entry, not the freshest one.
+    assert window[-1] is messages[-1]
+
+
+def test_history_window_is_untouched_when_it_already_fits():
+    messages = [HumanMessage(content="单选一段解释")]
+    assert agent_graph._history_window(messages) == messages
+
+
+def test_question_reaches_the_model_after_many_tool_rounds(project, conversation, scripted, monkeypatch):
+    """End to end: the model still sees the question on the last tool round."""
+    monkeypatch.setattr(agent_graph, "MAX_HISTORY_MESSAGES", 4)
+    model = scripted(
+        [
+            AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": f"r{i}"}])
+            for i in range(3)
+        ]
+        + [AIMessage(content="基于已读内容的回答。")]
+    )
+    _drain(conversation["id"], "把整个项目框架讲一遍")
+
+    last_payload = model.calls[-1]
+    assert any(
+        isinstance(message, HumanMessage) and "整个项目框架" in str(message.content) for message in last_payload
+    )
+
+
+def test_exhausted_rounds_replace_a_preamble_with_the_summary(project, conversation, scripted, monkeypatch):
+    """A "let me look at the files first" preamble is not an answer."""
+    monkeypatch.setattr(agent_graph, "_max_tool_rounds", lambda: 1)
+    scripted(
+        [
+            AIMessage(
+                content="我先看一下目录结构。",
+                tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": "p1"}],
+            ),
+            AIMessage(
+                content="我继续看 README。",
+                tool_calls=[{"name": "read_file", "args": {"path": "README.md"}, "id": "p2"}],
+            ),
+            AIMessage(content="收尾回答：sample.py 定义了 Foo 类，README 是文档。"),
+        ]
+    )
+
+    _drain(conversation["id"], "讲讲整个项目的框架")
+
+    saved = repo.list_messages(conversation["id"])
+    assert "收尾回答" in saved[-1]["content"]
+    assert "我先看一下目录结构" not in saved[-1]["content"]
 
 
 def test_model_error_is_reported(project, conversation, monkeypatch):
