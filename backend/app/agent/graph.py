@@ -756,7 +756,9 @@ def _summary_after_exhausted_rounds(state: AgentState) -> str:
     """
     messages = list(state.get("messages") or [])
     try:
-        model = _build_model(_node_config("finalize"))
+        # Same model settings as the turn that produced these messages: the
+        # finalize node has no model/temperature/max_tokens of its own.
+        model = _build_model(_node_config("agent"))
     except Exception:  # pragma: no cover - a broken config keeps the apology path
         log.warning("could not build a model for the exhausted-round summary", exc_info=True)
         return ""
@@ -800,11 +802,15 @@ def finalize(state: AgentState) -> dict[str, Any]:
         # one as a fallback for turns that never reached a plain answer.
         if text_carrying_ai is None and _text_of(message).strip():
             text_carrying_ai = message
-    chosen = last_ai if last_ai is not None else text_carrying_ai
+    exhausted = bool(state.get("rounds_exhausted"))
+    # A message that carried tool_calls was on its way to another tool, not to an
+    # answer, so its text is a preamble ("我先看一下项目结构"). Only an exhausted
+    # turn may fall back to it; on any other path (for example the provider failed
+    # mid-turn) serving the preamble would hide the failure from the user.
+    chosen = last_ai if last_ai is not None else (text_carrying_ai if exhausted else None)
     text = _text_of(chosen) if chosen is not None else ""
     citations = _dedupe_citations(list(state.get("citations") or []))
     meta: dict[str, Any] = {"stages": ["retrieve", "plan", "execute", "summarize"]}
-    exhausted = bool(state.get("rounds_exhausted"))
     # A message that carried tool_calls was on its way to another tool, not to an
     # answer: its text is a preamble ("我先看一下项目结构"), so an exhausted turn
     # must still summarise instead of handing that preamble over as the answer.

@@ -129,9 +129,15 @@ def answer_model(monkeypatch):
     return install
 
 
-def test_note_generation_prioritises_selected_code_and_separates_filename_title(
+def test_note_generation_focuses_on_the_answer_not_the_conversation_selection(
     tmp_path, conn_reset, answer_model, monkeypatch
 ):
+    """A per-answer note must not inherit the session's selection.
+
+    The conversation-level ``selected_code`` belongs to every turn of the
+    session; feeding it back into a single-answer note pulled the note towards
+    the whole conversation instead of the answer the user clicked.
+    """
     project = _project(tmp_path, "proj")
     selected = "def capture(value):\n    return lambda: value\n"
     conversation = repo.create_conversation(
@@ -163,9 +169,12 @@ def test_note_generation_prioritises_selected_code_and_separates_filename_title(
     assert note["content_md"].startswith("# Python 闭包延迟读取外层变量")
     prompt, source = model.calls[-1]
     source_text = str(source.content)
-    assert "用户明确选中的代码（本笔记的首要依据）" in source_text
-    assert selected in source_text
-    assert source_text.index(selected) < source_text.index("联系上下文还展示了项目启动流程")
+    # The single answer is the whole input: no session selection, no other turns.
+    assert "用户明确选中的代码（本笔记的首要依据）" not in source_text
+    assert selected not in source_text
+    assert "下面是单独的一条助手回答" in source_text
+    assert "不要参考同一对话中的其他问答" in source_text
+    assert "联系上下文还展示了项目启动流程" in source_text
     assert "不能替代或扩大选中范围" in str(prompt.content)
 
     exported = notes_export.render(note, project)

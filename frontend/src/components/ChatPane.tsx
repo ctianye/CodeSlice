@@ -303,7 +303,7 @@ export function ChatPane({ snippet, onSnippetConsumed }: ChatPaneProps): ReactNo
               type="button"
             >
               <Icon name="notes" size={12} />
-              {wholeNoteBusy ? '整理中…' : '整理成笔记'}
+              {wholeNoteBusy ? '整理中…' : '整理整段对话'}
             </button>
           ) : null}
           <button

@@ -136,6 +136,22 @@ def _location(conversation: dict[str, Any]) -> str:
     return str(path)
 
 
+def _message_location(conversation: dict[str, Any], refs: list[dict[str, Any]] | None) -> str:
+    """Where this answer looked: its own first citation, else the session range."""
+    for ref in refs or []:
+        path = str(ref.get("path") or "").strip()
+        if not path:
+            continue
+        start = ref.get("start_line")
+        end = ref.get("end_line")
+        if start and end:
+            return f"{path}:{start}-{end}"
+        if start:
+            return f"{path}:{start}"
+        return path
+    return _location(conversation)
+
+
 def _truncate(text: str, limit: int = MAX_ANSWER_CHARS) -> str:
     if len(text) <= limit:
         return text
@@ -472,30 +488,45 @@ def _model_sections(
     answer: str,
     conversation: dict[str, Any],
     transcript: bool = False,
+    *,
+    refs: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, str] | None, str | None]:
     """One chat call for the prose sections; returns (sections, error).
+
+    A single-answer note is scoped to that answer: the conversation's
+    ``selected_code`` belongs to the whole session, so reusing it here pulls the
+    note back to whatever range was selected first and makes every per-answer
+    note read like a conversation summary. The answer's own citations decide the
+    location instead.
 
     A reasoning model can burn the whole output budget before emitting any
     visible text, which looks like an empty reply with ``finish_reason:
     "length"``. That is worth one retry with a bigger budget: an empty note tells
     the reader nothing, while the second attempt usually succeeds.
     """
-    location = _location(conversation)
     if transcript:
-        location = f"{location}（整段会话，包含多轮问答）"
+        location = f"{_location(conversation)}（整段会话，包含多轮问答）"
+    else:
+        location = _message_location(conversation, refs)
     configured_prompt = model_config.load_settings().chat.note_prompt.strip()
     prompt_template = configured_prompt or DEFAULT_NOTE_PROMPT
     prompt = prompt_template.replace("{location}", location)
-    selected_code = str(conversation.get("selected_code") or "").strip()
+    selected_code = str(conversation.get("selected_code") or "").strip() if transcript else ""
     if selected_code:
         opening, closing = _fence_for(selected_code, _language_for(str(conversation.get("file_path") or "")))
         selection = f"用户明确选中的代码（本笔记的首要依据）：\n{opening}\n{selected_code}\n{closing}"
         supporting = "对话回答及其中引用的其它代码（仅作辅助上下文，不得取代选中代码作为主题）：\n"
         user = f"{selection}\n\n{supporting}{_truncate(answer, MAX_CONVERSATION_CHARS)}"
-    else:
+    elif transcript:
         user = (
             "没有单独提供选中代码；请以本次讲解明确讨论的核心代码或机制为主题。"
             "如回答中包含联系上下文的其它代码，只能用于辅助解释。\n\n"
+            + _truncate(answer, MAX_CONVERSATION_CHARS)
+        )
+    else:
+        user = (
+            "下面是单独的一条助手回答。请只围绕这一条回答整理知识点，"
+            "不要参考同一对话中的其他问答，也不要把整段对话的主题拼进来。\n\n"
             + _truncate(answer, MAX_CONVERSATION_CHARS)
         )
 
@@ -647,7 +678,7 @@ def generate(conversation_id: str, message_id: str) -> dict[str, Any]:
     project = repo.get_project(int(conversation["project_id"]))
     refs = _code_refs(conversation, message)
 
-    sections, error = _model_sections(body, conversation)
+    sections, error = _model_sections(body, conversation, refs=refs)
     summary_failed = sections is None
     if sections is None:
         sections = _fallback_sections(body, refs)

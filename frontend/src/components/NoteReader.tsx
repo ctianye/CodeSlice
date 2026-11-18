@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api'
 import type { NoteFolder, NoteRef } from '../types'
 import { formatRelative } from '../lib/format'
+import { usePersistedState } from '../hooks/useAsync'
 import { useApp } from '../state/AppState'
 import { ErrorNote } from './Feedback'
 import { Icon } from './Icon'
@@ -33,6 +34,8 @@ export function NoteReader(): ReactNode {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [folders, setFolders] = useState<NoteFolder[]>([])
+  /** The reference list collapses to its one-line header; the choice persists. */
+  const [refsOpen, setRefsOpen] = usePersistedState('codeslice.noteRefsOpen', true)
   /** The same note, re-fetched with this commit's reference resolution. */
   const [scoped, setScoped] = useState<typeof noteView>(null)
 
@@ -321,52 +324,63 @@ export function NoteReader(): ReactNode {
       ) : null}
 
       {note.refs && note.refs.length > 0 ? (
-        <div className="note-refs">
-          <div className="note-refs-head">
+        <div className={`note-refs${refsOpen ? '' : ' collapsed'}`}>
+          <button
+            type="button"
+            className="note-refs-head"
+            aria-expanded={refsOpen}
+            onClick={() => setRefsOpen((open) => !open)}
+            title={refsOpen ? '收起代码引用列表' : '展开代码引用列表'}
+          >
+            <Icon name={refsOpen ? 'chevron-down' : 'chevron-right'} size={11} />
             <Icon name="git-branch" size={12} />
             <span>{note.refs.length} 处代码引用</span>
             <span className="muted">
               {rev ? `按 ${rev.slice(0, 7)} 解析` : '仍存在看最新代码，已删除回写作提交'}
             </span>
-          </div>
-          <div className="note-ref-list">
-            {note.refs.map((ref) => {
-              const current = ref.status === 'unchanged' || ref.status === 'moved'
-              // Current means the exact block is still in the file; line numbers
-              // are the re-resolved ones. Historical/missing falls back to the
-              // commit the note was written from and shows that whole commit.
-              const targetRev = current ? rev : (ref.resolved_commit || ref.commit_sha || rev)
-              const sha = targetRev
-              const start = ref.resolved_start_line ?? ref.start_line
-              const end = ref.resolved_end_line ?? ref.end_line
-              return (
-                <button
-                  key={ref.id}
-                  type="button"
-                  className={`note-ref-row${ref.status === 'modified' ? ' changed' : ''}`}
-                  title={`${ref.path}:${start}-${end}${sha ? ` @ ${sha.slice(0, 7)}` : ' · 最新工作区'}`}
-                  onClick={() => openRef(ref)}
-                >
-                  <span className={`ref-status ${ref.status}`}>{REF_STATUS_LABEL[ref.status] ?? ref.status}</span>
-                  <span className="note-ref-path">
-                    {ref.path}
-                    <span className="muted">:{start}–{end}</span>
-                    {ref.symbol ? <span className="note-ref-symbol">{ref.symbol}</span> : null}
-                  </span>
-                  {current ? (
-                    <span className="badge ok" title={rev ? '这段代码在当前查看的版本里' : '这段代码在当前工作区里'}>
-                      {rev ? '当前版本' : '最新'}
-                    </span>
-                  ) : sha ? (
-                    <span className="scm-sha">{sha.slice(0, 7)}</span>
-                  ) : (
-                    <span className="muted">工作区</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-          {refSummary(note.refs) ? <div className="note-refs-summary muted">{refSummary(note.refs)}</div> : null}
+          </button>
+          {refsOpen ? (
+            <>
+              <div className="note-ref-list">
+                {note.refs.map((ref) => {
+                  const current = ref.status === 'unchanged' || ref.status === 'moved'
+                  // Current means the exact block is still in the file; line numbers
+                  // are the re-resolved ones. Historical/missing falls back to the
+                  // commit the note was written from and shows that whole commit.
+                  const targetRev = current ? rev : (ref.resolved_commit || ref.commit_sha || rev)
+                  const sha = targetRev
+                  const start = ref.resolved_start_line ?? ref.start_line
+                  const end = ref.resolved_end_line ?? ref.end_line
+                  return (
+                    <button
+                      key={ref.id}
+                      type="button"
+                      className={`note-ref-row${ref.status === 'modified' ? ' changed' : ''}`}
+                      title={`${ref.path}:${start}-${end}${sha ? ` @ ${sha.slice(0, 7)}` : ' · 最新工作区'}`}
+                      onClick={() => openRef(ref)}
+                    >
+                      <span className={`ref-status ${ref.status}`}>{REF_STATUS_LABEL[ref.status] ?? ref.status}</span>
+                      <span className="note-ref-path">
+                        {ref.path}
+                        <span className="muted">:{start}–{end}</span>
+                        {ref.symbol ? <span className="note-ref-symbol">{ref.symbol}</span> : null}
+                      </span>
+                      {current ? (
+                        <span className="badge ok" title={rev ? '这段代码在当前查看的版本里' : '这段代码在当前工作区里'}>
+                          {rev ? '当前版本' : '最新'}
+                        </span>
+                      ) : sha ? (
+                        <span className="scm-sha">{sha.slice(0, 7)}</span>
+                      ) : (
+                        <span className="muted">工作区</span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+              {refSummary(note.refs) ? <div className="note-refs-summary muted">{refSummary(note.refs)}</div> : null}
+            </>
+          ) : null}
         </div>
       ) : null}
 
