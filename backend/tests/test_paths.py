@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from app.core.errors import InvalidInput
 from app.services import paths
+
+# An absolute path outside any project. ``Path("C:/...").is_absolute()`` is False
+# on POSIX, so a Windows literal resolves *inside* the project there and never
+# raises; the traversal case still needs a real absolute path on each platform.
+ABSOLUTE_OUTSIDE = "C:/Windows/system.ini" if os.name == "nt" else "/etc/passwd"
 
 
 def test_resolve_root_requires_directory(tmp_path: Path):
@@ -23,12 +29,11 @@ def test_resolve_in_project_allows_nested(tmp_path: Path):
     assert paths.resolve_in_project(tmp_path, "a/b.py") == target.resolve()
 
 
-def test_resolve_in_project_rejects_traversal(tmp_path: Path):
+@pytest.mark.parametrize("bad", ["../escape.py", ABSOLUTE_OUTSIDE])
+def test_resolve_in_project_rejects_traversal(tmp_path: Path, bad: str):
     (tmp_path / "inner").mkdir()
     with pytest.raises(InvalidInput):
-        paths.resolve_in_project(tmp_path / "inner", "../escape.py")
-    with pytest.raises(InvalidInput):
-        paths.resolve_in_project(tmp_path / "inner", "C:/Windows/system.ini")
+        paths.resolve_in_project(tmp_path / "inner", bad)
 
 
 def test_resolve_in_project_empty_returns_root(tmp_path: Path):
