@@ -244,6 +244,37 @@ def test_generate_note_from_assistant_message(client, tmp_path, conn_reset, echo
     assert cards[0]["note_id"] == body["id"]
 
 
+def test_message_note_uses_the_answer_citations_for_its_location(client, tmp_path, conn_reset, echo):
+    """The note's location comes from this answer's citations, not the session."""
+    project = _make_project(tmp_path, "proj")
+    (Path(project["path"]) / "other.py").write_text("def other():\n    return 2\n", encoding="utf-8")
+    conversation = repo.create_conversation(
+        project["id"],
+        "proj",
+        mode="snippet",
+        file_path="pkg/sample.py",
+        start_line=1,
+        end_line=2,
+        selected_code="SESSION_SELECTION = 'first turn only'",
+    )
+    answer = repo.add_message(
+        conversation["id"],
+        "assistant",
+        "这条回答只讨论 other.py 里的函数。",
+        citations=[{"path": "other.py", "start_line": 1, "end_line": 2, "symbol": "other"}],
+    )
+    model = echo(reply="## 标题\nother 函数\n\n## 知识点\n只讲这条回答。\n")
+
+    note = client.post(f"/api/conversations/{conversation['id']}/messages/{answer['id']}/note").json()
+
+    prompt = "\n".join(str(message.content) for message in model.calls[0])
+    assert "SESSION_SELECTION" not in prompt
+    assert "other.py:1-2" in prompt
+    assert "只围绕这一条回答" in prompt
+    assert "### other.py:1-2" in note["content_md"]
+    assert "return 2" in note["content_md"]
+
+
 def test_note_chunk_does_not_repeat_the_title_heading(client, tmp_path, conn_reset, echo):
     """Generated notes start with ``# <title>``; the chunk must not prepend it again."""
     project = _make_project(tmp_path, "proj")
