@@ -118,6 +118,44 @@ def test_prompt_carries_selection_and_context(project, conversation, scripted):
     assert "def bar(self, x):" in system
 
 
+def test_prepare_gives_structural_questions_a_module_overview(project, conversation, scripted, monkeypatch):
+    """A shape question must not reach the model as "no matching nodes"."""
+    graph = {
+        "nodes": [
+            {
+                "id": "core.py::helper::1",
+                "label": "helper",
+                "path": "core.py",
+                "kind": "function",
+                "start_line": 1,
+                "end_line": 4,
+                "degree": 0,
+                "community": 0,
+            }
+        ],
+        "edges": [],
+        "communities": [
+            {
+                "id": 0,
+                "label": "core.py",
+                "size": 12,
+                "pooled": False,
+                "hub": "core.py::file::__file__::1",
+                "representative": "",
+                "kind": "file",
+            }
+        ],
+    }
+    monkeypatch.setattr(agent_graph.graph_service, "load", lambda *args, **kwargs: graph)
+    model = scripted([AIMessage(content="模块划分如下。")])
+
+    _drain(conversation["id"], "整个项目的模块是怎么划分的")
+
+    system = str(model.calls[0][0].content)
+    assert "Module overview" in system
+    assert "图中没有匹配的节点" not in system
+
+
 def test_read_file_tool_emits_citation(project, conversation, scripted):
     scripted(
         [
