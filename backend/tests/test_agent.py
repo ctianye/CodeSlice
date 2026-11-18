@@ -425,6 +425,30 @@ def test_question_reaches_the_model_after_many_tool_rounds(project, conversation
     )
 
 
+def test_exhausted_rounds_replace_a_preamble_with_the_summary(project, conversation, scripted, monkeypatch):
+    """A "let me look at the files first" preamble is not an answer."""
+    monkeypatch.setattr(agent_graph, "_max_tool_rounds", lambda: 1)
+    scripted(
+        [
+            AIMessage(
+                content="我先看一下目录结构。",
+                tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": "p1"}],
+            ),
+            AIMessage(
+                content="我继续看 README。",
+                tool_calls=[{"name": "read_file", "args": {"path": "README.md"}, "id": "p2"}],
+            ),
+            AIMessage(content="收尾回答：sample.py 定义了 Foo 类，README 是文档。"),
+        ]
+    )
+
+    _drain(conversation["id"], "讲讲整个项目的框架")
+
+    saved = repo.list_messages(conversation["id"])
+    assert "收尾回答" in saved[-1]["content"]
+    assert "我先看一下目录结构" not in saved[-1]["content"]
+
+
 def test_model_error_is_reported(project, conversation, monkeypatch):
     class Boom(ScriptedModel):
         def _stream(self, *args, **kwargs):

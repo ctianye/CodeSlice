@@ -795,8 +795,14 @@ def finalize(state: AgentState) -> dict[str, Any]:
     citations = _dedupe_citations(list(state.get("citations") or []))
     meta: dict[str, Any] = {"stages": ["retrieve", "plan", "execute", "summarize"]}
     exhausted = bool(state.get("rounds_exhausted"))
-    if not text.strip() and exhausted:
-        text = _summary_after_exhausted_rounds(state)
+    # A message that carried tool_calls was on its way to another tool, not to an
+    # answer: its text is a preamble ("我先看一下项目结构"), so an exhausted turn
+    # must still summarise instead of handing that preamble over as the answer.
+    answered_plainly = last_ai is not None and text.strip()
+    if exhausted and not answered_plainly:
+        summary = _summary_after_exhausted_rounds(state)
+        if summary.strip():
+            text = summary
     if not text.strip():
         if exhausted:
             text = (
