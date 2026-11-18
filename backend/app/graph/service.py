@@ -47,7 +47,13 @@ def context_for_question(
     depth: int = query.DEFAULT_DEPTH,
     token_budget: int = query.DEFAULT_TOKEN_BUDGET,
 ) -> str:
-    """Subgraph text for a natural-language question."""
+    """Subgraph text for a natural-language question.
+
+    Falls back to the community overview when the question cannot be anchored to a
+    symbol. Structural questions ("how are the modules split", "give me the overall
+    architecture") name no symbol at all, and the plain "no matching nodes" answer
+    is wrong for them: the clustering already knows the subsystems.
+    """
     graph = load(project_id, root)
     nodes = graph.get("nodes") or []
     edges = graph.get("edges") or []
@@ -55,19 +61,49 @@ def context_for_question(
         return "项目还没有知识图谱（可能尚未建立索引）。"
     nodes_by_id = {node["id"]: node for node in nodes}
     seeds = query.pick_seeds(nodes, question, edges=edges)
-    if not seeds:
-        return "图中没有匹配的节点。请使用代码中出现的符号名或文件名提问。"
     scored = {node["id"]: score for score, node in query.score_nodes(nodes, question, edges=edges)}
+
+    overview = ""
+    if _needs_overview(question, seeds, scored):
+        overview = query.render_communities(graph.get("communities") or [], token_budget=token_budget)
+
+    if not seeds:
+        return overview or query.NO_MATCH_MESSAGE
+
+    # Charge the overview against the caller's budget instead of appending it on
+    # top, so a structural question does not quietly double the prompt block.
+    subgraph_budget = int(token_budget)
+    if overview:
+        overview_tokens = len(overview) // query.CHARS_PER_TOKEN + 1
+        subgraph_budget = max(1, subgraph_budget - overview_tokens)
+
     visited, seen_edges = query.expand(nodes_by_id, edges, seeds, mode=mode, depth=depth)
-    return query.render_subgraph_text(
+    text = query.render_subgraph_text(
         nodes_by_id,
         edges,
         visited,
         seen_edges,
         seeds=seeds,
         scores=scored,
-        token_budget=token_budget,
+        token_budget=subgraph_budget,
     )
+    if overview:
+        text = f"{text}\n\n{overview}"
+    return text
+
+
+def _needs_overview(question: str, seeds: list[str], scores: dict[str, float]) -> bool:
+    """Whether to add the module overview on top of (or instead of) the subgraph.
+
+    Three ways in, all cheap rules rather than a classifier: nothing was anchored,
+    the question is about project shape, or the best seed is so weak that it is a
+    shared character rather than a symbol the user named.
+    """
+    if not seeds:
+        return True
+    if query.wants_structure_overview(question):
+        return True
+    return query.best_score(scores) < query.WEAK_SEED_SCORE
 
 
 def context_for_node(

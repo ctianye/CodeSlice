@@ -35,6 +35,38 @@ MAX_DEPTH = 6
 # answer that silently lost an edge.
 CHARS_PER_TOKEN = 4
 
+# The final answer when nothing in the graph can be anchored at all.
+NO_MATCH_MESSAGE = "图中没有匹配的节点。请在问题里使用代码中出现的符号名或文件名。"
+
+# A question about the *shape* of the project ("怎么划分模块", "整体框架") names no
+# symbol, so seed picking has nothing to match and the graph stays silent — even
+# though the community clustering already holds the answer. These terms are
+# matched as substrings of the raw question on purpose: ``tokenize`` splits CJK
+# per character, which would turn "模块" into two single characters that match
+# half the repository.
+_STRUCTURE_TERMS_CJK = (
+    "模块", "框架", "架构", "分层", "层次", "结构", "整体", "全局", "目录",
+    "入口", "职责", "划分", "子系统", "组件", "组织", "解耦", "顶层",
+)
+
+# Word boundaries matter here: a plain substring test would read the symbol
+# ``SubModule`` as a request for the module map.
+_STRUCTURE_TERMS_LATIN = (
+    "architecture", "structure", "module", "modules", "overview", "layout",
+    "layer", "layers", "component", "components", "subsystem", "top-level",
+)
+_STRUCTURE_LATIN_RE = re.compile(r"\b(?:" + "|".join(_STRUCTURE_TERMS_LATIN) + r")\b", re.IGNORECASE)
+
+# Below this, a "seed" is a lexical accident rather than a symbol the user named:
+# one shared CJK character or one common word is enough to clear zero.
+WEAK_SEED_SCORE = 3.0
+
+# The community overview is a fallback, not the answer: it never takes more than
+# half of the caller's budget, and never more than this many tokens (~2400 chars),
+# so it fits the 1200-token budget the prepare node passes by default.
+OVERVIEW_MAX_TOKENS = 600
+OVERVIEW_MAX_ROWS = 12
+
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+|[\u4e00-\u9fff]")
 _STOPWORDS = {
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "to", "of", "in",
@@ -163,6 +195,26 @@ def score_nodes(
 
     scored.sort(key=lambda pair: (-pair[0], pair[1]["id"]))
     return scored
+
+
+def best_score(scores: dict[str, float]) -> float:
+    """Highest score in a ``score_nodes`` result, or 0 when nothing matched."""
+    return max(scores.values(), default=0.0)
+
+
+def wants_structure_overview(question: str) -> bool:
+    """Whether the question asks about project shape rather than about a symbol.
+
+    Used to decide when the community overview is worth appending even though seed
+    picking did find something: "讲一下整个项目的框架" can hit three nodes on a
+    shared character and still be answered with three unrelated functions.
+    """
+    text = (question or "").strip()
+    if not text:
+        return False
+    if any(term in text for term in _STRUCTURE_TERMS_CJK):
+        return True
+    return bool(_STRUCTURE_LATIN_RE.search(text))
 
 
 def pick_seeds(
@@ -303,7 +355,7 @@ def render_subgraph_text(
     must survive the budget cut, not be truncated away because it came last.
     """
     if not visited:
-        return "图中没有匹配的节点。请在问题里使用代码中出现的符号名或文件名。"
+        return NO_MATCH_MESSAGE
 
     budget_chars = max(200, int(token_budget) * CHARS_PER_TOKEN)
     seed_set = [s for s in (seeds or []) if s in visited]
@@ -353,6 +405,59 @@ def render_subgraph_text(
 
     header = f"Subgraph: {len(visited)} nodes, {len(seen_edges)} edges (budget {token_budget} tokens)\n"
     return header + "\n\n".join(lines)
+
+
+def render_communities(
+    communities: list[dict[str, Any]],
+    *,
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
+    limit: int = OVERVIEW_MAX_ROWS,
+) -> str:
+    """Render the community map as a module overview.
+
+    This is the answer to "how is this project organised" when the question names
+    no symbol. The clustering already groups the code into subsystems, so the
+    overview costs nothing beyond formatting; the alternative was telling the model
+    "no matching nodes", which is exactly wrong for a structural question.
+
+    Rows are ordered biggest first, so the budget cut drops the smallest clusters
+    instead of the ones that look like modules. The unclassified pool is skipped:
+    it is where the isolated nodes went, not a subsystem.
+    """
+    rows = [c for c in communities if not c.get("pooled")]
+    rows = [c for c in rows if int(c.get("size") or 0) > 0]
+    if not rows:
+        return ""
+    rows.sort(key=lambda c: (-int(c.get("size") or 0), str(c.get("label") or "")))
+
+    budget_chars = min(OVERVIEW_MAX_TOKENS, max(1, int(token_budget) // 2)) * CHARS_PER_TOKEN
+    shown = min(max(1, int(limit)), len(rows))
+    header = f"Module overview: {len(rows)} communities in the code graph (largest {shown}, biggest first)"
+
+    lines: list[str] = []
+    used = len(header)
+    for community in rows[:shown]:
+        label = str(community.get("label") or "")
+        size = int(community.get("size") or 0)
+        hub = str(community.get("hub") or "")
+        path = hub.split("::", 1)[0] if "::" in hub else ""
+        representative = str(community.get("representative") or "")
+        row = f"  - {label} ({size} nodes)"
+        if path:
+            row += f" e.g. {path}"
+        if representative and representative not in ("", "<anonymous>"):
+            row += f" :: {representative}"
+        if used + len(row) + 1 > budget_chars:
+            omitted = len(rows) - len(lines)
+            lines.append(f"  ... ({omitted} more communities omitted by the token budget)")
+            break
+        lines.append(row)
+        used += len(row) + 1
+
+    if not lines:
+        return ""
+    footer = "  Ask about one of these files or symbols to drill into that module."
+    return "\n".join([header, *lines, footer])
 
 
 def resolve_anchor(nodes: list[dict[str, Any]], anchor: str) -> str | None:
