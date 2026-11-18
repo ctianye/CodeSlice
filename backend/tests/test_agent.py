@@ -494,6 +494,76 @@ def test_exhausted_rounds_replace_a_preamble_with_the_summary(project, conversat
     assert "我先看一下目录结构" not in saved[-1]["content"]
 
 
+def test_provider_error_after_a_preamble_does_not_serve_it_as_the_answer(project, conversation, monkeypatch):
+    """A failure mid-turn must surface as an error, not ship the preamble.
+
+    The preamble fallback exists for turns cut off by the round cap. Applying it
+    to the error path hid provider failures and saved "我先看一下目录。" as the
+    final answer, with no error event at all.
+    """
+
+    class PreambleThenBoom(ScriptedModel):
+        def _stream(self, messages, *args, **kwargs):
+            self.calls.append(list(messages))
+            if len(self.calls) == 1:
+                yield ChatGenerationChunk(message=AIMessageChunk(content="我先看一下目录。"))
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            {"name": "read_file", "args": '{"path": "pkg/sample.py"}', "id": "c1", "index": 0}
+                        ],
+                    )
+                )
+                return
+            raise RuntimeError("provider exploded")
+
+    boom = PreambleThenBoom(script=[], calls=[])
+    monkeypatch.setattr(agent_graph.model_config, "build_chat_model", lambda: boom)
+    events = _drain(conversation["id"], "讲讲整个项目的框架")
+    saved = repo.list_messages(conversation["id"])
+
+    assert saved[-1]["content"] != "我先看一下目录。"
+    assert "没有生成有效内容" in saved[-1]["content"]
+    assert any(e["type"] == "error" and e.get("detail") == "empty model output" for e in events)
+
+
+def test_exhausted_summary_reuses_the_agent_model_settings(project, conversation, scripted, monkeypatch):
+    """The closing summary must use the agent node's model/temperature/budget.
+
+    ``finalize`` only owns ``auto_retitle``; building from its config silently
+    dropped every model override the user set on the agent node.
+    """
+    monkeypatch.setattr(agent_graph, "_max_tool_rounds", lambda: 1)
+    seen: list[dict[str, Any]] = []
+    real_build = agent_graph._build_model
+
+    def spy(config: dict[str, Any]):
+        seen.append(dict(config))
+        return real_build(config)
+
+    monkeypatch.setattr(agent_graph, "_build_model", spy)
+    scripted(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "args": {"path": "pkg/sample.py"}, "id": "r1"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "args": {"path": "README.md"}, "id": "r2"}],
+            ),
+            AIMessage(content="收尾回答。"),
+        ]
+    )
+
+    _drain(conversation["id"], "讲讲整个项目的框架")
+
+    # Every build, including the closing summary, comes from the agent config.
+    assert seen
+    assert all("max_tokens" in config and "temperature" in config for config in seen)
+
+
 def test_model_error_is_reported(project, conversation, monkeypatch):
     class Boom(ScriptedModel):
         def _stream(self, *args, **kwargs):
