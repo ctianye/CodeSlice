@@ -39,6 +39,29 @@ def _node(nid: str, label: str, path: str, *, kind: str = "function") -> dict:
     }
 
 
+def test_render_subgraph_keeps_a_hub_node_from_eating_the_budget():
+    """A hub with hundreds of edges must not leave the caller an empty stub."""
+    hub = _node("hub.py::Hub::1", "Hub", "hub.py", kind="class")
+    hub["degree"] = 300
+    spokes = [_node(f"spoke{i}.py::f::{i}", f"f{i}", f"spoke{i}.py") for i in range(300)]
+    nodes_by_id = {n["id"]: n for n in [hub, *spokes]}
+    edges = [
+        {"source": hub["id"], "target": s["id"], "relation": "calls", "confidence": "EXTRACTED"}
+        for s in spokes
+    ]
+
+    visited, seen_edges = query.expand(nodes_by_id, edges, [hub["id"]], mode="bfs", depth=1)
+    text = query.render_subgraph_text(
+        nodes_by_id, edges, visited, seen_edges, seeds=[hub["id"]], scores={hub["id"]: 9.0}, token_budget=1200
+    )
+
+    assert "Node: Hub" in text
+    assert text.count("-->") == query.MAX_EDGES_PER_NODE
+    assert "more edges omitted" in text
+    # The header line is not charged against ``used``; allow for it.
+    assert len(text) <= 1200 * query.CHARS_PER_TOKEN + 200
+
+
 def test_render_communities_orders_by_size_and_skips_the_pool():
     communities = [
         _community(0, "small.py", 3),

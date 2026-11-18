@@ -30,6 +30,12 @@ DEFAULT_DEPTH = 3
 DEFAULT_TOKEN_BUDGET = 2000
 MAX_DEPTH = 6
 
+# A hub node (a big class, the app entry point) can own a hundred edges. Rendered
+# unfiltered, its block alone blows the whole budget, the loop breaks on the first
+# node, and the caller receives a header claiming "986 nodes" with no node text at
+# all — the graph context silently degrades to nothing exactly where it matters.
+MAX_EDGES_PER_NODE = 12
+
 # Rough characters per token. Deliberately conservative (English averages ~4);
 # overestimating only means the caller gets slightly less text, never a truncated
 # answer that silently lost an edge.
@@ -391,9 +397,13 @@ def render_subgraph_text(
         edges_here = by_node.get(nid, [])
         if edges_here:
             block.append(f"  Connections ({len(edges_here)}):")
-            block.extend(edges_here)
+            block.extend(edges_here[:MAX_EDGES_PER_NODE])
+            if len(edges_here) > MAX_EDGES_PER_NODE:
+                block.append(f"    ... ({len(edges_here) - MAX_EDGES_PER_NODE} more edges omitted)")
         text = "\n".join(block)
-        if used + len(text) > budget_chars:
+        # Only stop once something has been rendered: an empty answer that merely
+        # reports how much was dropped is worse than one oversized first node.
+        if used + len(text) > budget_chars and lines:
             remaining = len(ordered) - index
             lines.append(
                 f"... ({remaining} more nodes omitted by the token budget; "
