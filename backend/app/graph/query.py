@@ -437,19 +437,24 @@ def render_communities(
     lines: list[str] = []
     used = len(header)
     for community in rows[:shown]:
-        label = str(community.get("label") or "")
         size = int(community.get("size") or 0)
         hub = str(community.get("hub") or "")
         path = hub.split("::", 1)[0] if "::" in hub else ""
         representative = str(community.get("representative") or "")
+        # A community can lose its label if every member sits outside the project
+        # tree; fall back to the hub path so the row still names something.
+        label = str(community.get("label") or "").strip() or path or "unclassified"
         row = f"  - {label} ({size} nodes)"
-        if path:
+        if path and path != label:
             row += f" e.g. {path}"
         if representative and representative not in ("", "<anonymous>"):
             row += f" :: {representative}"
         if used + len(row) + 1 > budget_chars:
-            omitted = len(rows) - len(lines)
-            lines.append(f"  ... ({omitted} more communities omitted by the token budget)")
+            # Only announce the cut when at least one row survived it; otherwise
+            # the caller gets a header and nothing to read, and should fall back.
+            if lines:
+                omitted = len(rows) - len(lines)
+                lines.append(f"  ... ({omitted} more communities omitted by the token budget)")
             break
         lines.append(row)
         used += len(row) + 1

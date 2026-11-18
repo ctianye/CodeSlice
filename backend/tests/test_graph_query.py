@@ -83,6 +83,23 @@ def test_render_communities_is_empty_when_nothing_is_worth_showing():
     assert query.render_communities([_community(0, "未分类", 9, pooled=True)]) == ""
 
 
+def test_render_communities_names_a_row_even_without_a_label():
+    text = query.render_communities(
+        [_community(0, "", 5, hub="src/core.py::file::__file__::1")]
+    )
+
+    assert "src/core.py" in text
+    assert "  -  (" not in text
+
+
+def test_render_communities_returns_empty_when_not_even_one_row_fits():
+    # A header and an "omitted" line with nothing to read is worse than nothing:
+    # the caller then falls back to the plain message.
+    assert query.render_communities(
+        [_community(0, "core.py", 5, hub="src/core.py::file::__file__::1")], token_budget=1
+    ) == ""
+
+
 def test_wants_structure_overview_reads_shape_questions_only():
     assert query.wants_structure_overview("整个项目的模块是怎么划分的")
     assert query.wants_structure_overview("讲一下这个项目的整体框架")
