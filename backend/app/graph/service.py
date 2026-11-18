@@ -60,8 +60,9 @@ def context_for_question(
     if not nodes:
         return "项目还没有知识图谱（可能尚未建立索引）。"
     nodes_by_id = {node["id"]: node for node in nodes}
-    seeds = query.pick_seeds(nodes, question, edges=edges)
-    scored = {node["id"]: score for score, node in query.score_nodes(nodes, question, edges=edges)}
+    ranked = query.score_nodes(nodes, question, edges=edges)
+    scored = {node["id"]: score for score, node in ranked}
+    seeds = query.pick_seeds(nodes, question, edges=edges, ranked=ranked)
 
     overview = ""
     if _needs_overview(question, seeds, scored):

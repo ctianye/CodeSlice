@@ -55,6 +55,9 @@ def test_render_subgraph_keeps_a_hub_node_from_eating_the_budget():
         nodes_by_id, edges, visited, seen_edges, seeds=[hub["id"]], scores={hub["id"]: 9.0}, token_budget=1200
     )
 
+    # The header must say how much actually made it into the text.
+    assert text.startswith("Subgraph: showing ")
+    assert " of " in text.splitlines()[0]
     assert "Node: Hub" in text
     assert text.count("-->") == query.MAX_EDGES_PER_NODE
     assert "more edges omitted" in text

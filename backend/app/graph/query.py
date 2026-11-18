@@ -229,14 +229,19 @@ def pick_seeds(
     *,
     edges: list[dict[str, Any]] | None = None,
     limit: int = 3,
+    ranked: list[tuple[float, dict[str, Any]]] | None = None,
 ) -> list[str]:
     """Best starting node per query term, then the overall best.
 
     One seed per term matters for two-concept questions ("how does the agent call
     the tool"): a single highest scorer would only ever anchor one side.
+
+    ``ranked`` lets a caller that already ran ``score_nodes`` hand the result in:
+    scoring walks every node and every edge, and the question pipeline needs both
+    the ranking and the seeds.
     """
     terms = tokenize(question)
-    scored = score_nodes(nodes, question, edges=edges)
+    scored = ranked if ranked is not None else score_nodes(nodes, question, edges=edges)
     if not scored:
         return []
     seeds: list[str] = []
@@ -413,7 +418,13 @@ def render_subgraph_text(
         lines.append(text)
         used += len(text) + 2
 
-    header = f"Subgraph: {len(visited)} nodes, {len(seen_edges)} edges (budget {token_budget} tokens)\n"
+    rendered = sum(1 for line in lines if line.startswith("Node: "))
+    # Say how much of the neighbourhood made it into the text: the header used to
+    # claim every visited node even when the budget cut it down to a handful.
+    header = (
+        f"Subgraph: showing {rendered} of {len(visited)} nodes, "
+        f"{len(seen_edges)} edges (budget {token_budget} tokens)\n"
+    )
     return header + "\n\n".join(lines)
 
 
