@@ -4,6 +4,7 @@ the "generate a note from one answer" endpoint.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,10 @@ from app.core.errors import ConfigMissing
 from app.indexing import indexer
 from app.services import notegen
 from app.storage import repo
+
+# ``Path("C:/...").is_absolute()`` is False on POSIX, so the Windows literal is a
+# *relative* path there and the endpoint happily resolves it inside the project.
+ABSOLUTE_OUTSIDE = "C:/Windows/win.ini" if os.name == "nt" else "/etc/passwd"
 
 
 class EchoModel(BaseChatModel):
@@ -129,7 +134,7 @@ def test_by_file_orders_by_line_and_reports_notes(client, tmp_path, conn_reset):
     assert late["id"] not in {r["id"] for r in rows[:1]}
 
 
-@pytest.mark.parametrize("bad", ["../outside.py", "pkg/../../outside.py", "C:/Windows/win.ini"])
+@pytest.mark.parametrize("bad", ["../outside.py", "pkg/../../outside.py", ABSOLUTE_OUTSIDE])
 def test_by_file_rejects_paths_outside_the_project(client, tmp_path, conn_reset, bad):
     project = _make_project(tmp_path, "proj")
     resp = client.get(
