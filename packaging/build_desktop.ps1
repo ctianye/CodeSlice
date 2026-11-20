@@ -525,17 +525,25 @@ if (Test-FileLocked $DesktopExe) {
 if ($script:Failures -gt 0) { Exit-WithResult }
 
 # Version strings for VERSIONINFO, taken from desktop/package.json so the
-# metadata can never drift from the artifact name.
-$appVersion = '0.3.0'
+# metadata can never drift from the artifact name. A hard-coded fallback used
+# to ship silently stale VERSIONINFO (v0.3.1 built as 0.3.0); fail instead.
+$appVersion = $null
 $pkgJson = Join-Path $DesktopDir 'package.json'
 if (Test-Path -LiteralPath $pkgJson) {
     try {
         $appVersion = (Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json).version
     }
     catch {
-        Write-Warn2 "could not read version from package.json, defaulting to $appVersion"
+        Write-Err "could not read version from $pkgJson"
     }
 }
+else {
+    Write-Err "package.json not found: $pkgJson"
+}
+if (-not $appVersion -or $appVersion -notmatch '^\d+\.\d+\.\d+') {
+    Write-Err "invalid version in $pkgJson`: '$appVersion'"
+}
+if ($script:Failures -gt 0) { Exit-WithResult }
 $fileVersion = $appVersion
 if ($fileVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') { $fileVersion = "$fileVersion.0" }
 

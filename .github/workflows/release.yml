@@ -25,7 +25,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # v0.3.1 shipped desktop/package.json 0.3.1 while backend/app/core/config.py
+  # still said 0.3.0, so installed apps kept advertising an outdated version.
+  # Every platform job now waits for this consistency check.
+  version-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TAG: ${{ inputs.publish_tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Version declarations agree
+        run: |
+          if [[ "$TAG" == v* ]]; then
+            python scripts/check_version.py --tag "$TAG"
+          else
+            python scripts/check_version.py
+          fi
+
   windows:
+    needs: version-check
     runs-on: windows-2022
     timeout-minutes: 90
     env:
@@ -69,6 +93,7 @@ jobs:
           if-no-files-found: error
 
   linux:
+    needs: version-check
     strategy:
       fail-fast: false
       matrix:
@@ -122,6 +147,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    needs: version-check
     strategy:
       fail-fast: false
       matrix:
